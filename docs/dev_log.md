@@ -374,3 +374,9 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 实现记录：broker.py新增仅SenseNova官方host的认证容量别名映射，冲突/无效拒绝；冻结目录声明，显式完整全零价格合同否则沿用未知价格守卫。tests/test_sensenova_identity.py新增容量/身份变更/未知与额外收费拒绝回归，README披露服务与输入审计范围。定向37 passed/16.17秒；真实metadata连续两次一致、0推理。完整含Docker验收正在运行。SICA控制器、工作流、mini、预算作用域及推理策略未修改。
 
 完整含Docker模拟端点验收127 passed/119.46秒，失败0（1条依赖弃用警告）。src/runtime/tests冻结摘要一致。接受本次兼容，提交后仅一次真实提案，不追加模型采样。
+
+## 2026-10-13 GLM真实单次结果
+
+38c2db1一次H0提案638.96秒，41实际请求/38正常stop/3无usage（RemoteDisconnected1、HTTPError2）；已计量2541437tokens。归档角色首次成功且完成第一步，随后另外两次归档委派被连接/API失败打断，最后main BadRequestError退出。1/7，无coder启动、父候选源码完全相同，预定dev跳过；无基线/val/test/额外提案。无预算拒绝。已有broker只保存HTTPError类名，无法还原状态或服务原因，不写成已证实HTTP400/限流/纯模型能力不足。服务宣称零费率但3次调用usage未知，账单未独立核验。
+
+独立审查结束模型/服务身份、src/runtime/tests冻结、95项上游及旧843/920/841文件封存全部一致，容器清理。本次真实输入无Qwen tokenizer审计；不能从服务无context错误宣称输入完整。new-model-single-smoke.md追加完整报告；不更改运行源码、不追加模型推理，仅提交结果文档。本轮辅助只读核验脚本误将completed_steps整型取len及查错.upstream路径均已修正，无原产物变化。
