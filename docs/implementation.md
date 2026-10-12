@@ -121,3 +121,7 @@ SICA ed8275dca4d3c5dbf77229964351fe9b424797dc；mini-swe-agent 04d809ceab9df28f9
 用户将.env换回Qwen并要求重新一题测试。只读预检确认配置qwen35-4b-agent，列表为:latest；/models不返回能力字段，/api/show明确num_ctx65536、架构262144，num_predict未设置。不得套DeepSeek393216输出/1M上下文或恢复旧2048限制。新增明确Ollama元数据发现：原名优先，无tag时仅接受同名:latest且由/api/tags摘要核验；冻结原模型digest、完整参数摘要、模板摘要及原生服务版本。实际context取明确num_ctx且不超过架构。若没有独立输出cap，用context-1作为单次上下文内生成的数学上界并明确标derived，不伪称模型声明值；已有正num_predict取与context-1的较小值。保持OpenAI文本调用、温度0、每角色预算和600秒benchmark；不改模型服务配置、不增加优化策略。官方Ollama API确认max_tokens支持，Modelfile默认num_predict=-1。
 
 价格未知的远端仍拒绝；已核验原生Ollama且非cloud模型允许用户明确要求的本地推理，冻结cost_threshold_enforced=false和原因，美元成本记未知，绝不计作免费。新增隔离模拟端点测试alias、元数据校验/身份漂移/不套用DeepSeekcap及未知费用记录。scope选项已向用户确认：Qwen新生成一次提案后测题，或现有候选直接重测；准备工作不依赖选择。旧运行只读封存，新诊断不恢复旧身份。
+
+## Qwen新提案与条件单题（最终确认）
+
+用户已选择Qwen自己生成一次提案。中止临时现有DeepSeek H1重测并保留其独立产物runs/qwen-single-task-20261012/task-smoke（KeyboardInterrupt，305.82秒）。确认无活动测试容器后，用已验收6404c36生产scripts/smoke_once.py在全新runs/qwen-rsi-20261012/real-smoke运行一次H0起点提案；复用历史公开H0 dev证据仅作分析，无新基线。沿用1800秒诊断保护信封，非原SICA上限；实际改进仍按独立500/1000迭代、不设improve600秒合同，模型身份/能力按当前Qwen服务冻结。若有效运行源码变化才评分django__django-14752，若超时/未改则如实终止，不重采样或手工补策略。记录临时重测额外成本，不能混入新的提案结果。

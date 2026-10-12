@@ -336,3 +336,7 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 实现记录：broker.py核验Ollama版本/tags/show，显式tag别名、digest、有效num_ctx与derived输出边界冻结，非cloud原生模型允许未知价格本地测试且标cost_accounting_available=false；context_budget.py将能力来源概括为认证provider元数据；driver.py从保存metrics判断成本是否可计，避免评分恢复依赖活动broker；tests/test_sica_budget_policy.py增加Ollama模拟身份/容量/云与未知价格校验。首次全套98 passed/9 skipped/1 failed是评分恢复fixture无broker，修正为使用持久metrics后26项定向回归通过，开始含Docker最终验收；尚未真实推理。原始测试命令另一次误指不存在测试文件、未执行测试，日志保留。
 
 最终工程验收108 passed/108.07秒，含Docker模拟端点；新增模型真实身份只读核验通过，digest与旧Qwen一致。工程阶段无真实推理。README/upstream_adaptations披露Ollama推导输出边界和未复现$3费用守卫；scope按明确的一题重测复用上次H1，保留生成模型DeepSeek的来源，不能据此称Qwen会自我改进。准备提交兼容修正后，在新目录执行一次django__django-14752，benchmark600秒，诊断总信封1200秒覆盖启动/评分；此信封是单题工程保护而非原SICA改进时间上限，旧实验不恢复。
+
+## Qwen单次提案范围确认与临时任务中止
+
+用户明确选择“让 Qwen 重新生成一次自改进提案，有源码变化后测同一题”。立即中止按临时假设启动的旧H1直接重测，实际Python进程SIGINT，session52200退出130；产物smoke_failure为KeyboardInterrupt/305.817秒，容器已清理。该中止因用户明确范围，不计模型或基础设施失败，已发生调用保留单独核算。此后只运行一个新Qwen H0提案，源码变化才测预定dev，不重测基线。工程108项验收及6404c36代码复用，未修改模型参数或源码策略。先追加最终scope/design后再启动；本次1800秒是向用户明示的沿用诊断保护，不冒称原SICA或再次明示时长授权。
