@@ -97,3 +97,5 @@ Completion success is the model's declaration, as upstream; no source-change, co
 第五轮提交后补充：固定原源`meta_improvement.py`的TOOL_NAME是`meta_improvement_reasoning_structure`，`committee_design.py`的是`meta_improvement_review_committee`。原描述保留这些名称而适配仅注册invoke/committee，造成真实最后两次调用被错误拒绝。这是已复现的适配兼容缺口，不全部归为模型失败。
 
 现在AST读取并严格核对这两个固定原名，分别注册为invoke/committee的显式别名；说明仅展示当前角色有权限的映射。requested_op原样记入事件，规范化后的操作沿用同一权限检查和原dispatch：编辑角色可用委员会别名、不能调用结构别名；归档与评审两者均不可用。没有`review_committee`等猜测映射，没有shell动作改写，`step:1`不会自动声明完成或跳转，未知/未来完成入口继续拒绝。模板/工作流摘要变化仍由现有v3冻结合同识别。
+
+最终审查补充运行时边界：适配层采用单活动结构，活动中再次invoke拒绝；固定原sequential.run可创建多个invocation状态。七步定义、成功/失败推进与四评审拼接对齐，不代表完整动态注册/多活动结构运行时逐位复现。本轮保留单活动合同，不以重复invoke新建结构掩盖真实未推进。另固定原BaseAgent/MainOrchestrator的MAX_ITERATIONS=500，而本实验全角色共享30实际调用；30并非上游默认资源规模。
