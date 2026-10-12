@@ -101,3 +101,5 @@ uv run python scripts/smoke_once.py --output runs/budget-alignment-smoke
 Qwen 新提案单次测试见 [真实测试报告](docs/qwen-rsi-single-smoke.md)：28 调用后提前提交、源码未变、条件开发题跳过。发现超长历史反馈与当前任务混淆及服务输入完整性风险；尚无 Qwen 自改进或 RSI 收益证据。
 
 当前元任务合同为 v6，恢复原 SICA 角色工具归属，步骤完成调用绑定宿主身份；经服务验证的 Qwen tokenizer 提供输入容量和明显截断审计（不承诺精确模板保留）。见[接口修复审查](docs/sica-tool-boundary-review.md)。旧 v5 运行保留只读，不能恢复到 v6。
+
+v6修复后的一次Qwen实测见[结果报告](docs/sica-tool-boundary-smoke.md)：67次请求、无源码修改；命令引用错误阻碍委派，最终保守输入容量保护终止，条件开发题跳过。工程115项验收通过不等于Qwen已产生自改进。

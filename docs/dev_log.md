@@ -360,3 +360,9 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 独立只读复核：95项固定来源摘要一致、旧Qwen843/DeepSeek920封存文件未变；metadata预检连续身份一致，旧请求content86717文本tokens准确发送前拒绝、0模型调用。上轮88160含辅助reasoning字段，本轮content计数差异已披露。DeepSeek清单有files包装，首个核验脚本按扁平结构误读并FileNotFound，修正只读脚本后920项通过，无原产物修改。新增sica-tool-boundary-review.md逐项原源对照、保留差异和输入核验能力边界，README标当前v6。等待参数顺序修正后的最终验收，再提交并一次真实测试。
 
 最终冻结验收115 passed/173.66秒，含Docker模拟端点，失败0；src/runtime/tests与accepted_source_freeze匹配，diff检查通过，上游与旧产物未变。主agent逐项审查接受v6工具归属、宿主绑定步骤完成与已验证文本/明显缺失审计；精确chat序列保留仍未证明，原ReasoningAgent/事件总线未移植边界保留。准备本地commit后仅一次Qwen提案与条件dev，无baseline/val/test。
+
+## a897941一次真实Qwen结果
+
+单个H0提案259.538秒、67实际请求/主迭代68（最后一次发送前拒绝）、1867490total/1854917prompt/12573completion/1794928cached；0usage缺失/网络错误、67stop、max completion576。结构启动但0/7完成、0子角色、0源码变化，按合同跳过dev，不重测baseline/val/test、不追加采样。7次重复invoke、12次委派命令未闭合引号、1缺agent_code路径、1越界读取、1动作块格式错误。最后继续逐段读历史轨迹；下一请求content62400+保守framing4832=67232>65536，host_context拒绝，没有额外模型请求。不能把保守估计终止写成实际服务已溢出；67响应均未检测明显输入缺失，精确保留仍未证明。
+
+模型/服务结束身份及源冻结通过；上游95/旧Qwen843/DeepSeek920文件不变，单次启动、父候选相同、容器清理，本次841文件封存核验。新增sica-tool-boundary-smoke.md完整报告；README追加实测边界。框架工程修复通过但Qwen仍无自改进；工具格式/委派执行是直接失败行为，不能证明所有剩余适配差异已排除或纯模型固有能力不足。费用未知。仅提交结果文档，不改已测试源码，不追加真实推理。
