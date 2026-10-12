@@ -103,7 +103,7 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     budget=Budget(tmp_path);budget.enter('preflight')
     broker=Broker(tmp_path,budget);broker.model='fixture'
     requests=[]; main_turn=0; coder_turn=0
-    plan=['invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
+    plan=['meta_improvement_reasoning_structure' if limit==30 else 'invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
     class Endpoint:
         def open(self,request,**kw):
             nonlocal main_turn,coder_turn
@@ -250,3 +250,43 @@ def test_atomic_state_write_preserves_previous_valid_state(tmp_path, monkeypatch
     with pytest.raises(OSError,match='interruption'):
         flow.save()
     assert read(tmp_path/'workflow_state.json')==previous
+
+
+def test_exact_original_tool_name_aliases_preserve_semantics_and_permissions(tmp_path, monkeypatch):
+    assert w.tool_aliases()=={'meta_improvement_reasoning_structure':'invoke','meta_improvement_review_committee':'committee'}
+    monkeypatch.setattr(w.uuid,'uuid4',lambda:type('FixedUUID',(),{'hex':'fixture'})())
+    canonical=w.Workflow(tmp_path/'canonical',lambda *a:None)
+    aliased=w.Workflow(tmp_path/'alias',lambda *a:None)
+    # Exact request observed on actual model calls29/30. 'step' never completes a step.
+    observed={'op':'meta_improvement_reasoning_structure','step':1}
+    outcome=aliased.execute(command(observed),'orchestrator')
+    assert outcome['returncode']==0
+    assert json.loads(outcome['output'])==canonical.dispatch({'op':'invoke'})
+    assert aliased.completed_steps==0 and aliased.current()['index']==0
+    again=aliased.execute(command(observed),'orchestrator')
+    assert again['returncode']==1 and 'already active' in again['output']
+    events=[json.loads(line) for line in (tmp_path/'alias/workflow_events.jsonl').read_text().splitlines()]
+    assert any(e.get('requested_op')==observed['op'] and e.get('op')=='invoke' for e in events)
+    calls=[]
+    def delegate(identity,prompt,readonly):
+        calls.append((identity,prompt,readonly));return {'exit_status':'Submitted','submission':identity}
+    flow=w.Workflow(tmp_path/'reviews',delegate)
+    request={'op':'meta_improvement_review_committee','context':'evidence','proposal':'design'}
+    output=flow.execute(command(request),'editor')
+    assert output['returncode']==0 and len(calls)==4 and all(c[2] for c in calls)
+    assert json.loads(output['output'])==''.join(f"\n\nReviewer {i}'s review:\n{c[0]}" for i,c in enumerate(calls))
+    assert flow.completed_steps==0 and flow.active is None
+    for mode in ('editor',True):
+        denied=w.Workflow(tmp_path/str(mode),delegate)
+        assert denied.execute(command(observed),mode)['returncode']==1
+        assert denied.active is None and denied.completed_steps==0
+    for mode in (True,):
+        assert flow.execute(command(request),mode)['returncode']==1
+    assert len(calls)==4
+    for invalid in ('review_committee','meta_improvement_structure','step_future_complete'):
+        assert flow.execute(command({'op':invalid}),'orchestrator')['returncode']==1
+    state=aliased.current()
+    assert aliased.execute(command({'op':'complete','invocation_id':state['invocation_id'],'tool':'future_complete'}),'orchestrator')['returncode']==1
+    assert aliased.completed_steps==0
+    assert 'meta_improvement_reasoning_structure' in w.instructions()
+    assert 'meta_improvement_review_committee' in w.instructions('software_developer')

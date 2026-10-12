@@ -32,6 +32,22 @@ def definitions(source=SOURCE):
     return steps, specialisations, roles
 
 
+def tool_aliases(source=SOURCE):
+    """Only the two exact TOOL_NAMEs in the pinned source are accepted aliases."""
+    aliases = {}
+    for filename, expected, operation in (
+        ('meta_improvement', 'meta_improvement_reasoning_structure', 'invoke'),
+        ('committee_design', 'meta_improvement_review_committee', 'committee'),
+    ):
+        cls = next(n for n in ast.parse((source/(filename+'.py')).read_text()).body if isinstance(n, ast.ClassDef))
+        name = next(ast.literal_eval(n.value) for n in cls.body if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == 'TOOL_NAME' for t in n.targets))
+        if name != expected:
+            raise ValueError('Pinned workflow TOOL_NAME differs: ' + filename)
+        aliases[name] = operation
+    return aliases
+
+
 def instructions(role="orchestrator"):
     text = '''SICA callable transport: emit one normal mini bash action whose entire command is
 sica-workflow '<JSON object>'
@@ -56,6 +72,10 @@ Compatibility: original file views/archive analysis use these public read/list/s
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         description = next(ast.literal_eval(n.value) for n in cls.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'TOOL_DESCRIPTION' for t in n.targets))
         text += '\nOriginal '+filename+' tool description:\n'+description
+    permitted = ('invoke','committee') if role == 'orchestrator' else ('committee',) if role in ('software_developer','general_problem_solver') else ()
+    aliases = {name:op for name,op in tool_aliases().items() if op in permitted}
+    if aliases:
+        text += '\nRegistered original TOOL_NAME aliases (same operations and permissions): ' + json.dumps(aliases,sort_keys=True)
     return text
 
 
@@ -123,6 +143,7 @@ class Workflow:
         self.delegate = delegate
         self.identities = identities or {}
         self.steps, self.specs, self.roles = definitions(source)
+        self.aliases = tool_aliases(source)
         self.active = None
         self.status = 'not_invoked'
         self.completed_steps = 0
@@ -179,7 +200,9 @@ class Workflow:
             raise
 
     def dispatch(self, request):
-        op = request['op']
+        requested_op = request['op']
+        op = self.aliases.get(requested_op, requested_op)
+        self.event(kind='operation_request', requested_op=requested_op, op=op)
         if op == 'invoke':
             if self.active:
                 raise ValueError('Structure already active')
@@ -271,15 +294,18 @@ class Workflow:
 
     def execute(self, action, readonly=False):
         command = action.get('command','')
+        requested_op = None
         try:
             parts = shlex.split(command)
             if parts and parts[0] == 'sica-workflow':
                 if len(parts) != 2:
                     raise ValueError('Expected one JSON argument')
                 request = json.loads(parts[1])
-                if readonly == 'editor' and request.get('op') not in ('read','list','search','archive','committee','delegate'):
+                requested_op = request.get('op')
+                op = self.aliases.get(requested_op, requested_op)
+                if readonly == 'editor' and op not in ('read','list','search','archive','committee','delegate'):
                     raise ValueError('Delegates cannot alter the parent workflow lifecycle')
-                if readonly is True and request.get('op') not in ('read','list','search','archive'):
+                if readonly is True and op not in ('read','list','search','archive'):
                     raise ValueError('Read-only role cannot invoke mutable workflow operations')
                 return {'output':json.dumps(self.dispatch(request)), 'returncode':0}
             if readonly and readonly != 'editor':
@@ -291,7 +317,7 @@ class Workflow:
                 raise ValueError('Role permits only structured workflow operations or exact submission')
             return None
         except Exception as exc:
-            self.event(kind='operation_error', error=str(exc))
+            self.event(kind='operation_error', requested_op=requested_op, error=str(exc))
             return {'output':str(exc),'returncode':1}
 
 

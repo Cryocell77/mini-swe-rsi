@@ -93,3 +93,7 @@ Completion success is the model's declaration, as upstream; no source-change, co
 只读read使用1基含端点行范围（默认1..200，最多500行），仍限制候选与公开归档真实解析路径；返回实际路径、证据性质、行数及截断信息。历史任务对白/`/testbed`路径明确标为既往证据。当前parent/proposer/candidate、可写workdir、公开archive及精简活动步骤身份传给所有角色；不会把父步骤完整指令变成子角色的新任务。
 
 新增受认证、无模型调用的`/status`，初始提示与工具反馈显示同一共享会话剩余额度。模型/工具预算拒绝记录在到达端点/执行工具之前，真实模型计数不增加。原始运行异常另存，只有受控状态的终止原因用于分类；generic APIError不会按字符串判断，下一真实请求清除历史终止原因。状态读取失败保留原异常类别并记录状态不可用。没有角色配额、强制返回、自动步骤推进、自动编辑或新的候选晋升条件。操作系统层面的角色沙箱限制仍与第四轮说明一致。
+
+第五轮提交后补充：固定原源`meta_improvement.py`的TOOL_NAME是`meta_improvement_reasoning_structure`，`committee_design.py`的是`meta_improvement_review_committee`。原描述保留这些名称而适配仅注册invoke/committee，造成真实最后两次调用被错误拒绝。这是已复现的适配兼容缺口，不全部归为模型失败。
+
+现在AST读取并严格核对这两个固定原名，分别注册为invoke/committee的显式别名；说明仅展示当前角色有权限的映射。requested_op原样记入事件，规范化后的操作沿用同一权限检查和原dispatch：编辑角色可用委员会别名、不能调用结构别名；归档与评审两者均不可用。没有`review_committee`等猜测映射，没有shell动作改写，`step:1`不会自动声明完成或跳转，未知/未来完成入口继续拒绝。模板/工作流摘要变化仍由现有v3冻结合同识别。

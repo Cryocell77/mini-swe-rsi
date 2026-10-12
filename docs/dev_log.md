@@ -248,4 +248,25 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 
 主agent另外核查实际模拟wire的21调用七步成功、6调用预算失败，两者角色system/user与初始/反馈剩余调用数准确；首次审计把pytest current别名重复计为第三fixture，过滤符号链接后通过，无生产改动。报告role-transport-review.md。审查通过，记录instance/observation/error模板覆盖与角色只读非OS沙箱等边界；提交后一次同Qwen真实提案，不重测基线/val/test或增加预算。
 
+## 第五轮首个真实测试及原工具名缺口
+
+代码6b8e215，78.39秒，30调用，401794total/372665cached，无未计量或端点错误；最大实际prompt25725，无上下文超限。实际system/user/预算消息均核验正确。1次动作闭合格式错误，18read+9list；最后两次op=meta_improvement_reasoning_structure被拒绝为Unknown workflow operation，未启动结构/委派，源码完全未变，local step_limit准确LimitsExceeded。没有单题/基线/val/test。
+
+进一步原源对照确认该名称就是固定TOOL_NAME，原工具描述也保留该名称，因此不能将这两次拒绝全部归为模型问题。先追加implementation方案，再授权同一6.1 Sol low子agent添加原结构/委员会工具名的显式别名、requested_op记录及权限/状态回归；不改变语义或自动推进。首个真实失败封存，新代码独立提交后才另运行一次真实测试，所有版本结果保留并列，避免在同一代码上反复采样挑成功。
+
 本轮子agent验证：第一批离线33 passed/2 skipped；新增单位回归首次暴露fixture未设模型名及节录不完整，已修正。首次受影响Docker批次29 passed/1 failed，失败为运行中继续修改文件导致的host/container工作流/提示摘要差异；已保存失败日志与字段对照，不作为验收。其后冻结受影响树的Docker/离线批次39 passed（142.91秒）；再按主agent审查只调整短操作错误反馈及预算来源命名，运行最终受影响delta批次（结果另见`worker-final-delta.txt/xml`）。工程验证均使用模拟端点；真实模型服务调用为0。最终全套与固定上游独立审查由主agent执行。
+
+## 第五轮提交后原TOOL_NAME兼容修正（子agent）
+
+主agent已先追加implementation方案；本次仅修复已复现的原工具名/适配注册名不一致，无模型服务调用或提交，首个真实运行保持封存。
+
+- `runtime/workflow.py`：AST读取固定原源两个TOOL_NAME并严格核对，注册`meta_improvement_reasoning_structure -> invoke`及`meta_improvement_review_committee -> committee`。文本说明列出当前角色允许的原名；规范名与别名统一经过既有权限和同一dispatch分支。记录原始requested_op（包括失败），额外step字段不触发推进，未知名字不猜测。
+- `tests/test_workflow.py`：重放真实调用29/30的精确请求；验证canonical/alias状态等价、重复invoke拒绝、四份评审拼接、编辑/只读权限、未知及未来完成入口拒绝。已有Docker成功fixture使用原结构别名，低预算fixture仍用invoke。
+- `docs/upstream_adaptations.md`：追加两个确切注册名及不改变原步骤语义的说明。
+- `docs/dev_log.md`：本条逐文件记录。新验证产物另存`runs/role-transport-repair-20261012/tool-name-alias`，不覆盖第五轮已有验证或真实结果。
+
+原工具名兼容修正验证：受影响离线/Docker测试18 passed/24.49秒，既有成功fixture通过原名完成七步21次请求、低预算规范名仍如实失败；完整原语义脚本核验七步字段/顺序/失败与四评审无合成器，角色合同脚本核验5种原system及15段core。运行时在整个验证期间保持冻结，无真实模型调用。新目录保存JUnit、日志、语义报告和最终摘要；固定源与控制器未编辑。
+
+## 原工具名兼容修正主agent验收
+
+独立阅读全部diff并从固定原源AST核对两个TOOL_NAME；4文件冻结摘要通过。主agent工作流Docker/离线13 passed/17.19秒，实际wire原名启动21调用完成七步，低预算6调用准确incomplete。重跑原语义和角色合同检查通过；14远端文件/14控制函数/mini74文件不变，原5668/第四轮4034/第五轮首个真实838文件均封存不变。记录最新代码适用的相关测试与前提交86项全套的边界。diff检查通过，接受修正、单独提交后一次真实提案，不重测基线/val/test。
