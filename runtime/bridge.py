@@ -72,6 +72,9 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
              'Budget authority: each agent invocation has its own iteration limit, with up to five provider requests per completion. '
              'The benchmark has a 600-second task deadline; improvement has no separate task deadline and remains subject to the host global/stage deadline.\n')
     if budget is not None:
+        if budget.get('global_remaining_seconds') is None:
+            text = text.replace('and remains subject to the host global/stage deadline',
+                                'with no additional diagnostic global/stage deadline')
         text += '\nFrozen execution budget: ' + json.dumps(budget, sort_keys=True) + '\n'
     import importlib.util
     spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))

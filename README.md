@@ -109,3 +109,7 @@ SenseNova `token.sensenova.cn` 的认证模型目录使用 `context_length/max_o
 最新[GLM单次检查](docs/new-model-single-smoke.md)：工程127项通过；真实提案完成1/7后连接/API失败，无源码变化、开发题跳过，不能判定模型自改进能力不足。
 
 本地CLIProxyAPI/Qoder的标准目录缺容量时，读取认证`/models?client_version=pi`的同名容量声明；仅作为代理声明冻结，不证明实际后端权重，不使用目录附带的通用指令或猜测价格。未知价格仍拒绝基准推理。HTTP失败记录状态码，正文不保存。扩展目录来源参考[官方客户端](https://github.com/router-for-me/pi-cliproxyapi-provider)。
+
+用户确认本地Qoder代理为订阅／免费额度时，可在.env显式设置`RSI_BILLING_MODE=subscription`。此合同只对已核验的本地Qoder目录生效；美元费用保持未知，原SICA的$3阈值不可复现，token/时间预算仍执行。不能把订阅成本记为零美元。
+
+按用户要求，单次诊断使用`uv run python scripts/smoke_once.py --output <新目录> --unbounded-diagnostic`，没有额外全局或阶段墙钟截止。原SICA角色500/1000轮、单题600秒和工具限制仍生效。历史有期限结果保持原样，不用新模式恢复过期实验；诊断费用与token照常记录。

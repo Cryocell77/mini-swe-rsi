@@ -15,3 +15,21 @@ broker仅在loopback/Qoder且标准容量缺失时读取该认证目录，要求
 定向38项验收通过（20.34秒），连续两次真实元数据核验一致，工程阶段0真实推理。完整验收与真实结果追加于下文；产物在runs/model-recheck-20261013-021701。
 
 完整含Docker模拟端点验收135 passed/231.40秒，失败0（1条依赖弃用警告）。主agent接受代理声明映射和安全HTTP状态日志；src/runtime/tests冻结一致。工程阶段0真实推理，提交后仅一次提案。
+
+## 原提案实际结果（保留原1800秒记录）
+
+代码6e14568执行一次H0提案，144实际请求、8,363,934已计量tokens（prompt8,279,192/completion84,742/cached7,702,072），1次TimeExceeded请求无usage。已计量143响应均stop；另第54请求归档角色prompt181651+completion50超过代理声明180000，由宿主在已计量后拒绝返回动作，记ContextLimitExceeded，不能写成服务主动报告输入溢出。最大completion9321也高于请求的8192，代理声明/usage语义与实际请求约束并非独立核实，必须保留这一限制。
+
+实际启动归档2次、评审4次、软件开发1次，主43轮/归档47+14轮/评审1+11+4+11轮/开发13轮；完成5/7步。到1800秒宿主结束进程137、TimeExceeded，单次runner继而尝试dev时BudgetExceeded（1800.68秒），dev未启动、0dev请求。不是原500/1000轮额度耗尽。原提案不能标记完整完成。
+
+候选真实变化仅minisweagent/config/mini_textbased.yaml，原始hash1b53c0fe10dcdaf5f7320b599ebbad58d8bd457df3a39d8913e8f2f455742235，行为hashde6d58dbd2c3dd66325125bcbaecbdfc79d723ec4dd8231f60d15aad7d6734b1。模型加入定位后小窗口查看、锚定编辑等提示，将观察输出分支改为4000字符的head/tail；不是Python核心实现修改。主agent离线验证布局、YAML/Jinja和bridge后的新分支确实可用，未改候选。源码变化证明提出了可运行的Harness配置改动，不证明更强或递归改进能力。
+
+## 用户后续确认与取消额外总时限
+
+用户要求继续，并确认qfmodel为订阅／免费额度，没有按token单价。显式.env订阅合同仅用于已核验本地Qoder代理，费用仍未知，不将原metrics中0.0视为实际零美元成本。随后用户指出不应有预算上限：取消额外1800/1200秒诊断总时限，保留原SICA的原生限制。新独立诊断使用unbounded_diagnostic；历史原24小时和已结束1800秒记录不改写，不重新生成提案。
+
+原SICA依据：runner.py第367行TIMEOUT_SECONDS=10*60并于474行传给benchmark；base_agent.py第68行MAX_ITERATIONS=500、coder.py第104行1000；improve入口agent.exec(self_improvement_prompt)未传timeout。自改进没有原生30分钟总时限。原CLI benchmark默认300但runner覆盖600，本项目按runner保持600。工具调用另有600秒安全超时。取消外加总时限不等于原SICA完全无任何限制。
+
+订阅版独立定向41项、完整138项通过（308.17秒）；随后新增无总时限实现，定向36项通过（15.43秒）。新完整验收与已有候选单题结果完成后追加。单题使用相同模型和源码，独立目录记录，服务身份只允许多出用户声明计费合同，不重跑baseline/val/test/提案，不修改候选或手工补齐7步。
+
+最终无额外总时限及订阅合同验收：140 passed/362.99秒，失败0（1条依赖弃用警告）。真实Docker模拟端点完成无总deadline七步及子角色执行，同时有限deadline/500/1000迭代测试仍通过；源冻结一致。主agent审查接受，提交后仅补测已有冻结候选，不重启提案。

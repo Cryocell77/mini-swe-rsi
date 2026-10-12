@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import runpy
 import hashlib
 import os
@@ -18,6 +19,10 @@ import yaml
 
 from .archive_view import archive_view
 from .core import ROOT, append_event, command, digest, read, tree_hash, write, improvement_contract
+
+
+def session_remaining(deadline):
+    return max(1, deadline-time.time()) if math.isfinite(deadline) else None
 
 
 class InfrastructureError(RuntimeError):
@@ -75,7 +80,8 @@ class Driver:
         self.relay = self.client.containers.create(self.image.id, ['python', '/runtime/relay.py'],
             volumes={str(ROOT/'runtime'): {'bind': '/runtime', 'mode': 'ro'}},
             environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}',
-                         'RSI_RELAY_TIMEOUT':str(max(1,self.budget.remaining())+30)},
+                         'RSI_RELAY_TIMEOUT':str(max(1,self.budget.remaining())+30)
+                             if math.isfinite(self.budget.remaining()) else 'none'},
             network=self.transport.name, cap_drop=['ALL'], security_opt=['no-new-privileges'],
             mem_limit='128m', pids_limit=64, read_only=True, tmpfs={'/tmp':'size=16m'})
         self.network.connect(self.relay)
@@ -125,7 +131,7 @@ class Driver:
             configuration = self.root/'configuration.json'
             if configuration.exists() and read(configuration).get('improvement_task') != contract:
                 raise RuntimeError('Frozen improvement task contract changed before launch')
-            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':max(1,self.broker.sessions[token]['deadline']-time.time())}
+            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
             shared_calls = execution_budget['main_iterations']
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
@@ -164,7 +170,7 @@ class Driver:
         if prompt:
             mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
         if execution_budget is None:
-            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':max(1,self.broker.sessions[token]['deadline']-time.time())}
+            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
         env = {'RSI_BUDGET_CONFIG':json.dumps(execution_budget), 'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
                'RSI_BROKER': self.broker_url, 'RSI_TOKEN': token,
                'MSWEA_CONFIG_ROOT': '/tmp/mini-config', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
@@ -195,12 +201,14 @@ class Driver:
                 c.kill()
             except docker.errors.APIError:
                 pass
-        timer = threading.Timer(max(.1, deadline-time.time()), stop_at_deadline)
-        timer.daemon = True
-        timer.start()
+        timer = None
+        if math.isfinite(deadline):
+            timer = threading.Timer(max(.1, deadline-time.time()), stop_at_deadline)
+            timer.daemon = True
+            timer.start()
         try:
             try:
-                result = c.wait(timeout=max(.1, deadline - time.time() + 10))
+                result = c.wait(timeout=max(.1, deadline - time.time() + 10) if math.isfinite(deadline) else None)
             except requests.exceptions.ReadTimeout:
                 c.kill()
                 result = {'StatusCode': 137}
@@ -230,7 +238,8 @@ class Driver:
                 raise RuntimeError('Mounted source changed during execution')
             return result['StatusCode'], output
         finally:
-            timer.cancel()
+            if timer is not None:
+                timer.cancel()
             try:
                 c.remove(force=True)
             except docker.errors.NotFound:
@@ -243,7 +252,7 @@ class Driver:
         job = {'operation': 'score', 'directory': str(directory), 'task': self.data.rows[task_id],
                'patch': patch, 'arch': 'x86_64', 'image_namespace': 'swebench',
                'instance_image_tag': 'latest', 'run_id': uuid.uuid4().hex,
-               'result_file': str(directory / 'result.json'), 'timeout': min(300, int(self.budget.remaining())),
+               'result_file': str(directory / 'result.json'), 'timeout': int(min(300, self.budget.remaining())),
                'frozen_image': self.data.image(task_id)}
         write(directory / 'job.json', job)
         python = ROOT / '.eval-venv/bin/python'

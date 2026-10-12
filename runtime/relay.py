@@ -24,7 +24,8 @@ class Relay(BaseHTTPRequestHandler):
                   'Authorization': self.headers.get('Authorization', ''),
                   'X-RSI-Agent':self.headers.get('X-RSI-Agent','main'), 'X-RSI-Role':self.headers.get('X-RSI-Role','orchestrator')})
         try:
-            response = opener.open(request, timeout=float(os.environ['RSI_RELAY_TIMEOUT']))
+            configured_timeout = os.environ['RSI_RELAY_TIMEOUT']
+            response = opener.open(request, timeout=None if configured_timeout == 'none' else float(configured_timeout))
         except urllib.error.HTTPError as e:
             response = e
         except Exception:

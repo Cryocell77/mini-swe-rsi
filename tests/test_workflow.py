@@ -98,10 +98,13 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     import re
     import time
     from mini_swe_rsi.broker import Broker
-    from mini_swe_rsi.core import Budget, tree_hash
+    from mini_swe_rsi.core import Budget, tree_hash, write
     from mini_swe_rsi.driver import Driver, initial_code
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture-secret',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight')
+    budget=Budget(tmp_path)
+    if limit is None:
+        write(budget.path, {'started':0,'phases':{'preflight':0},'unbounded_diagnostic':True})
+    budget.enter('preflight')
     context = ContextBudget({'max_output_tokens':393216,'context_window':1048576}) if limit is None else ContextBudget()
     broker=Broker(tmp_path,budget,context=context);broker.model='fixture'
     requests=[]; main_turn=0; coder_turn=0; archive_turn=0
@@ -113,6 +116,8 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     class Endpoint:
         def open(self,request,**kw):
             nonlocal main_turn,coder_turn,archive_turn
+            if limit is None:
+                assert kw['timeout'] is None
             payload=json.loads(request.data);requests.append(payload)
             system, user = payload['messages'][0]['content'], payload['messages'][1]['content']
             assert system.startswith(tuple(d['SYSTEM_PROMPT'] for d in w.definitions()[2].values()))
@@ -162,7 +167,7 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         import shutil
         target=tmp_path/'candidate';shutil.copytree(code,target)
         original=tree_hash(code)
-        token=broker.session('workflow',calls=limit)
+        token=broker.session('workflow',calls=limit,seconds=None if limit is None else 600)
         status,_=driver.controller(code,tmp_path/'logs',['improve','--parent-iter','0','--best-iter','0','--candidate-id','agent_1','--current-iter','0'],token,archive=archive,target=target)
         usage=broker.finish(token)
         state=read(tmp_path/'logs/workflow_state.json')
@@ -177,6 +182,9 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         assert read(tmp_path/'logs/activation.json')['wall_time_limit_seconds']==0
         assert all(read(p)['step_limit']==(1000 if read(p)['role'].endswith('software_developer') else 500) for p in roles)
         if limit is None:
+            assert usage['deadline'] is None
+            assert read(tmp_path/'logs/activation.json')['budget']['global_remaining_seconds'] is None
+            assert 'no additional diagnostic global/stage deadline' in (tmp_path/'logs/improvement_prompt.txt').read_text()
             assert usage['max_calls'] is None and usage['iterations']['main']==14
             assert usage['iterations']['006_software_developer']==2
             events=[json.loads(line) for line in (tmp_path/'logs/workflow_events.jsonl').read_text().splitlines()]

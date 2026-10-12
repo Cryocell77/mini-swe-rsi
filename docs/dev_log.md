@@ -388,3 +388,19 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 实现记录：broker.py仅loopback/Qoder且缺容量时读取认证pi扩展目录，唯一slug/正整数/冲突/最大context校验；仅白名单元数据冻结，不使用目录提示，不证明后端或价格。HTTP错误额外保存数字状态码，不保留正文。tests/test_proxy_identity.py覆盖容量失效/重复/身份变更/提示不注入/价格守卫/429计量无正文。定向38 passed/20.34秒，真实连续两次metadata一致、0推理。准备完整含Docker验收。
 
 完整含Docker模拟端点验收135 passed/231.40秒，失败0（1条依赖弃用警告）。主agent接受代理声明映射和安全HTTP状态日志；src/runtime/tests冻结一致。工程阶段0真实推理，提交后仅一次提案。
+
+## 2026-10-13 用户继续与计费事实
+
+在用户继续后检查实际提案已于1800.68秒BudgetExceeded结束，proposal144调用、5/7、yaml变化、TimeExceeded，未启动单题（0 dev请求）。候选仅mini_textbased.yaml行为配置变化，不是Python核心变化。用户确认订阅／免费额度无token单价；先更新要求/设计，准备显式受限订阅合同，保留美元未知而非零价格，接受后单独补测已有候选一题，不重启提案/不改旧预算。
+
+订阅实现记录：core.secrets读取显式RSI_BILLING_MODE=subscription并校验，broker仅已验证loopback/Qoder目录接受该合同并冻结；美元pricing仍None/cost_accounting_available=false，订阅合同仅免除缺少单价拒绝，不关闭时间/token/调用守卫。tests/test_proxy_identity.py增加订阅单题正常计量/美元未知、未核验proxy拒绝、配置枚举回归。候选独立审查：仅yaml变化，YAML/Jinja及布局有效，4000字符观察分支在bridge后仍生效，审查未修改源码；不把它写成Python核心变化或已完成提案。准备完整验收后提交。
+
+## 2026-10-13 用户取消额外诊断总时限（优先覆盖）
+
+用户指出不应设置预算上限。取消当前及后续单次诊断额外1800/1200秒总保护，不重写已结束的提案；保留原SICA500/1000角色迭代、每completion至多5请求、benchmark600秒和工具原生限制。历史24小时实验不恢复，新的独立诊断显式unbounded_diagnostic，不受全局/阶段墙钟截止，但仍受原生任务/迭代与服务容量限制。
+
+实现需要完整支持无总deadline：持久预算明确标记；session内部无穷剩余不能直接进入JSON/socket/Timer，序列化无期限为null、网络等待None、无总deadline不创建kill Timer；benchmark仍有限600秒。评分timeout先min再int避免int(inf)。relay与模型timeout允许None；提示准确注明无额外总期限。smoke_once显式--unbounded-diagnostic，与带时限历史诊断互斥。新补测同一冻结候选，订阅合同事实不变，无新的提案或手工策略。验证无期限元任务/Docker归档加载及有限benchmark/工具/迭代约束仍生效。
+
+无总时限实现记录：core持久unbounded_diagnostic只用于独立诊断；broker等待None、状态和metrics序列化null；driver无总deadline不建kill timer，relay/socket/model等待None，评分min后int；bridge提示准确区分原生与外加期限；smoke_once显式互斥无总时限模式。tests新增无期限恢复/JSON/socket/原生迭代与600秒任务仍执行，以及高容量Docker七步fixture改为真正无总deadline路径。定向36 passed/15.43秒。此前仅订阅版完整138 passed/308.17秒已留存，不能当新无期限实现验收；开始新完整验收。
+
+最终无额外总时限及订阅合同验收：140 passed/362.99秒，失败0（1条依赖弃用警告）。真实Docker模拟端点完成无总deadline七步及子角色执行，同时有限deadline/500/1000迭代测试仍通过；源冻结一致。主agent审查接受，提交后仅补测已有冻结候选，不重启提案。

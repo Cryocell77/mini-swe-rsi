@@ -52,3 +52,13 @@
 ## 2026-10-13 再次换配置单题
 
 用户要求“我更换了模型配置，请重新单题测试”。按已确认流程：一次H0新提案，有运行源码变化才测django__django-14752，不重测baseline/val/test。沿用明示1800秒诊断保护。新配置是本地CLIProxyAPI的qfmodel（owned_by=qoder）；必要服务能力映射可在先验收提交后使用，不改策略、不猜实际后端/价格。
+
+## 2026-10-13 继续已有候选单题与订阅事实
+
+用户“继续”后检查发现前次提案已1800秒自然终止，5/7且只修改mini_textbased.yaml，未启动dev。用户明确确认qfmodel为“订阅／免费额度，无按token单价”。将该事实作为显式宿主计费合同保存.env RSI_BILLING_MODE=subscription；不是虚构零美元费率，不计算$3守卫，继续完整token计量。只补测同一冻结候选的django__django-14752，不新增提案/基线/val/test、不恢复过期预算；单题600秒，评分/启动额外保护以独立1200秒诊断记录（工程信封而非原SICA限制），未完成状态保留。
+
+## 2026-10-13 用户取消额外诊断总时限（优先覆盖）
+
+用户指出不应设置预算上限。取消当前及后续单次诊断额外1800/1200秒总保护，不重写已结束的提案；保留原SICA500/1000角色迭代、每completion至多5请求、benchmark600秒和工具原生限制。历史24小时实验不恢复，新的独立诊断显式unbounded_diagnostic，不受全局/阶段墙钟截止，但仍受原生任务/迭代与服务容量限制。
+
+实现需要完整支持无总deadline：持久预算明确标记；session内部无穷剩余不能直接进入JSON/socket/Timer，序列化无期限为null、网络等待None、无总deadline不创建kill Timer；benchmark仍有限600秒。评分timeout先min再int避免int(inf)。relay与模型timeout允许None；提示准确注明无额外总期限。smoke_once显式--unbounded-diagnostic，与带时限历史诊断互斥。新补测同一冻结候选，订阅合同事实不变，无新的提案或手工策略。验证无期限元任务/Docker归档加载及有限benchmark/工具/迭代约束仍生效。

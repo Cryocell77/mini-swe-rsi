@@ -147,3 +147,15 @@ Qwen原生Ollama且服务tokenizer摘要匹配冻结资产时，启用独立输�
 预检0推理：/models仅id/object/owned_by，原生Ollama/llama/LMStudio元数据均404；CLIProxyAPI官方客户端使用/models?client_version=pi。实际扩展目录slug=qfmodel/context_window=180000/max_tokens=8192，max_context_window同180000。仅loopback且owned_by=qoder、标准容量缺失时查询该认证目录，要求唯一同名模型及有效容量、标准字段无冲突；冻结允许的容量/owner信息，忽略目录中的Codex通用base_instructions等提示，不能污染agent提示。代理声明不是实际后端权重或真实容量的独立证明，来源必须披露。没有已验证tokenizer，不套Qwen完整性保证。
 
 价格未知继续保留benchmark价格守卫；如源码变化但单题被价格守卫阻止，记未测而非已失败解题，不擅自猜免费。保留同一模型别名，不自动换后端。安全补记HTTP状态码以免重现上轮只记录HTTPError类名的诊断缺口，不保存任意错误正文。先针对性与完整工程验证提交，然后新目录一次真实提案，无宿主重采样。
+
+## 2026-10-13 订阅计费合同与候选补测
+
+原提案144调用/5步后到1800秒退出，yaml行为修改已归档，候选hash1b53c0fe10dcdaf5f7320b599ebbad58d8bd457df3a39d8913e8f2f455742235；不修改或续跑该候选/提案。用户确认订阅免费额度，新增可选.env RSI_BILLING_MODE=subscription，core只允许该显式值；broker仅在已验证loopback/Qoder扩展目录时接受，冻结billing_contract含user-declared/source，不杜撰USD价格。价格未知仍cost_accounting_available=false、$3不可复现，仅显式订阅合同免于“必须提供按token价格”拒绝；其他远程/普通未知价格守卫不变。测试订阅允许、仍未知美元/非零调用计量、非法模式/其他provider拒绝，工程验收提交后写.env该单一字段。
+
+独立补测目录与独立1200秒保护，600秒任务预算不变，身份/代码摘要须与原提案一致（服务身份只允许多出新billing_contract），记录proposal来源及未经完整提交状态，不冒充冠军。任务只一次，复用生产Driver.task（不调用task_retry，避免新答案重试），源在独立工作副本中执行并核对原封存候选；不复制或读取val/test反馈。结束核对身份、费用/token、评分与源摘要；价格合同不代表可核验底层权重。
+
+## 2026-10-13 用户取消额外诊断总时限（优先覆盖）
+
+用户指出不应设置预算上限。取消当前及后续单次诊断额外1800/1200秒总保护，不重写已结束的提案；保留原SICA500/1000角色迭代、每completion至多5请求、benchmark600秒和工具原生限制。历史24小时实验不恢复，新的独立诊断显式unbounded_diagnostic，不受全局/阶段墙钟截止，但仍受原生任务/迭代与服务容量限制。
+
+实现需要完整支持无总deadline：持久预算明确标记；session内部无穷剩余不能直接进入JSON/socket/Timer，序列化无期限为null、网络等待None、无总deadline不创建kill Timer；benchmark仍有限600秒。评分timeout先min再int避免int(inf)。relay与模型timeout允许None；提示准确注明无额外总期限。smoke_once显式--unbounded-diagnostic，与带时限历史诊断互斥。新补测同一冻结候选，订阅合同事实不变，无新的提案或手工策略。验证无期限元任务/Docker归档加载及有限benchmark/工具/迭代约束仍生效。

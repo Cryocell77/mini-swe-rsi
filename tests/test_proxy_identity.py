@@ -1,6 +1,7 @@
 """Local Qoder proxy metadata is a declaration, never backend identity proof."""
 import copy
 import io
+import json
 import urllib.error
 
 import pytest
@@ -78,3 +79,39 @@ def test_http_status_retained_without_remote_body_or_credentials(proxy):
     event = broker.events[-1]
     assert event['http_status'] == 429 and 'private' not in str(event)
     assert broker.sessions[token]['unmetered_calls'] == 1
+
+
+def test_user_subscription_allows_task_with_tokens_but_unknown_dollars(proxy):
+    broker, _, _ = proxy
+    broker.config['RSI_BILLING_MODE'] = 'subscription'
+    broker.identity()
+    assert broker.service_identity['billing_contract']['mode'] == 'subscription'
+    assert not broker.budget_limits()['cost_threshold_enforced']
+    assert broker.pricing is None
+    response = {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'fixture'}}],
+                'usage': {'prompt_tokens': 5, 'completion_tokens': 2, 'total_tokens': 7}}
+    broker.request_json = lambda *args: response
+    token = broker.session('task:fixture', solver='fixture')
+    broker.complete(token, {'messages': [{'role': 'user', 'content': 'fixture'}]})
+    metrics = broker.finish(token)
+    assert metrics['calls'] == 1 and metrics['tokens'] == 7
+    assert metrics['cost_accounting_available'] is False
+
+
+def test_subscription_requires_supported_proxy_verification(proxy):
+    broker, selected, _ = proxy
+    broker.config['RSI_BILLING_MODE'] = 'subscription'
+    selected.update(context_window=180000, max_output_tokens=8192)
+    with pytest.raises(ModelError, match='requires the verified'):
+        broker.identity()
+
+
+def test_billing_mode_is_explicit_and_validated(tmp_path, monkeypatch):
+    from mini_swe_rsi.core import secrets
+    monkeypatch.setattr('mini_swe_rsi.core.ROOT', tmp_path)
+    base = 'OPENAI_BASE_URL=http://127.0.0.1/v1\nOPENAI_API_KEY=fixture\nLOCAL_LLM_MODEL=qfmodel\n'
+    (tmp_path/'.env').write_text(base+'RSI_BILLING_MODE=subscription\n')
+    assert secrets()['RSI_BILLING_MODE'] == 'subscription'
+    (tmp_path/'.env').write_text(base+'RSI_BILLING_MODE=free_guessed\n')
+    with pytest.raises(ValueError, match='RSI_BILLING_MODE'):
+        secrets()

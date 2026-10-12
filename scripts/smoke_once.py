@@ -14,12 +14,15 @@ from mini_swe_rsi.experiment import Experiment, working
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--new-time-budget-seconds', type=int,
+    timing = parser.add_mutually_exclusive_group()
+    timing.add_argument('--new-time-budget-seconds', type=int,
                         help='Explicitly authorized new diagnostic time allocation; never alters the old experiment')
+    timing.add_argument('--unbounded-diagnostic', action='store_true',
+                        help='Independent single diagnostic without additional total/stage time limits; SICA task/iteration limits remain')
     args = parser.parse_args()
     original = read(ROOT/'runs/sica-qwen-20261011/budget.json')['started']
     started = time.time()
-    if args.new_time_budget_seconds is None and started >= original+86400:
+    if not args.unbounded_diagnostic and args.new_time_budget_seconds is None and started >= original+86400:
         parser.error('Original 24-hour deadline expired; a new time allocation requires user authorization')
     if args.new_time_budget_seconds is not None and not 0 < args.new_time_budget_seconds <= 86400:
         parser.error('New time allocation must be in 1..86400 seconds')
@@ -27,17 +30,22 @@ def main():
     if out.exists():
         parser.error('Refusing to repeat or overwrite a proposal in an existing directory')
     out.mkdir(parents=True)
-    deadline = (original+86400 if args.new_time_budget_seconds is None else started+args.new_time_budget_seconds)
+    deadline = (None if args.unbounded_diagnostic else
+                original+86400 if args.new_time_budget_seconds is None else started+args.new_time_budget_seconds)
     write(out/'diagnostic_limits.json', {'original_24h_started':original, 'original_24h_deadline':original+86400,
         'new_time_budget_seconds':args.new_time_budget_seconds, 'diagnostic_deadline':deadline,
+        'unbounded_diagnostic':args.unbounded_diagnostic,
         'one_proposal':True, 'candidate_dev_task':'django__django-14752', 'baseline_rerun':False,
         'val_test_run':False})
-    write(out/'budget.json', {'started':original if args.new_time_budget_seconds is None else started, 'phases':{}})
+    write(out/'budget.json', {'started':started if args.unbounded_diagnostic or args.new_time_budget_seconds is not None else original,
+                             'phases':{}, 'unbounded_diagnostic':args.unbounded_diagnostic})
     write(out/'code_revision.json', {'commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                                    'src_sha256':tree_hash(ROOT/'src'), 'runtime_sha256':tree_hash(ROOT/'runtime')})
 
     class SingleCheckBudget(Budget):
         def remaining(self):
+            if args.unbounded_diagnostic:
+                return float('inf')
             return min(super().remaining(), deadline-time.time())
 
     original_budget_class = experiment_module.Budget

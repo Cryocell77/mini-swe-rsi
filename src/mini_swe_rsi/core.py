@@ -66,7 +66,12 @@ def secrets():
     required = ['OPENAI_BASE_URL', 'OPENAI_API_KEY', 'LOCAL_LLM_MODEL']
     if any(not env.get(k) for k in required):
         raise ValueError('Missing model configuration in .env')
-    return {k: env[k] for k in required}
+    config = {k: env[k] for k in required}
+    if env.get('RSI_BILLING_MODE'):
+        if env['RSI_BILLING_MODE'] != 'subscription':
+            raise ValueError('RSI_BILLING_MODE must be subscription or omitted')
+        config['RSI_BILLING_MODE'] = env['RSI_BILLING_MODE']
+    return config
 
 
 class Data:
@@ -139,6 +144,8 @@ class Budget:
 
     def remaining(self):
         d = read(self.path)
+        if d.get('unbounded_diagnostic') is True:
+            return float('inf')
         return min(d['started'] + 24 * 3600,
                    d['phases'][self.phase] + PHASE_HOURS[self.phase] * 3600) - time.time()
 

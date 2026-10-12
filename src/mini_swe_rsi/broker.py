@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import copy
 import hashlib
 import re
@@ -328,6 +329,12 @@ class Broker:
         if proxy_catalog is not None:
             self.service_identity.update(capacity_source='authenticated loopback Qoder proxy /models?client_version=pi',
                 proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
+        if self.config.get('RSI_BILLING_MODE'):
+            if self.config['RSI_BILLING_MODE'] != 'subscription' or proxy_catalog is None:
+                raise ModelError('Subscription contract requires the verified local Qoder proxy catalog')
+            self.service_identity['billing_contract'] = {'mode': 'subscription',
+                'source': 'user-declared .env RSI_BILLING_MODE',
+                'usd_token_tariff_available': False, 'benchmark_usd_threshold_reproduced': False}
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
             if architecture == 'qwen35':
@@ -371,7 +378,8 @@ class Broker:
         # broker thread. Snapshot usage only after that request is accounted for.
         with self.lock:
             data = self.sessions.pop(token)
-            return {k: v for k, v in data.items() if k != 'solver'}
+            return {k: (None if k == 'deadline' and not math.isfinite(v) else v)
+                    for k, v in data.items() if k != 'solver'}
 
     def status(self, token):
         # Readable even after expiration; never disclose session credentials or container identity.
@@ -379,7 +387,7 @@ class Broker:
         return {'calls':s['calls'], 'max_calls':s['max_calls'],
                 'remaining_calls':None if s['max_calls'] is None else max(0,s['max_calls']-s['calls']),
                 'agent_iterations':dict(s['iterations']),
-                'remaining_seconds':max(0,s['deadline']-time.time()),
+                'remaining_seconds':max(0,s['deadline']-time.time()) if math.isfinite(s['deadline']) else None,
                 'terminal_reason':s['terminal_reason'], 'rejected_calls':list(s['rejected_calls'])}
 
     def reject(self, s, reason, basis='host_budget', terminal=True, kind='model_rejection'):
@@ -404,7 +412,8 @@ class Broker:
             self.reject(s, 'LimitsExceeded')
         if s['cost_limit_usd'] is not None:
             local_ollama = getattr(self, 'service_identity', {}).get('ollama', {}).get('cloud') is False
-            if not getattr(self, 'pricing', None) and self.context.provider and not local_ollama:
+            subscription = getattr(self, 'service_identity', {}).get('billing_contract', {}).get('mode') == 'subscription'
+            if not getattr(self, 'pricing', None) and self.context.provider and not local_ollama and not subscription:
                 self.reject(s, 'Benchmark pricing contract unavailable', 'pricing_contract')
             if s['cost_upper_bound_usd'] >= s['cost_limit_usd']:
                 self.reject(s, 'CostExceeded', 'published_peak_cost_upper_bound',kind=kind)
@@ -414,13 +423,14 @@ class Broker:
         seconds = min(deadline-time.time(), self.budget.remaining())
         if seconds <= 0:
             raise ModelError('TimeExceeded')
+        wait_seconds = seconds if math.isfinite(seconds) else None
         replies = queue.Queue(maxsize=1)
         expired = threading.Event()
         responses = []
 
         def fetch():
             try:
-                with self.opener.open(request, timeout=seconds) as response:
+                with self.opener.open(request, timeout=wait_seconds) as response:
                     responses.append(response)
                     result = json.load(response)
                 replies.put((True,result))
@@ -432,7 +442,7 @@ class Broker:
 
         threading.Thread(target=fetch,daemon=True).start()
         try:
-            success, result = replies.get(timeout=seconds)
+            success, result = replies.get(timeout=wait_seconds)
         except queue.Empty:
             expired.set()
             for response in responses:
