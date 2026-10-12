@@ -351,7 +351,7 @@ class Experiment:
                 path.mkdir(parents=True)
                 target = path/'agent_code'
                 shutil.copytree(self.code(), target)
-                token = self.broker.session(f'probe:{pair}:{role}')
+                token = self.broker.session(f'probe:{pair}:{role}', **improvement_contract()['limits'])
                 proposer = evidence/f'agent_{champion if role == "evolved" else 0}/agent_code'
                 try:
                     status, _ = await asyncio.to_thread(self.driver.controller, proposer, path/'logs',

@@ -29,6 +29,29 @@ def test_original_improvement_intent_and_distinct_identities():
     assert contract['renderer_sha256'] == hashlib.sha256((ROOT/'runtime/bridge.py').read_bytes()).hexdigest()
 
 
+def test_expanded_budget_changes_only_improvement_allowance_text_and_freezes_contract():
+    render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
+    args = (0,0,0,'agent_1',ROOT/'vendor/sica/agent_main.py')
+    before,after = render(*args,calls=30),render(*args,calls=500)
+    assert after == before.replace('30 model calls','500 model calls')
+    workflow = runpy.run_path(str(ROOT/'runtime/workflow.py'))
+    import yaml
+    config = yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
+    for role in workflow['ROLE_MAP']:
+        old,new = (workflow['role_templates'](config,role,calls) for calls in (30,500))
+        expected = old['agent']['system_template'].replace('SAME 30 actual calls','SAME 500 actual calls').replace('same 30 actual model calls','same 500 actual model calls')
+        assert new['agent']['system_template'] == expected
+        new['agent']['system_template'] = old['agent']['system_template']
+        assert new == old
+    contract = improvement_contract()
+    assert contract['limits'] == {'calls':500,'seconds':600}
+    assert contract['version'] == 'sica-mini-improvement-v4'
+    # The production task/default broker allowance remains30; only improve sessions override it.
+    from inspect import signature
+    from mini_swe_rsi.broker import Broker
+    assert signature(Broker.session).parameters['calls'].default == 30
+
+
 @pytest.mark.parametrize('contract', [None, {'version': 'old'}, {**improvement_contract(), 'renderer_sha256': 'changed'}])
 def test_old_or_changed_task_rejected_before_budget_runtime_or_model(tmp_path, monkeypatch, contract):
     config = {'message_protocol': TEXT_PROTOCOL}
@@ -72,7 +95,7 @@ def test_probes_keep_h0_parent_separate_from_evolved_proposer(tmp_path):
         write(logs/'result.json', {'exit_status':'Submitted'})
         return 0, ''
     exp.driver = SimpleNamespace(controller=controller)
-    exp.broker = SimpleNamespace(session=lambda *a: 'fixture', finish=lambda *a: {})
+    exp.broker = SimpleNamespace(session=lambda *a, **kw: 'fixture', finish=lambda *a: {})
     async def evaluate(*a):
         pass
     exp.evaluate_versions = evaluate
@@ -107,6 +130,7 @@ def test_declared_identity_is_bound_to_actual_mounted_source_before_launch(tmp_p
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
     # No client/runtime exists: validation must fail before any container launch.
+    driver.broker = SimpleNamespace(sessions={'fixture':{'max_calls':500}})
     monkeypatch.setattr('mini_swe_rsi.driver.archive_view', lambda *a: archive)
     args = ['improve', '--best-iter', '1' if mismatch == 'proposer' else '0',
             '--parent-iter', '1' if mismatch == 'parent' else '0',

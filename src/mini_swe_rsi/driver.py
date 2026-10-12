@@ -123,12 +123,13 @@ class Driver:
             configuration = self.root/'configuration.json'
             if configuration.exists() and read(configuration).get('improvement_task') != contract:
                 raise RuntimeError('Frozen improvement task contract changed before launch')
+            shared_calls = self.broker.sessions[token]['max_calls']
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
-                              ROOT/'vendor/sica/agent_main.py')
+                              ROOT/'vendor/sica/agent_main.py', calls=shared_calls)
             template_manifest = runpy.run_path(str(ROOT/'runtime/workflow.py'))['template_manifest']
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
-            task_identity = {'template_manifest':template_manifest(selected_config), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
+            task_identity = {'template_manifest':template_manifest(selected_config, shared_calls), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
                              'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
                              'renderer_sha256': contract['renderer_sha256'],
                              'upstream_task_sha256': contract['upstream_task_sha256'],
@@ -165,6 +166,7 @@ class Driver:
                'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
         if task_identity:
             env['RSI_IMPROVEMENT_PROTOCOL'] = task_identity['protocol']
+            env['RSI_IMPROVEMENT_CALLS'] = str(shared_calls)
         args = ['python', '-m', module, *command_args, '--logdir', '/logs']
         c = self.client.containers.run(self.image.id, args, detach=True, volumes=mounts,
                 network=self.network.name, environment=env, cap_drop=['ALL'],

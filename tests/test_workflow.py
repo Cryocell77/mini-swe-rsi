@@ -91,7 +91,7 @@ def test_child_failure_not_fake_success(tmp_path):
 
 
 @pytest.mark.skipif(__import__('os').environ.get('RUN_DOCKER_TESTS') != '1', reason='Docker fixture')
-@pytest.mark.parametrize('limit', [30, 6])
+@pytest.mark.parametrize('limit', [30, 6, 500])
 def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, monkeypatch, limit):
     import io
     import re
@@ -104,6 +104,8 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     broker=Broker(tmp_path,budget);broker.model='fixture'
     requests=[]; main_turn=0; coder_turn=0
     plan=['meta_improvement_reasoning_structure' if limit==30 else 'invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
+    if limit == 500:
+        plan = ['list']*35 + plan  # Prove the actual archived main agent crosses its former30 limit.
     class Endpoint:
         def open(self,request,**kw):
             nonlocal main_turn,coder_turn
@@ -113,6 +115,7 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
             assert 'Please solve this issue' not in user and 'Create a script to reproduce' not in user
             assert 'Shared session at role start:' in user and 'remaining_calls' in user
             assert 'Trusted current improvement context:' in user
+            assert f'{limit} actual' in system
             assert all(not payload.get(key) for key in ('tools','tool_choice','functions','function_call'))
             for message in payload['messages'][2:]:
                 if message['role']=='user':
@@ -140,6 +143,7 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
                     if op=='complete':
                         text='\n'.join(str(m.get('content','')) for m in payload['messages'])
                         req.update(invocation_id=re.findall(r'reasoning_structure_invocation_[a-f0-9]+',text)[-1],tool=re.findall(r'step_[a-f0-9]+_complete',text)[-1])
+                    elif op=='list':req['path']='/home/agent/workdir'
                     elif op=='committee':req.update(context='fixture evidence',proposal='fixture design')
                     elif op in ('archive_explorer','software_developer','general_problem_solver'):req={'op':'delegate','role':op,'task':'fixture task'}
                     cmd=command(req)['command']
@@ -162,11 +166,11 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         roles=list((tmp_path/'logs/roles').glob('*/activation.json'))
         assert all(read(p)['agent_file'].startswith('/home/agent/archive/agent_0/agent_code/') for p in roles)
         assert all(read(p)['shared_broker_session'] for p in roles)
-        if limit==30:
+        if limit in (30,500):
             assert status==0 and state['status']=='completed' and state['completed_steps']==7
             assert len(roles)==7 # four reviewers, archive, coder, general
             assert (target/'fixture.txt').read_text()=='editor'
-            assert len(requests)==21
+            assert len(requests)==(56 if limit==500 else 21)
         else:
             assert status!=0 and state['status']=='incomplete' and state['completed_steps']==2
             assert len(requests)==6 and not (target/'fixture.txt').exists()

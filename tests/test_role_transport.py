@@ -46,7 +46,7 @@ def test_all_roles_use_original_system_core_user_and_selected_format_contract():
     before = w['template_manifest'](config)
     config['model']['observation_template'] += '\narchived change'
     assert w['template_manifest'](config)['selected_config_templates_sha256'] != before['selected_config_templates_sha256']
-    assert improvement_contract()['version'] == 'sica-mini-improvement-v3'
+    assert improvement_contract()['version'] == 'sica-mini-improvement-v4'
 
 
 def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch):

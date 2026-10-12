@@ -20,6 +20,7 @@ def test_original_meta_loop_keeps_parent_and_proposer_selection_on_resume(tmp_pa
 
     class BrokerFixture:
         def session(self, *args, **kwargs):
+            assert kwargs == {'calls':500, 'seconds':600}
             return 'fixture'
 
         def finish(self, token):

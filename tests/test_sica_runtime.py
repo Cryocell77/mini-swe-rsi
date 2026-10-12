@@ -103,7 +103,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
             assert f'parent=agent_{parent}; proposer=agent_{proposer}; candidate={candidate}' in prompt
             assert 'as early as reasonably possible' in prompt
             assert 'current candidate has not been benchmarked' in prompt
-            assert '30 model calls' in prompt and '32768 total context tokens' in prompt
+            assert '500 model calls' in prompt and '32768 total context tokens' in prompt
             logs = experiment/f'agent_{index}/meta_improvement_logs'
             identity = read(logs/'improvement_task.json')
             assert read(logs/'improvement_verification.json')['status'] == 'verified'

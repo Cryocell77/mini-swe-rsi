@@ -27,7 +27,7 @@ def classified_failure(exc, status):
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
 
-def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py")):
+def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"), calls=30):
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
     # Preserve the upstream task intent; adapt tool terminology and execution identities.
@@ -57,7 +57,7 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
              'Only /home/agent/workdir is the live writable candidate. /home/agent/archive is a read-only frozen startup snapshot; '
              'any copy of the current candidate there is its initial snapshot, not live edits or an evaluated improvement. '
              'The current candidate has not been benchmarked and has no established performance benefit.\n'
-             'Existing execution limits: 30 model calls, 600 seconds per task, 60 seconds per bash command, '
+             f'Existing execution limits: {calls} model calls, 600 seconds per task, 60 seconds per bash command, '
              '2048 output tokens per model call, 32768 total context tokens including output reservation and chat overhead.\n')
     import importlib.util
     spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
@@ -80,6 +80,9 @@ def main(entry):
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--cost-threshold', default=3)
     args = parser.parse_args()
+    shared_calls = int(os.environ['RSI_IMPROVEMENT_CALLS']) if args.command == 'improve' else 30
+    if shared_calls < 1:
+        raise ValueError('Improvement call limit must be positive')
     if args.command == 'improve':
         # Rejected shared-budget requests must not enter archived transport retry backoff.
         os.environ['MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT'] = '1'
@@ -114,10 +117,10 @@ def main(entry):
         spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
         workflow_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(workflow_module)
-        templates = workflow_module.template_manifest(selected_config)
-        config = workflow_module.role_templates(selected_config, 'orchestrator')
+        templates = workflow_module.template_manifest(selected_config, shared_calls)
+        config = workflow_module.role_templates(selected_config, 'orchestrator', shared_calls)
     config['agent'].pop('mode', None)
-    config['agent'].update(step_limit=30, cost_limit=0, wall_time_limit_seconds=600,
+    config['agent'].update(step_limit=shared_calls, cost_limit=0, wall_time_limit_seconds=600,
                            output_path=Path(args.logdir) / 'trajectory.json')
     model_config = config['model']
     model_config.update(model_name='openai/' + os.environ['RSI_MODEL'], cost_tracking='ignore_errors')
@@ -140,7 +143,7 @@ def main(entry):
                   'tool_capability':'orchestrator' if args.command == 'improve' else 'bash'}
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
-        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id)
+        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id, calls=shared_calls)
         metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -172,7 +175,7 @@ def main(entry):
             child_logs = logs / 'roles' / identity
             child_logs.mkdir(parents=True)
             role = identity.split('_', 1)[1]
-            adapted = workflow_module.role_templates(selected_config, role)
+            adapted = workflow_module.role_templates(selected_config, role, shared_calls)
             child_config = dict(adapted['agent'])
             child_config.pop('mode', None)
             child_model_config = {**model_config, **{k:adapted['model'][k] for k in ('observation_template','format_error_template')}}

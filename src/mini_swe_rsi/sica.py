@@ -118,7 +118,8 @@ class SicaAdapter:
                 code = archive / f'agent_{best}/agent_code'
                 logs = next(v for k, v in paths.items() if 'meta_improvement_logs_' in k)
                 iteration = cmd[cmd.index('--current-iter')+1]
-                token = broker.session('proposal:' + str(target), seconds=600)
+                from .core import improvement_contract
+                token = broker.session('proposal:' + str(target), **improvement_contract()['limits'])
                 raw_before = tree_hash(target)
                 before = tree_hash(target, True)
                 try:

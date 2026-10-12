@@ -48,7 +48,7 @@ def tool_aliases(source=SOURCE):
     return aliases
 
 
-def instructions(role="orchestrator"):
+def instructions(role="orchestrator", calls=30):
     text = '''SICA callable transport: emit one normal mini bash action whose entire command is
 sica-workflow '<JSON object>'
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
@@ -76,7 +76,7 @@ Compatibility: original file views/archive analysis use these public read/list/s
     aliases = {name:op for name,op in tool_aliases().items() if op in permitted}
     if aliases:
         text += '\nRegistered original TOOL_NAME aliases (same operations and permissions): ' + json.dumps(aliases,sort_keys=True)
-    return text
+    return text.replace('SAME 30 actual calls', f'SAME {calls} actual calls').replace('same 30 actual model calls', f'same {calls} actual model calls')
 
 
 
@@ -85,7 +85,7 @@ ROLE_MAP = {'orchestrator':'main_orchestrator', 'archive_explorer':'archive_expl
             'reviewer':'review_committee_member'}
 
 
-def role_templates(config, role):
+def role_templates(config, role, calls=30):
     """Improve-only adapter, derived from the actually selected archived config.
 
     Keep the archived text action formatting/parser vocabulary. Replace generic
@@ -97,7 +97,7 @@ def role_templates(config, role):
     formatting = (original_system if role in ('software_developer','general_problem_solver')
                   else original_system.replace(' (or commands connected with && or ||)', ''))
     adapted['agent']['system_template'] = (definitions()[2][ROLE_MAP[role]]['SYSTEM_PROMPT']
-        + '\n' + definitions()[2][ROLE_MAP[role]]['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role))
+        + '\n' + definitions()[2][ROLE_MAP[role]]['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role, calls))
     adapted['agent']['instance_template'] = '{{task}}\nShared session at role start: {{session_status}}'
     example = "sica-workflow '{\"op\":\"read\",\"path\":\"/home/agent/workdir/README.md\",\"start_line\":1,\"end_line\":40}'"
     operation_error_guidance = ('For structured-operation errors, use this valid inspection syntax: '
@@ -116,7 +116,7 @@ def role_templates(config, role):
     return adapted
 
 
-def template_manifest(config):
+def template_manifest(config, calls=30):
     fields = {'agent':('system_template','instance_template'),
               'model':('observation_template','format_error_template')}
     def selected(value):
@@ -124,7 +124,7 @@ def template_manifest(config):
     def sha(value):
         return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     return {'selected_config_templates_sha256':sha(selected(config)),
-            'roles':{role:sha(selected(role_templates(config,role))) for role in ROLE_MAP}}
+            'roles':{role:sha(selected(role_templates(config,role,calls))) for role in ROLE_MAP}}
 
 
 def identity_context(identities, active_stage):

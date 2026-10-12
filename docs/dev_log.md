@@ -278,3 +278,20 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 分析与原生资源差异写入role-transport-review.md：当前模型/提示/30共享调用组合无有效自改进，不能证成纯模型固有能力不足或必须换模型。独立对照发现需明确披露原BaseAgent/MainOrchestrator500迭代及原sequential可多invocation，而本适配采用单活动结构；仅七步/阶段转换与四评审检查对齐，不声称完整运行时逐位复现。无新增代码/模型策略，不继续同代码采样。后续若授权需另冻结改进预算协议及对照，当前RSI及递归收益仍未成立。
 
 最终运行后核验冻结源码/测试摘要不变；原5668、第四轮4034、首个第五轮838文件仍与清单一致，最终真实运行另封存838文件，post_real_integrity.json记录。仅文档追加真实结果和边界，diff检查通过，另提交报告；无push或秘密/实验大文件入库。
+
+## 500调用预算对照启动与实现（2026-10-12）
+
+用户授权按建议测试：仅扩大元改进共享调用上限至500，保留600秒，同模型/推理参数/32768上下文/2048输出/60秒命令/并发1。先读既有要求、设计、日志及真实审计；无idea_report，沿用implementation。先更新设计与用户约束，再实施；前轮目录9246文件封存，本轮新runs/budget-500-diagnostic-20261012。原24小时期限不重置，不运行基线/val/test。
+
+- core.py：独立元任务v4，冻结limits calls500/seconds600；模型协议仍v3，旧元任务不能恢复。
+- sica.py、experiment.py：生产SICA提案及同起点improve会话显式取冻结改进额度，benchmark/default broker仍30。
+- driver.py：从真实会话max_calls渲染提示/五角色摘要并传只读运行环境，原合同变化先拒绝再读取会话。
+- runtime/bridge.py：improve主agent本地步数及元任务额度说明取宿主传入额度；所有子角色模板同额度，子角色不设独立新预算。benchmark仍30/600。
+- runtime/workflow.py：仅参数化原额度说明数字，其他提示和状态转换不变。
+- test_improvement_task.py：比较30/500提示除了数字逐字一致、所有角色模板除了数字一致、合同冻结和benchmark默认30；更新缺少budget依赖的离线fixture。
+- test_role_transport.py、test_sica_runtime.py、test_sica_inheritance.py：新合同和生产500会话回归。
+- test_workflow.py：新增500额度Docker案例，先35次合法观察再完成七步/四评审/编辑，直接验证主agent跨30调用仍运行，低额度案例保持。
+
+首次离线批次28 passed/3 skipped/4 failed，失败为新增会话额度读取早于旧合同校验，以及原身份校验fixture没有broker。已恢复合同先校验并为该fixture提供无端点会话数据，不放宽原校验。随后冻结11源码/测试文件，原SICA14份及mini74份摘要、七步和四评审原语义检查通过；最终受影响Docker/离线61 passed/87.61秒，日志/JUnit保留。未请求真实模型。
+
+README追加当前v4预算诊断说明，旧任务协议段落标历史；独立实际wire核验500额度56调用完成七步/编辑、30额度21调用成功和6额度准确失败，各角色说明/剩余额度与真实计数一致。11源码/测试冻结摘要及前轮9246文件清单未变，diff检查通过。验收后提交代码，再运行一次真实提案，生产提案限500/600，不因失败自动追加采样。

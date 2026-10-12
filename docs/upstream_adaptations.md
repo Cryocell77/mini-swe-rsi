@@ -99,3 +99,5 @@ Completion success is the model's declaration, as upstream; no source-change, co
 现在AST读取并严格核对这两个固定原名，分别注册为invoke/committee的显式别名；说明仅展示当前角色有权限的映射。requested_op原样记入事件，规范化后的操作沿用同一权限检查和原dispatch：编辑角色可用委员会别名、不能调用结构别名；归档与评审两者均不可用。没有`review_committee`等猜测映射，没有shell动作改写，`step:1`不会自动声明完成或跳转，未知/未来完成入口继续拒绝。模板/工作流摘要变化仍由现有v3冻结合同识别。
 
 最终审查补充运行时边界：适配层采用单活动结构，活动中再次invoke拒绝；固定原sequential.run可创建多个invocation状态。七步定义、成功/失败推进与四评审拼接对齐，不代表完整动态注册/多活动结构运行时逐位复现。本轮保留单活动合同，不以重复invoke新建结构掩盖真实未推进。另固定原BaseAgent/MainOrchestrator的MAX_ITERATIONS=500，而本实验全角色共享30实际调用；30并非上游默认资源规模。
+
+2026-10-12用户授权新预算对照：元改进任务合同v4明确limits为全角色共享500实际模型调用、600秒；解题仍30/600，其余参数不变。生产提案/探针从合同建立会话，宿主以真实max_calls渲染元任务与角色说明/摘要并传给容器，本地主agent步数使用同额度；子角色仍没有独立新预算。提示仅替换额度数字，不加入新策略。此为扩大预算诊断，仍不是原SICA每agent500迭代（可能含continuation）的完整运行时/资源复现；旧实验不恢复或改写，原24小时截止继续生效。
