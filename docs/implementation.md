@@ -135,3 +135,9 @@ SICA ed8275dca4d3c5dbf77229964351fe9b424797dc；mini-swe-agent 04d809ceab9df28f9
 Qwen原生Ollama且服务tokenizer摘要匹配冻结资产时，启用独立输入审计：content文本token计数、保守chat framing裕量、发送前容量拒绝，不把max_output上界当实际预留来恢复旧2048；冻结tokenizer/template/算法来源并记录完整wire消息摘要。返回prompt计数若显著低于发送文本计数则拒绝返回动作，usage照常计量。服务模板为{{ .Prompt }}，无法仅据元数据重建精确OpenAI chat序列；只承诺已验证文本计数和明显截断检测，不声称字节级输入保留。其他模型仍保留provider计量，不套Qwen tokenizer。无自动裁剪/摘要/反思策略。
 
 验证：离线重放前次88160输入准确拒绝且0模型请求；模拟被截断响应不得执行；按原AST验证权限/默认数/闭包参数；Docker模拟角色越权拒绝及简化完成七步/真实归档代码继承。全套通过、上游及旧运行摘要一致后commit，再一次真实Qwen提案，记录前后身份、输入审计、源码变化和条件评分；失败不重采样。
+
+## 2026-10-13 SenseNova新模型兼容与单次试验
+
+预检0推理：glm-5.2认证/models提供context_length=1048576/max_output_length=131072，缺少现有规范字段，错误回落Ollama产生404。仅对token.sensenova.cn显式映射这两个字段，验证正整数、相互约束、如已有标准字段则要求一致；冻结原容量、supported_features/sampling、quantization以及价格声明，模型权重摘要未公布则明确不可核验。不改角色、七步、源归档选择、模型参数或tokenizer：远程服务没有已验证tokenizer，不套用Qwen完整性保证。
+
+当前服务pricing的prompt/completion/input_cache_read/image/request均声明字符串0；只接受所有字段显式零的无单位歧义价格合同，冻结来源，标明仅服务声明非实际账单，非零/缺失/未知收费字段不猜单位、不放开benchmark价格守卫。测试别名映射、冲突/缺失拒绝、价格守卫与变更可检测；完整工程验收后commit，新目录只运行一次提案。记录API能力与响应限制，本次与Qwen同时改变服务与容量，不能作纯模型因果对照。

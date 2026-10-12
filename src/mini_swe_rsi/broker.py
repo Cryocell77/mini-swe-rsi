@@ -222,6 +222,16 @@ class Broker:
             selected = next((m for m in models if m['id'] == requested + ':latest'), None)
         if selected is None:
             raise ModelError('Configured model is not advertised by the endpoint')
+        catalog = None
+        if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'token.sensenova.cn':
+            catalog = {key: selected.get(key) for key in ('context_length', 'max_output_length',
+                'supported_features', 'supported_sampling_parameters', 'quantization', 'pricing')}
+            for standard, native_key in (('context_window', 'context_length'),
+                                         ('max_output_tokens', 'max_output_length')):
+                value = catalog[native_key]
+                if type(value) is not int or value <= 0 or (standard in selected and selected[standard] != value):
+                    raise ModelError('Invalid or conflicting SenseNova capacity metadata')
+                selected = {**selected, standard: value}
         native = None
         if 'context_window' not in selected or 'max_output_tokens' not in selected:
             # Ollama's OpenAI model list omits capacities. Verify the native
@@ -279,10 +289,24 @@ class Broker:
                          'cached_input_per_million':.006, 'input_per_million':.3,
                          'output_per_million':1.2}
                         if official and self.model == 'deepseek-flash' else None)
+        if catalog is not None:
+            tariff = catalog['pricing']
+            # Only explicit all-zero rates are unambiguous without currency/unit
+            # documentation. Never infer paid rates or ignore extra charge fields.
+            required = {'prompt', 'completion', 'input_cache_read', 'image', 'request'}
+            if (isinstance(tariff, dict) and set(tariff) == required
+                    and all(type(value) in (str, int, float) and str(value) in ('0', '0.0')
+                            for value in tariff.values())):
+                self.pricing = {'source': 'authenticated SenseNova /models pricing',
+                    'basis': 'explicit all-zero service tariff; not an independently verified invoice',
+                    'cached_input_per_million': 0.0, 'input_per_million': 0.0, 'output_per_million': 0.0}
         self.service_identity = {'capacity_source':'authenticated /models',
             'context_window':selected['context_window'], 'max_output_tokens':selected['max_output_tokens'],
             'owned_by':selected.get('owned_by'), 'api_capabilities':selected.get('api_capabilities'),
             'prefix_protocol':self.prefix_protocol, 'pricing':self.pricing}
+        if catalog is not None:
+            self.service_identity.update(capacity_source='authenticated SenseNova /models field mapping',
+                                         sensenova_catalog=catalog)
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
             if architecture == 'qwen35':
