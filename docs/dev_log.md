@@ -404,3 +404,5 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 无总时限实现记录：core持久unbounded_diagnostic只用于独立诊断；broker等待None、状态和metrics序列化null；driver无总deadline不建kill timer，relay/socket/model等待None，评分min后int；bridge提示准确区分原生与外加期限；smoke_once显式互斥无总时限模式。tests新增无期限恢复/JSON/socket/原生迭代与600秒任务仍执行，以及高容量Docker七步fixture改为真正无总deadline路径。定向36 passed/15.43秒。此前仅订阅版完整138 passed/308.17秒已留存，不能当新无期限实现验收；开始新完整验收。
 
 最终无额外总时限及订阅合同验收：140 passed/362.99秒，失败0（1条依赖弃用警告）。真实Docker模拟端点完成无总deadline七步及子角色执行，同时有限deadline/500/1000迭代测试仍通过；源冻结一致。主agent审查接受，提交后仅补测已有冻结候选，不重启提案。
+
+2026-10-13：取消外加诊断总时限后，冻结qfmodel候选单题已评分1.0但600秒TimeExceeded；36请求/325042 tokens，订阅美元成本未知。源码冻结、95上游文件、3454历史封存文件一致，无基线或新提案；详见docs/qfmodel-single-smoke.md。
