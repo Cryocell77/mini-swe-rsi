@@ -141,3 +141,9 @@ Qwen原生Ollama且服务tokenizer摘要匹配冻结资产时，启用独立输�
 预检0推理：glm-5.2认证/models提供context_length=1048576/max_output_length=131072，缺少现有规范字段，错误回落Ollama产生404。仅对token.sensenova.cn显式映射这两个字段，验证正整数、相互约束、如已有标准字段则要求一致；冻结原容量、supported_features/sampling、quantization以及价格声明，模型权重摘要未公布则明确不可核验。不改角色、七步、源归档选择、模型参数或tokenizer：远程服务没有已验证tokenizer，不套用Qwen完整性保证。
 
 当前服务pricing的prompt/completion/input_cache_read/image/request均声明字符串0；只接受所有字段显式零的无单位歧义价格合同，冻结来源，标明仅服务声明非实际账单，非零/缺失/未知收费字段不猜单位、不放开benchmark价格守卫。测试别名映射、冲突/缺失拒绝、价格守卫与变更可检测；完整工程验收后commit，新目录只运行一次提案。记录API能力与响应限制，本次与Qwen同时改变服务与容量，不能作纯模型因果对照。
+
+## 2026-10-13 qfmodel代理单次诊断
+
+预检0推理：/models仅id/object/owned_by，原生Ollama/llama/LMStudio元数据均404；CLIProxyAPI官方客户端使用/models?client_version=pi。实际扩展目录slug=qfmodel/context_window=180000/max_tokens=8192，max_context_window同180000。仅loopback且owned_by=qoder、标准容量缺失时查询该认证目录，要求唯一同名模型及有效容量、标准字段无冲突；冻结允许的容量/owner信息，忽略目录中的Codex通用base_instructions等提示，不能污染agent提示。代理声明不是实际后端权重或真实容量的独立证明，来源必须披露。没有已验证tokenizer，不套Qwen完整性保证。
+
+价格未知继续保留benchmark价格守卫；如源码变化但单题被价格守卫阻止，记未测而非已失败解题，不擅自猜免费。保留同一模型别名，不自动换后端。安全补记HTTP状态码以免重现上轮只记录HTTPError类名的诊断缺口，不保存任意错误正文。先针对性与完整工程验证提交，然后新目录一次真实提案，无宿主重采样。

@@ -380,3 +380,11 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 38c2db1一次H0提案638.96秒，41实际请求/38正常stop/3无usage（RemoteDisconnected1、HTTPError2）；已计量2541437tokens。归档角色首次成功且完成第一步，随后另外两次归档委派被连接/API失败打断，最后main BadRequestError退出。1/7，无coder启动、父候选源码完全相同，预定dev跳过；无基线/val/test/额外提案。无预算拒绝。已有broker只保存HTTPError类名，无法还原状态或服务原因，不写成已证实HTTP400/限流/纯模型能力不足。服务宣称零费率但3次调用usage未知，账单未独立核验。
 
 独立审查结束模型/服务身份、src/runtime/tests冻结、95项上游及旧843/920/841文件封存全部一致，容器清理。本次真实输入无Qwen tokenizer审计；不能从服务无context错误宣称输入完整。new-model-single-smoke.md追加完整报告；不更改运行源码、不追加模型推理，仅提交结果文档。本轮辅助只读核验脚本误将completed_steps整型取len及查错.upstream路径均已修正，无原产物变化。
+
+## 2026-10-13 新配置预检
+
+用户再授权单题检查。qfmodel（本地CLIProxyAPI/Qoder）常规模型目录缺容量，原生接口404，0推理。已异步询问缺失信息，同时只读发现官方pi客户端扩展目录：180000 context/8192 output，slug匹配，目录有通用Codex提示但必须忽略。追加设计后只做该代理的显式元数据映射与HTTP状态日志；实际后端/权重/费用未知，不冒称真实模型可核验。旧运行不更改。
+
+实现记录：broker.py仅loopback/Qoder且缺容量时读取认证pi扩展目录，唯一slug/正整数/冲突/最大context校验；仅白名单元数据冻结，不使用目录提示，不证明后端或价格。HTTP错误额外保存数字状态码，不保留正文。tests/test_proxy_identity.py覆盖容量失效/重复/身份变更/提示不注入/价格守卫/429计量无正文。定向38 passed/20.34秒，真实连续两次metadata一致、0推理。准备完整含Docker验收。
+
+完整含Docker模拟端点验收135 passed/231.40秒，失败0（1条依赖弃用警告）。主agent接受代理声明映射和安全HTTP状态日志；src/runtime/tests冻结一致。工程阶段0真实推理，提交后仅一次提案。

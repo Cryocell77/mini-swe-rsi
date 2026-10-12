@@ -107,3 +107,5 @@ v6修复后的一次Qwen实测见[结果报告](docs/sica-tool-boundary-smoke.md
 SenseNova `token.sensenova.cn` 的认证模型目录使用 `context_length/max_output_length`，框架显式映射并冻结这些容量、量化和服务价格声明。仅完整全零费率可直接记为服务声明的零费率（不代表独立账单验证）；其他价格保持未知并拒绝基准推理，不猜币种/单位。远程GLM没有已验证tokenizer，不沿用Qwen输入完整性保证。OpenAI兼容调用形式参考[官方API说明](https://github.com/OpenSenseNova/SenseNova6.8/blob/main/API.md)，具体GLM能力以本次认证模型目录为准。
 
 最新[GLM单次检查](docs/new-model-single-smoke.md)：工程127项通过；真实提案完成1/7后连接/API失败，无源码变化、开发题跳过，不能判定模型自改进能力不足。
+
+本地CLIProxyAPI/Qoder的标准目录缺容量时，读取认证`/models?client_version=pi`的同名容量声明；仅作为代理声明冻结，不证明实际后端权重，不使用目录附带的通用指令或猜测价格。未知价格仍拒绝基准推理。HTTP失败记录状态码，正文不保存。扩展目录来源参考[官方客户端](https://github.com/router-for-me/pi-cliproxyapi-provider)。

@@ -222,6 +222,24 @@ class Broker:
             selected = next((m for m in models if m['id'] == requested + ':latest'), None)
         if selected is None:
             raise ModelError('Configured model is not advertised by the endpoint')
+        proxy_catalog = None
+        if (urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname in ('127.0.0.1', 'localhost', '::1')
+                and selected.get('owned_by') == 'qoder'
+                and ('context_window' not in selected or 'max_output_tokens' not in selected)):
+            matches = [m for m in self.remote('/models?client_version=pi').get('models', [])
+                       if m.get('slug') == selected['id']]
+            if len(matches) != 1:
+                raise ModelError('No unique proxy capacity declaration for configured model')
+            entry = matches[0]
+            proxy_catalog = {key: entry.get(key) for key in ('slug', 'context_window', 'max_context_window', 'max_tokens')}
+            for standard, field in (('context_window', 'context_window'), ('max_output_tokens', 'max_tokens')):
+                value = entry.get(field)
+                if type(value) is not int or value <= 0 or (standard in selected and selected[standard] != value):
+                    raise ModelError('Invalid or conflicting proxy capacity declaration')
+                selected = {**selected, standard: value}
+            maximum = entry.get('max_context_window')
+            if maximum is not None and (type(maximum) is not int or maximum < selected['context_window']):
+                raise ModelError('Invalid proxy maximum context declaration')
         catalog = None
         if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'token.sensenova.cn':
             catalog = {key: selected.get(key) for key in ('context_length', 'max_output_length',
@@ -307,6 +325,9 @@ class Broker:
         if catalog is not None:
             self.service_identity.update(capacity_source='authenticated SenseNova /models field mapping',
                                          sensenova_catalog=catalog)
+        if proxy_catalog is not None:
+            self.service_identity.update(capacity_source='authenticated loopback Qoder proxy /models?client_version=pi',
+                proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
             if architecture == 'qwen35':
@@ -558,6 +579,8 @@ class Broker:
                     return returned
                 except Exception as exc:
                     reason = str(exc) if isinstance(exc,ModelError) else type(exc).__name__
+                    if isinstance(exc, urllib.error.HTTPError):
+                        event['http_status'] = exc.code
                     if reason == 'TimeExceeded':
                         s['terminal_reason'] = reason
                     if isinstance(exc,urllib.error.HTTPError) and exc.code == 400:
