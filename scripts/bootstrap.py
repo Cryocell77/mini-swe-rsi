@@ -22,3 +22,11 @@ for name, entry in lock.items():
                 item.name = str(pathlib.Path(*parts))
                 archive.extract(item, target, filter='data')
     print(name, entry['commit'])
+
+    for filename, source in entry.get('workflow_files', {}).items():
+        raw = (target/source['path']).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != source['sha256']:
+            raise ValueError(f'{name}: workflow source differs: {filename}')
+        destination = root/'vendor/sica_workflow'/filename
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(raw)

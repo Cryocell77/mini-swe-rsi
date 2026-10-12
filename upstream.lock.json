@@ -9,6 +9,44 @@
       "benchmark_base.py": "f3fc93daa6eed83957dc4e98c92e210f35d83cc5e327c7f2851f64d21d80550f",
       "agent_main.py": "1f5abd87a173e68db330227ead7581121b13ebeb607a8209231b13bab01a6fc9",
       "LICENSE": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
+    },
+    "workflow_files": {
+      "archive_explorer.py": {
+        "path": "base_agent/src/agents/implementations/archive_explorer.py",
+        "sha256": "f0f7365064967538c75456a4efa7c67a5656ae0c8fb1c9ad159d48ed45c109fe"
+      },
+      "coder.py": {
+        "path": "base_agent/src/agents/implementations/coder.py",
+        "sha256": "c1acd8412e80671c72c0762e5f46401671652356a6b79a646a63cabdb32e5fc5"
+      },
+      "committee_design.py": {
+        "path": "base_agent/src/tools/committee_design.py",
+        "sha256": "d965d83cef7ed299d8c377563482670c4c6af026a4094be24058c425d6dd3ceb"
+      },
+      "main_orchestrator.py": {
+        "path": "base_agent/src/agents/implementations/main_orchestrator.py",
+        "sha256": "2bd4d7a3dbaffea0773c354151fff16de6adb11c04216772588c4e90ffe372da"
+      },
+      "meta_improvement.py": {
+        "path": "base_agent/src/tools/reasoning_structures/meta_improvement.py",
+        "sha256": "8e1ed609f1c9a80fb9dd3e951c9f11617b5d803324a8886ff914004078a80783"
+      },
+      "problem_solver.py": {
+        "path": "base_agent/src/agents/implementations/problem_solver.py",
+        "sha256": "5bfbc5b4632fe5d746e0cc88cbbf6d0127f70decbab798557b9ae2f8366888dd"
+      },
+      "review_committee_member.py": {
+        "path": "base_agent/src/agents/implementations/review_committee_member.py",
+        "sha256": "37326db656fa9dff82d8b5d2425592e1ef38ff0ce5707d0308f588d70cb39e17"
+      },
+      "sequential.py": {
+        "path": "base_agent/src/tools/reasoning_structures/sequential.py",
+        "sha256": "4f53ca038bb3295dd205ccd03937264f43428655a8ae0ddd1fa70b037fe0857f"
+      },
+      "LICENSE": {
+        "path": "LICENSE",
+        "sha256": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
+      }
     }
   },
   "mini": {

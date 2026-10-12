@@ -36,9 +36,8 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
                          'testing_procedure': 'You can inspect and syntax-check Python locally. Benchmark grading is host-controlled.'}[name])
     text = text.replace('/home/sandbox/workdir', '/home/agent/workdir')
     text = text.replace('invoke the meta improvement reasoning structure as early as reasonably possible',
-                        'carry out meta-improvement reasoning directly as early as reasonably possible')
-    text = text.replace('using the archive exploration tools available to you', 'reading the archive with bash')
-    text = text.replace('(call a sub-agent to)', '')
+                        'invoke the meta improvement reasoning structure as early as reasonably possible')
+    text = text.replace('using the archive exploration tools available to you', 'using structured archive analysis and read/list/search operations')
     text = text.replace(
         f'The agent code in this directory is the best performing in the sequence of agent iterations, and corresponds to agent iteration {best}.',
         f'The code in /home/agent/workdir is the current unassessed candidate {candidate}, copied from selected parent agent_{parent}. '
@@ -53,7 +52,11 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
              'The current candidate has not been benchmarked and has no established performance benefit.\n'
              'Existing execution limits: 30 model calls, 600 seconds per task, 60 seconds per bash command, '
              '2048 output tokens per model call, 32768 total context tokens including output reservation and chat overhead.\n')
-    return text
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
+    workflow_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(workflow_module)
+    return workflow_module.definitions()[2]['main_orchestrator']['SYSTEM_PROMPT'] + '\n' + workflow_module.core_prompt('main_orchestrator', {'problem_statement':text}) + '\n' + workflow_module.instructions()
 
 
 def main(entry):
@@ -69,6 +72,9 @@ def main(entry):
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--cost-threshold', default=3)
     args = parser.parse_args()
+    if args.command == 'improve':
+        # Rejected shared-budget requests must not enter archived transport retry backoff.
+        os.environ['MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT'] = '1'
     if args.command == 'improve' and (args.parent_iter is None or not args.candidate_id):
         raise ValueError('Improvement requires explicit parent and candidate identities')
     code = Path(entry).resolve().parent
@@ -76,9 +82,14 @@ def main(entry):
     from minisweagent.agents.default import DefaultAgent
     from minisweagent.environments.local import LocalEnvironment
     from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
+    workflow = None
     class TaskEnvironment(LocalEnvironment):
+        readonly = False
         def execute(self, action, **kwargs):
-            out = rpc('/tool', action)
+            out = workflow.execute(action, self.readonly) if workflow else None
+            if out is None:
+                out = rpc('/tool', action)
+            out.setdefault('exception_info', '')
             self._check_finished(out)
             return out
         def get_template_vars(self, **kwargs):
@@ -102,20 +113,52 @@ def main(entry):
     logs.mkdir(parents=True, exist_ok=True)
     # This evidence is supplementary; host independently records the mounted source digest and model calls.
     activation = {'agent_file': str(Path(sys.modules[DefaultAgent.__module__].__file__).resolve()),
+                  'model_file': str(Path(sys.modules[LitellmTextbasedModel.__module__].__file__).resolve()),
                   'config_file': str(code / 'minisweagent/config/mini_textbased.yaml'),
                   'platform': platform.uname()._asdict(),
-                  'command': args.command}
+                  'command': args.command,
+                  'tool_capability':'orchestrator' if args.command == 'improve' else 'bash'}
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
         task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id)
         metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                    'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest()}
+                    'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest(),
+                    'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
+                    'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}
         (logs / 'improvement_task.json').write_text(json.dumps(metadata))
         (logs / 'improvement_prompt.txt').write_text(task)
     else:
         task = Path(args.prompt_file).read_text()
+    if args.command == 'improve':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
+        workflow_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(workflow_module)
+        def delegate(identity, prompt, readonly):
+            child_logs = logs / 'roles' / identity
+            child_logs.mkdir(parents=True)
+            child_config = dict(config['agent'])
+            # Global limits are broker-owned; never grant a fresh local task budget.
+            child_config.update(step_limit=0, wall_time_limit_seconds=0,
+                                output_path=child_logs/'trajectory.json')
+            child_environment = TaskEnvironment(cwd=args.workdir, timeout=60,
+                               env=config['environment'].get('env', {}))
+            child_environment.readonly = True if readonly else 'editor'
+            child = DefaultAgent(LitellmTextbasedModel(**model_config), child_environment, **child_config)
+            (child_logs/'activation.json').write_text(json.dumps({**activation, 'role':identity,
+                          'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True}))
+            try:
+                result = child.run(prompt)
+            except Exception as exc:
+                result = {'exit_status':type(exc).__name__, 'submission':''}
+            finally:
+                child.save(child_logs/'trajectory.json')
+            (child_logs/'result.json').write_text(json.dumps(result))
+            return result
+        workflow = workflow_module.Workflow(logs, delegate)
+        environment.readonly = 'orchestrator'
     start = time.time()
     try:
         result = agent.run(task)
@@ -123,6 +166,8 @@ def main(entry):
         result = {'exit_status': type(exc).__name__, 'submission': ''}
     finally:
         agent.save(logs / 'trajectory.json')
+    if workflow:
+        workflow.finish(result)
     (logs / 'answer.txt').write_text(result.get('submission', ''))
     (logs / 'result.json').write_text(json.dumps(result))
     trace = '\n\n'.join(str(m.get('content', '')) for m in agent.messages)

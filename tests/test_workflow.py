@@ -1,0 +1,236 @@
+import importlib.util
+import json
+import shlex
+
+import pytest
+
+from mini_swe_rsi.core import ROOT, improvement_contract, read
+
+spec = importlib.util.spec_from_file_location('workflow_fixture', ROOT/'runtime/workflow.py')
+w = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(w)
+
+
+def command(request):
+    return {'command':'sica-workflow '+shlex.quote(json.dumps(request))}
+
+
+def test_pinned_fields_and_core_prompts():
+    steps,specs,roles = w.definitions()
+    assert len(steps) == 7
+    assert list(specs) == ['pragmatist','taste_maker','utility_optimizer','testing_manager']
+    assert steps[0]['instruction'].startswith('Use the archive explorer agent')
+    assert 'MUST call' in steps[2]['instruction']
+    assert 'DO NOT attempt the task yourself' in w.core_prompt('review_committee_member',dict(specialisation='spec',context='context',proposal='proposal'))
+    assert 'outer-loop entrypoint orchestrator' in roles['main_orchestrator']['SYSTEM_PROMPT']
+    assert 'general_problem_solver' == roles['problem_solver']['AGENT_NAME']
+    assert 'then you must invoke one of your' not in w.core_prompt('coder',dict(programming_instructions='task')) # unused upstream variable
+    for role in ('software_developer','reviewer','archive_explorer'):
+        assert 'Invoke meta_improvement_reasoning_structure' not in w.instructions(role)
+    assert improvement_contract()['workflow_sources'] == {n:v['sha256'] for n,v in read(ROOT/'upstream.lock.json')['sica']['workflow_files'].items()}
+
+
+def test_sequential_success_failure_bad_ids_and_interruption(tmp_path):
+    flow = w.Workflow(tmp_path, lambda *a: None)
+    state = flow.dispatch({'op':'invoke'})
+    with pytest.raises(ValueError):
+        flow.dispatch({'op':'complete','invocation_id':state['invocation_id'],'tool':'bad'})
+    for index in range(7):
+        state = flow.current()
+        assert state['index'] == index
+        result = flow.dispatch({'op':'complete','invocation_id':state['invocation_id'],'tool':state['completion_tool']})
+    assert flow.status == 'completed' and flow.completed_steps == 7
+    assert 'Reasoning structure complete' in result
+    flow.dispatch({'op':'invoke'})
+    assert flow.completed_steps == 0
+    state=flow.current()
+    flow.dispatch({'op':'complete','invocation_id':state['invocation_id'],'tool':state['completion_tool'],'success':False})
+    assert flow.status == 'failed' and flow.active is None
+    with pytest.raises(ValueError):
+        w.Workflow(tmp_path, lambda *a:None)
+    other=w.Workflow(tmp_path/'early', lambda *a:None)
+    other.dispatch({'op':'invoke'})
+    other.finish({'exit_status':'Submitted'})
+    assert other.status=='incomplete' and other.completed_steps == 0 and other.active
+
+
+def test_four_reviews_and_capability_boundary(tmp_path, monkeypatch):
+    calls=[]
+    def delegate(identity,prompt,readonly):
+        calls.append((identity,prompt,readonly))
+        return {'exit_status':'Submitted','submission':identity}
+    flow=w.Workflow(tmp_path,delegate)
+    result=flow.dispatch({'op':'committee','context':'evidence','proposal':'design'})
+    assert len(calls)==4 and all(c[2] for c in calls)
+    assert all(spec in calls[i][1] for i,spec in enumerate(flow.specs.values()))
+    assert result == ''.join(f"\n\nReviewer {i}'s review:\n{c[0]}" for i,c in enumerate(calls))
+    assert all('DO NOT attempt the task yourself' in c[1] for c in calls)
+    for mode in (True,'orchestrator'):
+        assert flow.execute({'command':'touch /home/agent/workdir/forbidden'},mode)['returncode']==1
+        report="COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\nfull review"
+        out=flow.execute({'command':"printf '%s\\n' "+shlex.quote(report)},mode)
+        assert out['output'].startswith(report)
+    for mode in (True,'editor'):
+        assert flow.execute(command({'op':'invoke'}),mode)['returncode']==1
+    assert flow.execute(command({'op':'read','path':'/etc/passwd'}),True)['returncode']==1
+    assert flow.execute({'command':'sica-workflow bad && touch x'},'orchestrator')['returncode']==1
+    monkeypatch.setattr(w,'archive_overview',lambda:'ORIGINAL OVERVIEW')
+    flow.call_role('archive_explorer','focus')
+    assert 'ORIGINAL OVERVIEW' in calls[-1][1] and calls[-1][2]
+    flow.call_role('software_developer','implement')
+    flow.call_role('general_problem_solver','document')
+    assert not calls[-1][2] and not calls[-2][2]
+
+
+def test_child_failure_not_fake_success(tmp_path):
+    flow=w.Workflow(tmp_path,lambda *a: {'exit_status':'LimitsExceeded','submission':''})
+    with pytest.raises(ValueError,match='LimitsExceeded'):
+        flow.dispatch({'op':'committee','context':'','proposal':''})
+    assert flow.counter==1
+    assert flow.completed_steps==0
+
+
+@pytest.mark.skipif(__import__('os').environ.get('RUN_DOCKER_TESTS') != '1', reason='Docker fixture')
+@pytest.mark.parametrize('limit', [30, 6])
+def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, monkeypatch, limit):
+    import io
+    import re
+    import time
+    from mini_swe_rsi.broker import Broker
+    from mini_swe_rsi.core import Budget, tree_hash
+    from mini_swe_rsi.driver import Driver, initial_code
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture-secret',LOCAL_LLM_MODEL='fixture'))
+    budget=Budget(tmp_path);budget.enter('preflight')
+    broker=Broker(tmp_path,budget);broker.model='fixture'
+    requests=[]; main_turn=0; coder_turn=0
+    plan=['invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
+    class Endpoint:
+        def open(self,request,**kw):
+            nonlocal main_turn,coder_turn
+            payload=json.loads(request.data);requests.append(payload)
+            task=payload['messages'][1]['content']
+            if 'Self-contained task:' in task: # old protocol must never be used
+                raise AssertionError('Unrendered role prompt')
+            if 'You are a member of a Meta-Agent design review committee' in task:
+                cmd="printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\nreview complete')
+            elif 'You are an expert archive analyst' in task:
+                assert 'high-level overview' in task
+                cmd="printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\narchive evidence')
+            elif 'You are an expert software engineer' in task:
+                coder_turn+=1
+                cmd="printf editor > /home/agent/workdir/fixture.txt" if coder_turn==1 else 'echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
+            elif 'You are a very-competent problem solver' in task:
+                cmd="printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\ndocumentation complete')
+            else:
+                op=plan[main_turn];main_turn+=1
+                if op=='submit':cmd='echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
+                else:
+                    req={'op':op}
+                    if op=='complete':
+                        text='\n'.join(str(m.get('content','')) for m in payload['messages'])
+                        req.update(invocation_id=re.findall(r'reasoning_structure_invocation_[a-f0-9]+',text)[-1],tool=re.findall(r'step_[a-f0-9]+_complete',text)[-1])
+                    elif op=='committee':req.update(context='fixture evidence',proposal='fixture design')
+                    elif op in ('archive_explorer','software_developer','general_problem_solver'):req={'op':'delegate','role':op,'task':'fixture task'}
+                    cmd=command(req)['command']
+            response={'id':'fixture','created':int(time.time()),'object':'chat.completion','model':'fixture','choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':f'THOUGHT: Fixture.\n```mswea_bash_command\n{cmd}\n```'}}],'usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
+            return io.BytesIO(json.dumps(response).encode())
+    broker.opener=Endpoint(); driver=Driver(tmp_path,None,broker,budget)
+    try:
+        archive=tmp_path/'archive';code=archive/'agent_0/agent_code';initial_code(code)
+        import shutil
+        target=tmp_path/'candidate';shutil.copytree(code,target)
+        original=tree_hash(code)
+        token=broker.session('workflow',calls=limit)
+        status,_=driver.controller(code,tmp_path/'logs',['improve','--parent-iter','0','--best-iter','0','--candidate-id','agent_1','--current-iter','0'],token,archive=archive,target=target)
+        usage=broker.finish(token)
+        state=read(tmp_path/'logs/workflow_state.json')
+        assert len(requests)==usage['calls'] and len(requests)<=limit
+        assert all(p['model']=='fixture' and p['max_tokens']==2048 for p in requests)
+        assert tree_hash(code)==original
+        assert read(tmp_path/'logs/improvement_verification.json')['status']=='verified'
+        roles=list((tmp_path/'logs/roles').glob('*/activation.json'))
+        assert all(read(p)['agent_file'].startswith('/home/agent/archive/agent_0/agent_code/') for p in roles)
+        assert all(read(p)['shared_broker_session'] for p in roles)
+        if limit==30:
+            assert status==0 and state['status']=='completed' and state['completed_steps']==7
+            assert len(roles)==7 # four reviewers, archive, coder, general
+            assert (target/'fixture.txt').read_text()=='editor'
+            assert len(requests)==21
+        else:
+            assert status!=0 and state['status']=='incomplete' and state['completed_steps']==2
+            assert len(requests)==6 and not (target/'fixture.txt').exists()
+    finally:
+        driver.close();broker.close()
+
+
+def test_role_preparation_error_is_identified(tmp_path, monkeypatch):
+    flow=w.Workflow(tmp_path,lambda *a:None)
+    def fail():
+        raise ValueError('overview failure')
+    monkeypatch.setattr(w,'archive_overview',fail)
+    with pytest.raises(ValueError,match='overview failure'):
+        flow.call_role('archive_explorer','focus')
+    events=[json.loads(line) for line in (tmp_path/'workflow_events.jsonl').read_text().splitlines()]
+    assert events[-1]['kind']=='role_error' and events[-1]['identity']==events[0]['identity']
+
+
+def test_global_thirty_actual_calls_and_deadline_across_roles(tmp_path, monkeypatch):
+    import io
+    import time
+    from mini_swe_rsi.broker import Broker, ModelError
+    from mini_swe_rsi.core import Budget
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
+    budget=Budget(tmp_path);budget.enter('preflight')
+    broker=Broker(tmp_path,budget);broker.model='fixture';actual=[]
+    class Endpoint:
+        def open(self,request,**kw):
+            actual.append(json.loads(request.data))
+            return io.BytesIO(json.dumps({'choices':[],'usage':{'prompt_tokens':5,'completion_tokens':2,'total_tokens':7}}).encode())
+    broker.opener=Endpoint();token=broker.session('roles')
+    def delegate(identity,prompt,readonly):
+        broker.complete(token,{'model':'forbidden-stronger','messages':[{'role':'user','content':prompt}]})
+        return {'exit_status':'Submitted','submission':identity}
+    flow=w.Workflow(tmp_path/'workflow',delegate)
+    try:
+        for i in range(7):
+            flow.dispatch({'op':'committee','proposal':'design','context':'evidence'})
+        flow.call_role('software_developer','edit')
+        flow.call_role('general_problem_solver','document')
+        with pytest.raises(ModelError,match='LimitsExceeded'):
+            flow.call_role('software_developer','no new budget')
+        assert len(actual)==30 and broker.sessions[token]['calls']==30
+        assert all(p['model']=='fixture' and p['max_tokens']==2048 for p in actual)
+        broker.sessions[token]['deadline']=time.time()-1
+        with pytest.raises(ModelError,match='TimeExceeded'):
+            flow.call_role('general_problem_solver','no new time budget')
+        assert len(actual)==30
+    finally:
+        broker.close()
+
+
+@pytest.mark.parametrize('mutation',['missing','extra','changed'])
+def test_pinned_sources_reject_missing_extra_or_changed(tmp_path, monkeypatch, mutation):
+    import shutil
+    from mini_swe_rsi import core
+    shutil.copytree(ROOT/'vendor/sica_workflow',tmp_path/'vendor/sica_workflow')
+    shutil.copy(ROOT/'upstream.lock.json',tmp_path/'upstream.lock.json')
+    source=tmp_path/'vendor/sica_workflow/meta_improvement.py'
+    if mutation=='missing':source.unlink()
+    elif mutation=='changed':source.write_text(source.read_text()+'# altered\n')
+    else:(source.parent/'extra.py').write_text('pass')
+    monkeypatch.setattr(core,'ROOT',tmp_path)
+    with pytest.raises(RuntimeError,match='Pinned workflow sources'):
+        core.improvement_contract()
+
+
+def test_atomic_state_write_preserves_previous_valid_state(tmp_path, monkeypatch):
+    from pathlib import Path
+    flow=w.Workflow(tmp_path,lambda *a:None)
+    previous=read(tmp_path/'workflow_state.json')
+    def interrupted(*a,**kw):
+        raise OSError('simulated interruption before atomic replace')
+    monkeypatch.setattr(Path,'replace',interrupted)
+    flow.status='active'
+    with pytest.raises(OSError,match='interruption'):
+        flow.save()
+    assert read(tmp_path/'workflow_state.json')==previous

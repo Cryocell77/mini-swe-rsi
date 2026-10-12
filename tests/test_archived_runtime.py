@@ -61,6 +61,7 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
             status, output = driver.controller(code, tmp_path/f'logs_{i}',
                       ['benchmark','--prompt-file','/task.txt'], token, archive=archive, prompt=prompt)
             broker.finish(token)
+            assert not (tmp_path/f'logs_{i}/workflow_state.json').exists()
             assert status == 0, output
             assert read(tmp_path/f'logs_{i}/result.json')['exit_status'] == 'Submitted', output
             assert f'agent_{i}/agent_code/minisweagent/agents/default.py' in read(tmp_path/f'logs_{i}/activation.json')['agent_file']
@@ -69,6 +70,7 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
         events = [json.loads(x) for x in (tmp_path/'events.jsonl').read_text().splitlines()]
         for e in events:
             if e['kind']=='agent_launch':
+                assert not any(m['destination']=='/workflow_sources' for m in e['mounts'])
                 assert all(not m['read_write'] for m in e['mounts'] if m['destination'] in ['/runtime','/upstream','/home/agent/archive'])
                 assert not any('.env' in m['destination'] or '/private' in m['destination'] for m in e['mounts'])
     finally:

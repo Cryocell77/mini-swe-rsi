@@ -186,3 +186,31 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 ## 第三轮提交后真实验收
 
 代码commit0129c97；runs/task-protocol-repair-20261012/real-smoke实际一次同Qwen SICA提案。宿主/容器task SHA身份verified，新提示完整进入wire。30调用30只读命令，0次diff、2次空正文动作适配，287462total/267756cached，53.47秒；最大prompt17472、completion127且全部stop，无上下文/格式/服务错误及未计量调用。源码未变、LimitsExceeded进程1，失败摘要正确。模型/服务身份不变；旧5668封存文件不变。没有候选，未重复H0开发题或评分器已通过检查，不重测基线/val/test。工程验收通过，RSI仍未证明；身份与预算提示已送达但未转化为编辑行为。详细报告task-protocol-review.md。
+
+## 第四轮启动：恢复七步结构及同模型执行角色
+
+用户已授权GPT-6.1 Sol / low子agent实施、主agent独立审查/上游对照/验收/commit/测试。先更新implementation.md及user_requirements.md，恢复原七步定义、可调用状态推进及所需角色，所有运行调用共享原模型和预算；不将原SICAagent内部工作流缺失继续只用一段提示替代。旧实验封存，真实检查另存新目录，先完成工程验收再进行一次真实提案。无idea_report.md，沿用现有设计文档，不另建论文计划。
+
+## 第四轮七步工作流实施（子agent，待主agent验收）
+
+- `vendor/sica_workflow/*.py`、`LICENSE`：新增固定提交八份逐字上游源及许可；既有五份vendor与mini74文件未修改。
+- `upstream.lock.json`、`scripts/bootstrap.py`：追加原路径/摘要映射和可重现提取；新合同校验完整源文件集合。
+- `runtime/workflow.py`：AST提取七步、四specialisations、角色system/description及实际core prompt；显式invoke/state/current complete，成功顺序推进、失败退出、早退/预算未完成记录；原ArchiveAnalyzer概览与best/worst/compare；串行四评审直接返回，无合成器。模型只读命令能力限制、编辑角色禁止操作父生命周期；只读是工具接口能力，不是每角色OS沙箱。准备错误保留具名role_error。
+- `runtime/bridge.py`：仅improve加载保护工作流；各角色实际实例化所选归档DefaultAgent/模型，经同一broker token/session。原main core提示恢复，角色保存真实trajectory/result/agent/model路径和共享预算声明。benchmark行为维持原入口。
+- `src/mini_swe_rsi/core.py`：v2任务合同冻结新增transport及完整定义摘要，启动前验证pin lock。
+- `src/mini_swe_rsi/driver.py`：只improve挂载工作流定义，宿主/容器身份纳入新摘要；进程杀死后仅记录incomplete，不补完成阶段。
+- `tests/test_workflow.py`：七步成功/失败/非法ID/中断、四评审原文、原活动prompt、只读命令/子生命周期拒绝、具名角色异常，真实Docker全工作流/归档角色/全局调用耗尽fixture。
+- `tests/test_sica_runtime.py`：继承fixture改由software_developer执行源码修改，主角色保持协调能力；既有提示断言更新至恢复的显式结构调用。
+- `README.md`、`docs/upstream_adaptations.md`：说明恢复机制、共享预算及明确剩余偏离。阶段成功为模型声明，没有新增强制编辑/委员会通过/晋升门槛；不请求真实服务、不commit、不更改旧runs。
+
+首次提示回归2失败为旧无结构文案断言，更新后15通过。首次Docker继承失败暴露结构观察缺少官方模板要求exception_info字段，已补齐；失败日志保存在runs/sica-workflow-repair-20261012/first-inheritance.*。首次工作流Docker同一原因失败记录保留；后续套件结果单独追加。
+
+第四轮子agent工程验证：首次完整 `RUN_DOCKER_TESTS=1 uv run pytest -q --junitxml=runs/sica-workflow-repair-20261012/implementation-first.xml`：76 passed/170.38秒，已有LiteLLM弃用提示1项。此前workflow-second的低调用预算fixture进入官方mini传输重试等待，手动终止该测试容器；失败日志保留（1 failed/6 passed）。改进入口随后使用官方现有MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT=1，避免在宿主拒绝共享预算后继续退避；不改官方mini源码或benchmark设置。后续低调用预算Dockerfixture通过。
+
+完整运行启动后追加/收紧的代码：角色帮助完整说明共享预算、原meta/committee TOOL_DESCRIPTION原文（无新门槛）、公开delegate角色名限制、宿主杀死时incomplete记录、atomic state临时文件替换、已有state在宿主加载renderer/启动容器前拒绝覆盖；另补pin文件集合、benchmark无工作流、计数重置和中断写入回归。为避免把不同树测试混称，随后受影响Docker+任务/恢复套件29 passed/78.00秒（affected-final.xml/.txt，测试临时目录也位于本轮runs）；该套件之后的atomic/原工具说明/宿主已有state拒绝最后小修，当前离线受影响套件26 passed/2 Docker skipped（7.64秒）。主agent将对最终冻结树执行独立完整验收。七步Docker成功fixture21次实际调用、七个角色（四评审+归档/编码/文档），共享6调用限制fixture如实未完成；另独立端点fixture验证跨角色最多30次真实调用、耗尽后及全局截止后零新增端点调用。没有真实模型请求、commit/push、旧runs修改或收益宣称。
+
+## 第四轮主agent工程验收
+
+主agent独立远端逐字核验14份上游文件、14个原runner函数AST/code object、mini74文件及旧5668文件清单，均通过；独立比对七步全部字段、四份specialisation及成功/失败/非法完成状态，均通过。最终冻结树完整 `RUN_DOCKER_TESTS=1 uv run pytest -q --junitxml=runs/sica-workflow-repair-20261012/parent-final.xml`：80 passed/240.72秒，仅已有LiteLLM弃用提示一项。stdout为parent-final.txt。此前主agent针对性14 passed/1 skipped单独保留。最终10个冻结文件摘要未变；diff检查通过。
+
+审查无阻断问题，接受明确的串行同模型、文本工具、未移植文件视图及角色工具只读非OS沙箱等偏离；没有新增强制编辑/晋升门槛。报告sica-workflow-review.md。工程验收后提交，再在全新目录运行一次同Qwen提案，沿用原24小时起点和历史公开dev30证据，不重测基线；只有运行源码确有修改才独立测预定一题，不运行val/test。

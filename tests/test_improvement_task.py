@@ -15,7 +15,7 @@ from mini_swe_rsi.broker import TEXT_PROTOCOL
 def test_original_improvement_intent_and_distinct_identities():
     render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
     prompt = render(1, 2, 2, 'agent_3', ROOT/'vendor/sica/agent_main.py')
-    assert 'carry out meta-improvement reasoning directly as early as reasonably possible' in prompt
+    assert 'invoke the meta improvement reasoning structure as early as reasonably possible' in prompt
     assert 'coming up with a good feature or change to implement' in prompt
     assert 'carefully implementing this making the minimal required changes' in prompt
     assert 'append a new entry describing the changes made in this iteration (2)' in prompt
@@ -134,3 +134,16 @@ def test_runtime_renderer_change_before_launch_is_rejected(tmp_path, monkeypatch
     # No client, broker or image exists: no container or model can be started.
     with pytest.raises(RuntimeError, match='Frozen improvement task contract changed before launch'):
         driver.controller(code, tmp_path/'logs', args, 'fixture', target=code)
+
+
+def test_existing_workflow_launch_refused_without_overwriting_evidence(tmp_path):
+    from mini_swe_rsi.driver import Driver, initial_code
+    from mini_swe_rsi.core import read
+    code=tmp_path/'code';initial_code(code)
+    logs=tmp_path/'logs';write(logs/'workflow_state.json',{'status':'incomplete'})
+    write(logs/'result.json',{'exit_status':'TimeExceeded'})
+    driver=Driver.__new__(Driver);driver.root=tmp_path
+    with pytest.raises(RuntimeError,match='Existing workflow state'):
+        driver.controller(code,logs,['improve'],'fixture')
+    assert read(logs/'result.json')=={'exit_status':'TimeExceeded'}
+    assert read(logs/'workflow_state.json')=={'status':'incomplete'}

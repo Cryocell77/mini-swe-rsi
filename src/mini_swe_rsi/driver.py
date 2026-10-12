@@ -111,6 +111,9 @@ class Driver:
                   str(logs): {'bind': '/logs', 'mode': 'rw'}}
         task_identity = None
         if command_args[0] == 'improve':
+            if (logs/'workflow_state.json').exists():
+                raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
+            mounts[str(ROOT/'vendor/sica_workflow')] = {'bind':'/workflow_sources','mode':'ro'}
             def argument(name):
                 return command_args[command_args.index(name)+1]
             parent, proposer = int(argument('--parent-iter')), int(argument('--best-iter'))
@@ -125,7 +128,9 @@ class Driver:
             task_identity = {'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
                              'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
                              'renderer_sha256': contract['renderer_sha256'],
-                             'upstream_task_sha256': contract['upstream_task_sha256']}
+                             'upstream_task_sha256': contract['upstream_task_sha256'],
+                             'workflow_sha256':contract['workflow_sha256'],
+                             'workflow_sources':contract['workflow_sources']}
             write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
         module = 'agent_code'
         if archive is not None:
@@ -191,6 +196,12 @@ class Driver:
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
             if expired and not (logs/'result.json').exists():
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
+            if task_identity and (logs/'workflow_state.json').exists():
+                workflow_state = read(logs/'workflow_state.json')
+                if workflow_state.get('status') in ('active','not_invoked'):
+                    workflow_state['status'] = 'incomplete'
+                    workflow_state['host_process_status'] = result['StatusCode']
+                    write(logs/'workflow_state.json', workflow_state)
             if task_identity and not (logs/'improvement_task.json').exists():
                 write(logs/'improvement_verification.json', {'status': 'unverified_failure'})
                 if result['StatusCode'] == 0:

@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import os
+import shlex
 import time
 from types import SimpleNamespace
 
@@ -36,8 +37,10 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
                 "data = yaml.safe_load(p.read_text())\n"
                 "data['agent']['system_template'] += '\\nINHERITED_REPAIR_FIXTURE\\n'\n"
                 "p.write_text(yaml.safe_dump(data))\nPY"
-                if len(seen) % 2 else 'echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
+                if len(seen) % 4 == 2 else 'echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
             )
+            if len(seen) % 4 == 1:
+                command = 'sica-workflow '+shlex.quote(json.dumps({'op':'delegate','role':'software_developer','task':'Perform the fixture edit and return.'}))
             response = {'id': 'fixture', 'created': int(time.time()), 'object': 'chat.completion',
                         'model': 'fixture', 'choices': [{'index': 0, 'finish_reason': 'stop',
                         'message': {'role': 'assistant', 'content':
@@ -85,16 +88,16 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
         assert second['proposer'].endswith('agent_1/agent_code')
         assert tree_hash(experiment/'agent_1/agent_code') == first_hash
         assert 'INHERITED_REPAIR_FIXTURE' not in seen[0][0]['content']
-        assert 'INHERITED_REPAIR_FIXTURE' in seen[2][0]['content']
+        assert 'INHERITED_REPAIR_FIXTURE' in seen[4][0]['content']
         second_hash = tree_hash(experiment/'agent_2/agent_code')
         performance(2, 1)
         third = asyncio.run(adapter.proposal(1, 2, fixed=True))
         assert third['parent'] == 2 and third['proposer_hash'] == original_hash
         assert third['execution_succeeded'] and third['raw_source_changed']
         assert tree_hash(experiment/'agent_2/agent_code') == second_hash
-        assert 'INHERITED_REPAIR_FIXTURE' not in seen[4][0]['content']
+        assert 'INHERITED_REPAIR_FIXTURE' not in seen[8][0]['content']
         for index, (parent, proposer, candidate) in enumerate(((0, 0, 'agent_1'), (1, 1, 'agent_2'), (2, 0, 'agent_3'))):
-            prompt = seen[index*2][1]['content']
+            prompt = seen[index*4][1]['content']
             assert f'parent=agent_{parent}; proposer=agent_{proposer}; candidate={candidate}' in prompt
             assert 'as early as reasonably possible' in prompt
             assert 'current candidate has not been benchmarked' in prompt
@@ -107,7 +110,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
             assert (identity['parent'], identity['proposer'], identity['candidate']) == (parent, proposer, candidate)
             import hashlib
             assert identity['prompt_sha256'] == hashlib.sha256((logs/'improvement_prompt.txt').read_bytes()).hexdigest()
-        assert len(seen) == 6 and len(summaries) == 3
+        assert len(seen) == 12 and len(summaries) == 3
         launches = [json.loads(line) for line in (tmp_path/'events.jsonl').read_text().splitlines()
                     if json.loads(line)['kind'] == 'agent_launch']
         assert [e['module'] for e in launches] == ['archive.agent_0.agent_code', 'archive.agent_1.agent_code', 'archive.agent_0.agent_code']

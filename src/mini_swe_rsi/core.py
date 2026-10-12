@@ -150,6 +150,13 @@ def append_event(root, event):
 
 def improvement_contract():
     """Freeze the independent task renderer without changing the model protocol."""
-    return {'version': 'sica-mini-improvement-v1',
+    sources = ROOT/'vendor/sica_workflow'
+    expected = read(ROOT/'upstream.lock.json')['sica']['workflow_files']
+    actual = {p.name:digest(p) for p in sources.iterdir() if p.is_file()}
+    if actual != {n:v['sha256'] for n,v in expected.items()}:
+        raise RuntimeError('Pinned workflow sources differ from upstream lock')
+    return {'version': 'sica-mini-improvement-v2',
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
-            'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py')}
+            'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
+            'workflow_sha256': digest(ROOT/'runtime/workflow.py'),
+            'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'vendor/sica_workflow').glob('*')) if p.is_file()}}
