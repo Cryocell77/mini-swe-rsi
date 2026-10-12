@@ -83,3 +83,13 @@ All roles instantiate DefaultAgent and LitellmTextbasedModel from the actually s
 The main orchestrator and reviewers/archive explorer expose restricted tool interfaces: normal shell actions are rejected; structured public reads and exact final-output submissions are handled without a shell. Coding/general delegates may edit and run local checks, but cannot invoke/complete the parent's structure. This is **read-only tool capability, not per-role OS/security isolation**: all roles execute selected archived Python in the same candidate-mounted controller container. It does not sandbox hostile evolved Python from candidate writes or the shared broker token. The private grader/host-data boundary remains separately enforced by container mounts and host execution.
 
 Completion success is the model's declaration, as upstream; no source-change, committee-success, testing-success or promotion gate was added. Early final submission remains possible. Workflow state and events distinguish never invoked, active, completed, failed and incomplete; budget/termination never fabricate step completion. Existing interrupted state cannot be silently resumed as a new conversation. Host recovery records incomplete when a controller is killed. Definitions, transport, renderer and upstream task identities freeze at configuration creation and are checked before each launch; container and host identity evidence include all workflow sources. Benchmark prompts and execution do not initialize or expose this workflow.
+
+## 第五轮：角色任务与文本工具合同（2026-10-12）
+
+独立任务协议升级为`sica-mini-improvement-v3`，模型/服务/tokenizer及共享30次/600秒合同不变。仅improve入口将固定上游角色SYSTEM_PROMPT及AGENT_DESCRIPTION放入实际system消息，原活动core与完整委派任务留在user；不传入完整父对话。AGENT_DESCRIPTION在原实现主要是工具元数据，此处放system保留角色说明。原步骤与角色原文仍以固定源摘要核验。
+
+实际选中归档agent/model类、官方文本动作解析器与归档system格式/行为定制仍被使用；只读角色仅移除默认system中建议`&&/||`的精确短语。原归档通用instance_template整体由元任务core模板替代，避免“修复issue/复现/任意shell/编辑示例”成为每个角色的任务。improve的原观察/错误模板也整体覆盖为有效结构read示例及共享状态，故这三处归档模板定制在improve入口有明确覆盖；benchmark全部保留原模板。原始所选模板与各角色派生模板分别保存摘要，宿主和容器独立比较。编辑角色保留原system的复合bash格式建议，未新增自动动作修复或策略。
+
+只读read使用1基含端点行范围（默认1..200，最多500行），仍限制候选与公开归档真实解析路径；返回实际路径、证据性质、行数及截断信息。历史任务对白/`/testbed`路径明确标为既往证据。当前parent/proposer/candidate、可写workdir、公开archive及精简活动步骤身份传给所有角色；不会把父步骤完整指令变成子角色的新任务。
+
+新增受认证、无模型调用的`/status`，初始提示与工具反馈显示同一共享会话剩余额度。模型/工具预算拒绝记录在到达端点/执行工具之前，真实模型计数不增加。原始运行异常另存，只有受控状态的终止原因用于分类；generic APIError不会按字符串判断，下一真实请求清除历史终止原因。状态读取失败保留原异常类别并记录状态不可用。没有角色配额、强制返回、自动步骤推进、自动编辑或新的候选晋升条件。操作系统层面的角色沙箱限制仍与第四轮说明一致。

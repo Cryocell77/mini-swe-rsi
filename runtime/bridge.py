@@ -20,6 +20,13 @@ def rpc(path, value):
         return json.load(f)
 
 
+def classified_failure(exc, status):
+    reason = status.get('terminal_reason')
+    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded'):
+        reason = type(exc).__name__
+    return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
+
+
 def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py")):
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
@@ -56,7 +63,8 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
     spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
     workflow_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(workflow_module)
-    return workflow_module.definitions()[2]['main_orchestrator']['SYSTEM_PROMPT'] + '\n' + workflow_module.core_prompt('main_orchestrator', {'problem_statement':text}) + '\n' + workflow_module.instructions()
+    return workflow_module.core_prompt('main_orchestrator', {'problem_statement':text}) + workflow_module.identity_context(
+        {'parent':parent,'proposer':best,'candidate':candidate,'workdir':'/home/agent/workdir','public_archive':'/home/agent/archive'}, {'active':None})
 
 
 def main(entry):
@@ -89,6 +97,8 @@ def main(entry):
             out = workflow.execute(action, self.readonly) if workflow else None
             if out is None:
                 out = rpc('/tool', action)
+            if workflow:
+                out['session_status'] = rpc('/status', {})
             out.setdefault('exception_info', '')
             self._check_finished(out)
             return out
@@ -97,6 +107,15 @@ def main(entry):
                     'cwd': '/testbed' if args.command == 'benchmark' else args.workdir,
                     'machine': 'x86_64' if args.command == 'benchmark' else platform.machine()}
     config = yaml.safe_load((code / 'minisweagent/config/mini_textbased.yaml').read_text())
+    selected_config = config
+    workflow_module = None
+    if args.command == 'improve':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
+        workflow_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(workflow_module)
+        templates = workflow_module.template_manifest(selected_config)
+        config = workflow_module.role_templates(selected_config, 'orchestrator')
     config['agent'].pop('mode', None)
     config['agent'].update(step_limit=30, cost_limit=0, wall_time_limit_seconds=600,
                            output_path=Path(args.logdir) / 'trajectory.json')
@@ -117,6 +136,7 @@ def main(entry):
                   'config_file': str(code / 'minisweagent/config/mini_textbased.yaml'),
                   'platform': platform.uname()._asdict(),
                   'command': args.command,
+                  'template_manifest': templates if args.command == 'improve' else None,
                   'tool_capability':'orchestrator' if args.command == 'improve' else 'bash'}
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
@@ -125,7 +145,9 @@ def main(entry):
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest(),
+                    'relay_sha256':hashlib.sha256(Path(__file__).with_name('relay.py').read_bytes()).hexdigest(),
                     'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
+                    'template_manifest':templates,
                     'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}
         (logs / 'improvement_task.json').write_text(json.dumps(metadata))
         (logs / 'improvement_prompt.txt').write_text(task)
@@ -136,34 +158,49 @@ def main(entry):
         spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
         workflow_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(workflow_module)
+        identities = {'parent':args.parent_iter, 'proposer':args.best_iter, 'candidate':args.candidate_id,
+                      'workdir':args.workdir, 'public_archive':'/home/agent/archive'}
+        def failure(exc):
+            try:
+                status = rpc('/status', {})
+            except Exception as status_exc:
+                status = {'status_unavailable':type(status_exc).__name__}
+            result = classified_failure(exc, status)
+            result['session_status'] = status
+            return result
         def delegate(identity, prompt, readonly):
             child_logs = logs / 'roles' / identity
             child_logs.mkdir(parents=True)
-            child_config = dict(config['agent'])
+            role = identity.split('_', 1)[1]
+            adapted = workflow_module.role_templates(selected_config, role)
+            child_config = dict(adapted['agent'])
+            child_config.pop('mode', None)
+            child_model_config = {**model_config, **{k:adapted['model'][k] for k in ('observation_template','format_error_template')}}
             # Global limits are broker-owned; never grant a fresh local task budget.
-            child_config.update(step_limit=0, wall_time_limit_seconds=0,
+            child_config.update(step_limit=0, cost_limit=0, wall_time_limit_seconds=0,
                                 output_path=child_logs/'trajectory.json')
             child_environment = TaskEnvironment(cwd=args.workdir, timeout=60,
                                env=config['environment'].get('env', {}))
             child_environment.readonly = True if readonly else 'editor'
-            child = DefaultAgent(LitellmTextbasedModel(**model_config), child_environment, **child_config)
+            child = DefaultAgent(LitellmTextbasedModel(**child_model_config), child_environment, **child_config)
             (child_logs/'activation.json').write_text(json.dumps({**activation, 'role':identity,
-                          'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True}))
+                          'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True,
+                          'template_sha256':templates['roles'][role], 'identities':identities}))
             try:
-                result = child.run(prompt)
+                result = child.run(prompt, session_status=rpc('/status', {}))
             except Exception as exc:
-                result = {'exit_status':type(exc).__name__, 'submission':''}
+                result = failure(exc)
             finally:
                 child.save(child_logs/'trajectory.json')
             (child_logs/'result.json').write_text(json.dumps(result))
             return result
-        workflow = workflow_module.Workflow(logs, delegate)
+        workflow = workflow_module.Workflow(logs, delegate, identities=identities)
         environment.readonly = 'orchestrator'
     start = time.time()
     try:
-        result = agent.run(task)
+        result = agent.run(task, session_status=rpc('/status', {})) if workflow else agent.run(task)
     except Exception as exc:
-        result = {'exit_status': type(exc).__name__, 'submission': ''}
+        result = failure(exc) if workflow else {'exit_status': type(exc).__name__, 'submission': ''}
     finally:
         agent.save(logs / 'trajectory.json')
     if workflow:

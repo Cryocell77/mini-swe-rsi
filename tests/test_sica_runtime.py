@@ -89,6 +89,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
         assert tree_hash(experiment/'agent_1/agent_code') == first_hash
         assert 'INHERITED_REPAIR_FIXTURE' not in seen[0][0]['content']
         assert 'INHERITED_REPAIR_FIXTURE' in seen[4][0]['content']
+        assert 'INHERITED_REPAIR_FIXTURE' in seen[5][0]['content']
         second_hash = tree_hash(experiment/'agent_2/agent_code')
         performance(2, 1)
         third = asyncio.run(adapter.proposal(1, 2, fixed=True))
@@ -96,6 +97,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
         assert third['execution_succeeded'] and third['raw_source_changed']
         assert tree_hash(experiment/'agent_2/agent_code') == second_hash
         assert 'INHERITED_REPAIR_FIXTURE' not in seen[8][0]['content']
+        assert 'INHERITED_REPAIR_FIXTURE' not in seen[9][0]['content']
         for index, (parent, proposer, candidate) in enumerate(((0, 0, 'agent_1'), (1, 1, 'agent_2'), (2, 0, 'agent_3'))):
             prompt = seen[index*4][1]['content']
             assert f'parent=agent_{parent}; proposer=agent_{proposer}; candidate={candidate}' in prompt

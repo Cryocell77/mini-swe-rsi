@@ -220,3 +220,32 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 代码commit c6bb1fd。一次同Qwen真实提案，87.65秒，30调用（主5/归档25），total187079、cached164315、未计量0。首个wire完整任务与宿主/容器身份verified，实际归档agent/model及共享会话核验通过。真实invoke并delegate archive_explorer，但第一步0/7，未到编码或委员会；角色对历史失败任务路径产生8条命令、2次尝试Python修复，接口拒绝。10次普通命令拒绝、5次结构命令多参数错误消耗额度。源码与父完全相同；mini APIError包装的底层为LimitsExceeded，两个轨迹末尾明确，无端点失败/上下文溢出，最大实际prompt13295。模型/服务结束身份不变，旧5668文件和固定源码再次核验通过。
 
 按预先条件跳过单题开发测评，未重复基线/val/test或额外提案。工程恢复通过；真实模型的阶段收敛/任务识别/文本工具遵循仍未在原30调用内完成，不以一次失败断言必须换模型，也不将模拟七步成功冒称真实RSI。产物real_smoke_audit.json与sica-workflow-review.md。最终仅追加报告，不改已验收运行代码。
+
+## 第五轮诊断与修复启动
+
+用户授权分析、规划、GPT-6.1 Sol / low子agent修复、主agent对照原SICA审查验收、提交并测试。重新读取约束、设计、日志及第四轮实际轨迹；发现mini默认instance把所有角色当解题编辑器，原角色system仅作为user文本，observation给只读角色管道/编辑建议。独立只读子agent核实原BaseAgent将SYSTEM_PROMPT置于system，ArchiveExplorer无ExecuteCommand工具；默认继承无需全部父对话。先更新implementation.md第五轮方案后开始实施。范围为模板/工具/子任务身份/预算诊断合同，不扩大30调用或改选择晋升/模型。无idea_report.md，沿用现有设计，不创建论文文档；旧运行封存。
+
+## 2026-10-12 第五轮角色任务/文本工具契约修复（子agent）
+
+按预先记录的第五轮计划实施；未调用模型服务、未修改固定上游、未提交或推送。逐文件变更记录：
+
+- `runtime/workflow.py`：新增仅improve的、由实际选中归档配置派生的角色模板/摘要；原SYSTEM_PROMPT与AGENT_DESCRIPTION置system，原core/delegate任务保留user；只读角色移除默认复合bash格式建议，保留编辑角色归档格式。覆盖通用issue任务与不兼容的观察/错误示例；增加受限行范围和实际解析路径/历史证据标记；所有角色收到精简的当前身份/活动步骤上下文。七步定义、推进与四评审拼接保持原逻辑。
+- `runtime/bridge.py`：仅improve使用角色模板；子角色沿用实际归档DefaultAgent/LitellmTextbasedModel与官方解析器；初始及动作后显示共享状态；原异常保留，终止分类只用受控状态，状态不可用时保留原异常类别。保存实际模板摘要与身份。benchmark仍使用选中归档原模板。
+- `runtime/relay.py`：仅为既有受认证转发通道增加`/status`白名单；其摘要进入新合同。
+- `src/mini_swe_rsi/broker.py`：提供无秘密的只读共享状态；模型实际请求之前记录拒绝且不计真实调用，明确工具过期的受控TimeExceeded；新请求清除上次终止原因，防止历史上下文拒绝污染后续真实端点错误。
+- `src/mini_swe_rsi/core.py`：升级独立任务合同为`sica-mini-improvement-v3`并冻结relay摘要；旧v2继续被既有精确合同比较拒绝。
+- `src/mini_swe_rsi/driver.py`：宿主从实际proposer归档YAML独立派生所有角色模板摘要，与容器身份精确比较。
+- `tests/test_role_transport.py`：覆盖所有角色实际配置派生/原system与user职责、观察/格式错误、历史路径/符号链接/行范围、认证状态、拒绝计量、上下文拒绝后generic APIError不误分类、过期工具不执行，以及第四轮实际错误动作离线回归。
+- `tests/fixtures/role_transport_fourth_run.json`：仅保存第四轮原轨迹来源/摘要、最小通用模板节录和两个原始错误命令；完整实验节录只保存在新runs审计目录，不重复提交实验结果。
+- `tests/test_workflow.py`：Docker模拟端点改为检测实际system角色；验证真实wire的所有角色system/user/观察、初始共享状态、无原生tools及低预算终止证据。
+- `tests/test_sica_runtime.py`：递归与固定改进者的子角色也必须继承实际归档system定制。
+- `docs/upstream_adaptations.md`：追加本轮角色模板与状态边界的明确偏离。
+- `docs/dev_log.md`：本条逐文件记录；验证日志位于`runs/role-transport-repair-20261012`，先前试验不改动。
+
+## 第五轮主agent验收
+
+子agent初轮离线33 passed/2 skipped，移动树Docker29 passed/1 failed（仅workflow/prompt SHA差异，失败证据保留），固定受影响39 passed/142.91秒；最后两处反馈及basis记录修订后精确受影响24 passed/64.23秒。主agent最终冻结树完整Docker套件86 passed/341.20秒，仅已有LiteLLM弃用提示；parent-final.xml/txt保留，12文件冻结摘要仍一致。独立原源解析五种system与15段core、原七步/委员会状态、14份远端固定文件/14控制函数/mini74文件均通过；旧5668及第四轮4034清单不变。
+
+主agent另外核查实际模拟wire的21调用七步成功、6调用预算失败，两者角色system/user与初始/反馈剩余调用数准确；首次审计把pytest current别名重复计为第三fixture，过滤符号链接后通过，无生产改动。报告role-transport-review.md。审查通过，记录instance/observation/error模板覆盖与角色只读非OS沙箱等边界；提交后一次同Qwen真实提案，不重测基线/val/test或增加预算。
+
+本轮子agent验证：第一批离线33 passed/2 skipped；新增单位回归首次暴露fixture未设模型名及节录不完整，已修正。首次受影响Docker批次29 passed/1 failed，失败为运行中继续修改文件导致的host/container工作流/提示摘要差异；已保存失败日志与字段对照，不作为验收。其后冻结受影响树的Docker/离线批次39 passed（142.91秒）；再按主agent审查只调整短操作错误反馈及预算来源命名，运行最终受影响delta批次（结果另见`worker-final-delta.txt/xml`）。工程验证均使用模拟端点；真实模型服务调用为0。最终全套与固定上游独立审查由主agent执行。

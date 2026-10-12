@@ -14,6 +14,7 @@ from pathlib import Path
 
 import docker
 import requests
+import yaml
 
 from .archive_view import archive_view
 from .core import ROOT, append_event, command, digest, read, tree_hash, write, improvement_contract
@@ -125,11 +126,14 @@ class Driver:
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
                               ROOT/'vendor/sica/agent_main.py')
-            task_identity = {'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
+            template_manifest = runpy.run_path(str(ROOT/'runtime/workflow.py'))['template_manifest']
+            selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
+            task_identity = {'template_manifest':template_manifest(selected_config), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
                              'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
                              'renderer_sha256': contract['renderer_sha256'],
                              'upstream_task_sha256': contract['upstream_task_sha256'],
                              'workflow_sha256':contract['workflow_sha256'],
+                             'relay_sha256':contract['relay_sha256'],
                              'workflow_sources':contract['workflow_sources']}
             write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
         module = 'agent_code'

@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .core import append_event, secrets
+from .core import append_event, secrets, BudgetExceeded
 from .context_budget import ContextBudget
 
 
@@ -116,6 +116,8 @@ class Broker:
                     payload = json.loads(self.rfile.read(size))
                     if self.path == '/v1/chat/completions':
                         out = broker.complete(token, payload)
+                    elif self.path == '/status':
+                        out = broker.status(token)
                     elif self.path == '/tool':
                         out = broker.tool(token, payload)
                     else:
@@ -222,7 +224,7 @@ class Broker:
                                     prompt_tokens=0, completion_tokens=0, cached_tokens=0,
                                     unmetered_calls=0,
                                     deadline=time.time() + min(seconds, self.budget.remaining()),
-                                    max_calls=calls, tool_calls=0, errors=[])
+                                    max_calls=calls, tool_calls=0, errors=[], terminal_reason=None, rejected_calls=[])
         return token
 
     def finish(self, token):
@@ -232,18 +234,43 @@ class Broker:
             data = self.sessions.pop(token)
             return {k: v for k, v in data.items() if k != 'solver'}
 
+    def status(self, token):
+        # Readable even after expiration; never disclose session credentials or container identity.
+        s = self.sessions[token]
+        return {'calls':s['calls'], 'max_calls':s['max_calls'],
+                'remaining_calls':max(0,s['max_calls']-s['calls']),
+                'remaining_seconds':max(0,s['deadline']-time.time()),
+                'terminal_reason':s['terminal_reason'], 'rejected_calls':list(s['rejected_calls'])}
+
+    def reject(self, s, reason, basis='host_budget', terminal=True, kind='model_rejection'):
+        s['terminal_reason'] = reason if terminal else None
+        s['errors'].append(reason)
+        event = dict(kind=kind, label=s['label'], reason=reason,
+                     basis=basis, calls=s['calls'], actual_call=False)
+        s['rejected_calls'].append({'reason':reason, 'basis':basis, 'calls':s['calls']})
+        self.events.append(event)
+        append_event(self.root, event)
+        raise ModelError(reason)
+
     def complete(self, token, payload):
         with self.lock:
-            self.budget.check()
             s = self.sessions[token]
+            try:
+                self.budget.check()
+            except BudgetExceeded:
+                self.reject(s, 'TimeExceeded', 'experiment_budget')
             if time.time() >= s['deadline']:
-                raise ModelError('TimeExceeded')
+                self.reject(s, 'TimeExceeded')
             if s['calls'] >= s['max_calls']:
-                raise ModelError('LimitsExceeded')
+                self.reject(s, 'LimitsExceeded')
+            s['terminal_reason'] = None
             original = payload.get('messages')
             if any(payload.get(k) for k in ('tools', 'tool_choice', 'functions', 'function_call')):
-                raise ModelError('Native tools are outside the text bash protocol')
-            messages = normalize_messages(original)
+                self.reject(s, 'Native tools are outside the text bash protocol', 'text_protocol', terminal=False)
+            try:
+                messages = normalize_messages(original)
+            except ModelError as exc:
+                self.reject(s, str(exc), 'text_protocol', terminal=False)
             original_chars = len(json.dumps(original, ensure_ascii=False))
             normalized_chars = len(json.dumps(messages, ensure_ascii=False))
             audit = dict(kind='message_normalization', label=s['label'], protocol=TEXT_PROTOCOL,
@@ -252,8 +279,8 @@ class Broker:
             audit.update(measurement)
             append_event(self.root, audit)
             if not self.context.fits(measurement):
-                s['errors'].append('ContextLimitExceeded')
-                raise ModelError('ContextLimitExceeded')
+                self.reject(s, 'ContextLimitExceeded', 'host_context')
+            s['terminal_reason'] = None
             s['calls'] += 1
             body = {'model': self.model, 'messages': messages, 'temperature': 0,
                     'max_tokens': 2048, 'stream': False}
@@ -282,6 +309,7 @@ class Broker:
                 if isinstance(actual_prompt, int) and actual_prompt + measurement['reserved_output_tokens'] > measurement['total_token_budget']:
                     event.update(context_budget_basis='service_prompt_tokens',
                                  response_adaptation='not returned: actual service prompt exceeded frozen budget')
+                    s['terminal_reason'] = 'ContextLimitExceeded'
                     raise ModelError('ContextLimitExceeded')
                 returned, adaptation = adapt_response(result)
                 event.update(agent_response=returned, response_adaptation=adaptation)
@@ -300,9 +328,14 @@ class Broker:
 
     def tool(self, token, action):
         s = self.sessions[token]
-        self.budget.check()
-        if not s['solver'] or time.time() >= s['deadline']:
-            raise ModelError('Tool session expired')
+        try:
+            self.budget.check()
+        except BudgetExceeded:
+            self.reject(s, 'TimeExceeded', 'experiment_budget', kind='tool_rejection')
+        if time.time() >= s['deadline']:
+            self.reject(s, 'TimeExceeded', 'session_deadline', kind='tool_rejection')
+        if not s['solver']:
+            raise ModelError('Tool session unavailable')
         command = action.get('command', '')
         if not isinstance(command, str) or len(command) > 100000:
             raise ModelError('Invalid command')

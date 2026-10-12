@@ -155,8 +155,9 @@ def improvement_contract():
     actual = {p.name:digest(p) for p in sources.iterdir() if p.is_file()}
     if actual != {n:v['sha256'] for n,v in expected.items()}:
         raise RuntimeError('Pinned workflow sources differ from upstream lock')
-    return {'version': 'sica-mini-improvement-v2',
+    return {'version': 'sica-mini-improvement-v3',
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
             'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
             'workflow_sha256': digest(ROOT/'runtime/workflow.py'),
+            'relay_sha256': digest(ROOT/'runtime/relay.py'),
             'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'vendor/sica_workflow').glob('*')) if p.is_file()}}

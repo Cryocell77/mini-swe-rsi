@@ -108,7 +108,18 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         def open(self,request,**kw):
             nonlocal main_turn,coder_turn
             payload=json.loads(request.data);requests.append(payload)
-            task=payload['messages'][1]['content']
+            system, user = payload['messages'][0]['content'], payload['messages'][1]['content']
+            assert system.startswith(tuple(d['SYSTEM_PROMPT'] for d in w.definitions()[2].values()))
+            assert 'Please solve this issue' not in user and 'Create a script to reproduce' not in user
+            assert 'Shared session at role start:' in user and 'remaining_calls' in user
+            assert 'Trusted current improvement context:' in user
+            assert all(not payload.get(key) for key in ('tools','tool_choice','functions','function_call'))
+            for message in payload['messages'][2:]:
+                if message['role']=='user':
+                    assert 'Shared session:' in message['content']
+                    assert 'head, tail or sed' not in message['content']
+                    assert 'redirect output to a file' not in message['content']
+            task=payload['messages'][0]['content'] + '\n' + payload['messages'][1]['content']
             if 'Self-contained task:' in task: # old protocol must never be used
                 raise AssertionError('Unrendered role prompt')
             if 'You are a member of a Meta-Agent design review committee' in task:
@@ -159,6 +170,11 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         else:
             assert status!=0 and state['status']=='incomplete' and state['completed_steps']==2
             assert len(requests)==6 and not (target/'fixture.txt').exists()
+            assert read(tmp_path/'logs/result.json')['exit_status']=='LimitsExceeded'
+            failures=[read(p) for p in (tmp_path/'logs/roles').glob('*/result.json') if read(p)['exit_status']!='Submitted']
+            assert failures and failures[-1]['exit_status']=='LimitsExceeded'
+            assert failures[-1]['raw_exception']['type']=='APIError'
+            assert usage['rejected_calls'] and usage['calls']==6
     finally:
         driver.close();broker.close()
 
