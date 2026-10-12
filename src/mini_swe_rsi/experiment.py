@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from .broker import Broker, TEXT_PROTOCOL
+from .context_budget import context_contract, ContextBudget
 from .core import ROOT, Budget, Data, append_event, digest, read, tree_hash, write
 from .driver import Driver, initial_code
 from .sica import SicaAdapter
@@ -46,6 +47,16 @@ class Experiment:
         self.root.mkdir(parents=True, exist_ok=True)
         if (self.root/'configuration.json').exists() and read(self.root/'configuration.json').get('message_protocol') != TEXT_PROTOCOL:
             raise RuntimeError('Message protocol changed; start a separate experiment')
+        context = context_contract()
+        if (self.root/'configuration.json').exists():
+            saved = read(self.root/'configuration.json')
+            if saved.get('context_budget') != context or saved.get('limits') != {'calls': 30, 'task_seconds': 600, 'command_seconds': 60, 'max_tokens': 2048}:
+                raise RuntimeError('Frozen context budget changed; start a separate experiment')
+            for key, filename in (('model', 'model_identity.json'), ('service', 'service_identity.json')):
+                identity_path = self.root/filename
+                if not identity_path.exists() or saved.get(key) != read(identity_path):
+                    raise RuntimeError('Frozen experiment identity records are inconsistent')
+        context_meter = ContextBudget()
         self.budget = Budget(self.root)
         if phase is None:
             phase = ('search' if (self.root/'baseline.json').exists() else
@@ -53,7 +64,7 @@ class Experiment:
         self.budget.enter(phase)
         self.data = Data(data_path) if data_path else Data()
         self.data.freeze_images(self.root)
-        self.broker = Broker(self.root, self.budget)
+        self.broker = Broker(self.root, self.budget, context=context_meter)
         self.driver = None
         try:
             identity = self.broker.identity()
@@ -62,6 +73,12 @@ class Experiment:
                     raise RuntimeError('Model identity changed across experiment/restart')
             else:
                 write(self.root / 'model_identity.json', identity)
+            service_identity = self.broker.service_identity
+            if (self.root/'service_identity.json').exists():
+                if read(self.root/'service_identity.json') != service_identity:
+                    raise RuntimeError('Service context configuration changed across restart')
+            else:
+                write(self.root/'service_identity.json', service_identity)
             self.driver = Driver(self.root, self.data, self.broker, self.budget)
             self.adapter = SicaAdapter(self.root, self.driver, self.broker, self.data)
             for i in (1, 2):
@@ -72,10 +89,10 @@ class Experiment:
                 expected = read(self.root/'baseline.json')['code_hash']
                 if any(tree_hash(self.code(run)) != expected for run in (1, 2)):
                     raise RuntimeError('Frozen H0 source changed')
-            configuration = {'message_protocol': TEXT_PROTOCOL, 'upstream': read(ROOT / 'upstream.lock.json'),
+            configuration = {'message_protocol': TEXT_PROTOCOL, 'context_budget': context, 'upstream': read(ROOT / 'upstream.lock.json'),
                   'data_manifest': str(self.data.path/'manifest.json'),
-                  'model': identity, 'limits': {'calls': 30, 'task_seconds': 600,
-                   'command_seconds': 60, 'max_tokens': 2048, 'context_characters': 60000},
+                  'model': identity, 'service': service_identity, 'limits': {'calls': 30, 'task_seconds': 600,
+                   'command_seconds': 60, 'max_tokens': 2048},
                   'runtime_image': self.driver.image.id,
                   'native_run': 1, 'fixed_proposer_run': 2}
             if (self.root/'configuration.json').exists():
@@ -86,7 +103,7 @@ class Experiment:
             source_hash = tree_hash(ROOT/'src')
             snapshot_manifest = {name:tree_hash(ROOT/name) for name in ('src','runtime','scripts','vendor')}
             snapshot_manifest.update({name:digest(ROOT/name) for name in
-                                     ('pyproject.toml','uv.lock','evaluator.lock.txt','upstream.lock.json')})
+                                     ('pyproject.toml','uv.lock','evaluator.lock.txt','upstream.lock.json','tokenizer.lock.json')})
             snapshot_id = hashlib.sha256(json.dumps(snapshot_manifest,sort_keys=True).encode()).hexdigest()
             snapshot = self.root/'private/implementation_snapshots'/snapshot_id
             if not (snapshot/'manifest.json').exists():
@@ -95,7 +112,7 @@ class Experiment:
                 for name in ('src', 'runtime', 'scripts', 'vendor'):
                     shutil.copytree(ROOT/name, snapshot/name,
                                     ignore=shutil.ignore_patterns('__pycache__'))
-                for name in ('pyproject.toml', 'uv.lock', 'evaluator.lock.txt', 'upstream.lock.json'):
+                for name in ('pyproject.toml', 'uv.lock', 'evaluator.lock.txt', 'upstream.lock.json', 'tokenizer.lock.json'):
                     shutil.copy(ROOT/name, snapshot/name)
                 write(snapshot/'manifest.json', snapshot_manifest)
             append_event(self.root, {'kind': 'implementation_snapshot',
@@ -118,6 +135,8 @@ class Experiment:
     def assert_model(self):
         if self.broker.identity() != read(self.root / 'model_identity.json'):
             raise RuntimeError('Model identity changed during experiment')
+        if self.broker.service_identity != read(self.root / 'service_identity.json'):
+            raise RuntimeError('Service context configuration changed during experiment')
 
     async def preflight(self):
         if (self.root/'preflight.json').exists():

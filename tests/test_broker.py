@@ -32,7 +32,7 @@ def test_model_and_limits_are_host_owned(tmp_path, monkeypatch):
         assert broker.finish(token)['tokens'] == 7
         token = broker.session('context')
         with pytest.raises(ModelError, match='ContextLimitExceeded'):
-            broker.complete(token, {'messages':[{'role':'user','content':'x'*60001}]})
+            broker.complete(token, {'messages':[{'role':'user','content':'x '*32769}]})
         assert broker.sessions[token]['calls'] == 0
         broker.sessions[token]['deadline'] = time.time()-1
         with pytest.raises(ModelError, match='TimeExceeded'):
@@ -58,7 +58,7 @@ def test_context_error_is_non_retryable_for_official_client(tmp_path, monkeypatc
     try:
         with pytest.raises(litellm.ContextWindowExceededError):
             litellm.completion(model='openai/fixed', api_base=f'http://127.0.0.1:{broker.port}/v1',
-                api_key=token, messages=[{'role':'user','content':'x'*60001}], num_retries=0, client=client)
+                api_key=token, messages=[{'role':'user','content':'x '*32769}], num_retries=0, client=client)
         assert broker.sessions[token]['calls'] == 0
     finally:
         client.close()
@@ -109,7 +109,7 @@ def test_normalized_text_messages_match_budget_and_wire(tmp_path, monkeypatch):
     class Opener:
         def open(self, request, **kwargs):
             received.append(json.loads(request.data))
-            return io.BytesIO(json.dumps({'choices': [], 'usage': {'total_tokens': 1}}).encode())
+            return io.BytesIO(json.dumps({'choices': [], 'usage': {'total_tokens': 1, 'prompt_tokens':1, 'completion_tokens':0}}).encode())
     broker.opener = Opener()
     token = broker.session('normalization')
     messages = [{'role':'assistant', 'content':'x'*30000, 'reasoning_content':'r'*10000,
@@ -127,7 +127,58 @@ def test_normalized_text_messages_match_budget_and_wire(tmp_path, monkeypatch):
             with pytest.raises(ModelError):
                 broker.complete(token, {'messages':bad})
         with pytest.raises(ModelError, match='ContextLimitExceeded'):
-            broker.complete(token, {'messages':[{'role':'assistant','content':'x'*50000,'reasoning_content':'r'*10000}]})
+            broker.complete(token, {'messages':[{'role':'assistant','content':'x '*30000,'reasoning_content':'r '*1000}]})
         assert len(received) == 1
+    finally:
+        broker.close()
+
+
+def test_service_actual_prompt_over_budget_is_metered_but_never_returned(tmp_path, monkeypatch):
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(
+        OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='secret'))
+    budget = Budget(tmp_path)
+    budget.enter('preflight')
+    broker = Broker(tmp_path, budget)
+    broker.model = 'fixed'
+    class Opener:
+        def open(self, request, **kwargs):
+            return io.BytesIO(json.dumps({'choices':[{'finish_reason':'stop', 'message':{
+                'role':'assistant', 'content':'', 'reasoning':'```mswea_bash_command\necho unsafe\n```'}}],
+                'usage':{'total_tokens':32701,'prompt_tokens':32700,'completion_tokens':1}}).encode())
+    broker.opener = Opener()
+    token = broker.session('actual-over-budget')
+    try:
+        with pytest.raises(ModelError, match='ContextLimitExceeded'):
+            broker.complete(token, {'messages':[{'role':'user','content':'short'}]})
+        event = broker.events[-1]
+        assert event['context_budget_basis'] == 'service_prompt_tokens'
+        assert event['service_prompt_minus_host_estimate'] > 0
+        assert 'agent_response' not in event
+        assert event['response']['choices'][0]['message']['content'] == ''
+        usage = broker.finish(token)
+        assert usage['calls'] == 1 and usage['tokens'] == 32701 and usage['unmetered_calls'] == 0
+    finally:
+        broker.close()
+
+
+@pytest.mark.parametrize('usage', [{'total_tokens':1}, {'total_tokens':1,'prompt_tokens':True,'completion_tokens':0}])
+def test_missing_or_invalid_service_prompt_usage_cannot_bypass_budget(tmp_path, monkeypatch, usage):
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(
+        OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='secret'))
+    budget = Budget(tmp_path)
+    budget.enter('preflight')
+    broker = Broker(tmp_path, budget)
+    broker.model = 'fixed'
+    class Opener:
+        def open(self, request, **kwargs):
+            return io.BytesIO(json.dumps({'choices':[], 'usage':usage}).encode())
+    broker.opener = Opener()
+    token = broker.session('unknown-usage')
+    try:
+        with pytest.raises(ModelError, match='token accounting unavailable'):
+            broker.complete(token, {'messages':[]})
+        assert broker.events[-1]['response']['usage'] == usage
+        assert 'agent_response' not in broker.events[-1]
+        assert broker.finish(token)['unmetered_calls'] == 1
     finally:
         broker.close()

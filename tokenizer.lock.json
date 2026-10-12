@@ -1,0 +1,15 @@
+{
+  "repository": "Qwen/Qwen3.5-4B",
+  "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "file": "src/mini_swe_rsi/assets/qwen35-tokenizer.json",
+  "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+  "library": "tokenizers",
+  "library_version": "0.23.3",
+  "model_family": "qwen35",
+  "tokenizer_pre": "qwen35",
+  "service_vocabulary_size": 248320,
+  "service_merges_sha256": "84dfecf21066c3a0c8b4ecdfea31e7d3592d1de26092955c437d211c44c0e867",
+  "service_tokens_sha256": "49d2b7a591524ed8445681d348f965ed46110e5717924418e866a378bd0b8ed0",
+  "license": "Apache-2.0",
+  "service_tokenizer_sha256": "0a72b5cec6d6e4824ee888d38a4a362b6623653d3b5757fa79e5fe62e2f153f0"
+}

@@ -130,3 +130,27 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 ## 运行说明（修复版）
 
 保持原四入口。修复版使用 `mini-text-bash-v2` 配置，新实验需另建运行目录；旧协议运行只可离线report，不允许按新协议恢复。完整验收：`RUN_DOCKER_TESTS=1 uv run pytest -q`，测试模型均为fixture；单次真实接口检查另存修复验收目录，不计作RSI实验。
+# 2026-10-12 修复后框架检查（不重测基线）
+
+按用户最新要求复查五项诊断，针对性回归 15 passed。新目录 `runs/framework-smoke-20261012-124050` 复用旧 H0 当前有效公开 dev30 证据，运行一次原生 SICA / 同一 Qwen 提案，并用既有正确开发题补丁验证独立评分器。前四项工程问题通过检查；第五项仍存在：18 次调用与 18 条只读命令，规范化下一次输入 60,994 字符超过 60,000 合同，未修改源码。失败正确传播为进程 1 和事实摘要，无错误成功反馈。评分器 completed/resolved 均为 true。未重测基线、未运行 val/test；旧 5,668 文件清单不变。详见 `docs/framework-smoke.md`。
+
+
+## 2026-10-12 数据集五题诊断完成
+
+用户授权直接做小规模数据集测试。预先固定 dev 清单前五题，使用同一 Qwen、官方 H0 和修复后的生产执行器，单独目录 runs/dataset-diagnostic-20261012-130957。独立评分 1/5（Seaborn）；五题均写文件，三题改业务源码。四题上下文终止、一题调用上限。共117次模型调用、106条工具命令、953634 total tokens（857554 cached）、耗时727.0秒；没有基础设施错误或未计量调用。发现11次正文为空且命令仅在reasoning_content的格式失败，Django占8次；此兼容性问题不能归为已修复的重复字段计量问题。Flask的mode方案与评分text接口不匹配；Xarray生成补丁参数未传递导致NameError及17个回归。未改变生产代码、提示词或预算，未重跑完整基线/演化/val/test，旧5668文件清单不变。详见docs/dataset-diagnostic.md；样本结果不证明RSI有效。
+
+## 2026-10-12 第二轮边界修复（子agent实施中，待独立验收）
+
+新增 mini-text-bash-v3：32768总token预算，2048输出预留及512+每消息32的聊天封装余量；使用独立冻结的Qwen tokenizer身份、版本与SHA256。规范化消息与wire共用，逐字段编码content/reasoning_content，记录宿主估计、服务usage和两者差值，不把字符数或宿主估计冒充服务实际prompt_tokens。旧协议/预算不一致及tokenizer校验失败在Budget/Runtime创建前拒绝。模型身份仍独立冻结。
+
+严格兼容空正文且推理全文只有一个完整官方动作块的stop回复；原生工具、refusal、普通思考、多动作、截断或非空正文保持原样。保留原始response、agent_response、适配原因，回放使用实际返回版本。新增边界/拒绝/恢复单元覆盖，Docker回放fixture改为仅reasoning_content动作以验证真实mini执行与回放。未改变SICA/mini固定源码、策略、已有运行；未请求真实模型、未提交。
+
+主agent检查真实诊断回复后指出动作前含普通思考，边界调整为只提取推理中唯一完整官方块，允许块外文字但不交给shell执行；复制后推理中移除该动作，冲突reasoning/reasoning_content别名拒绝转换。只读重放五题诊断的全部11个真实空正文回复均通过适配验收；动作相关及缺tokenizer拒绝共15项通过。
+
+补充独立服务配置身份：只读/api/show校验qwen35与显式num_ctx，冻结参数/模板SHA/窗口，避免将架构最大长度当当前服务窗口。服务actual prompt超总预算的回复保留usage但拒绝下发动作；带error事件不回放为成功。服务配置四项fixture测试通过，动作及服务边界等19项测试通过；全量仍待tokenizer artifact落地后运行。
+
+第二轮实施完成：补充verbose服务tokenizer元数据完整摘要核对（词表、merges、token types与特殊token参数），仅保存摘要；结束时再次校验服务身份。Qwen tokenizer许可随包交付。完整 `RUN_DOCKER_TESTS=1 uv run pytest -q`：58 passed（98.06秒），仅已有LiteLLM弃用提示；包含真实Docker、动作适配回放、冻结恢复与服务变更拒绝。未请求真实模型、未改旧运行、未提交；独立上游审查和真实预检由主agent完成。
+
+## 第二轮主agent独立工程验收
+
+固定SICA五文件重新远端核验、14函数AST/加载code object一致；mini74文件不变，旧运行5668文件清单不变。匹配tokenizer固定落盘，135条历史请求实测prompt均低于宿主估计（最大差值−561）。完整Docker套件58 passed/98.06秒，CLI和diff检查通过。审查补齐服务tokenizer指纹与结束时服务身份核验，保留原始/交付回复与真实用量。工程验收通过，真实提案另用新目录执行，未重测基线。详见docs/context-protocol-review.md。

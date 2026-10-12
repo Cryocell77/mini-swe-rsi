@@ -46,7 +46,7 @@ def run(job):
         def _query(self, messages, **kwargs):
             i = state['queries']
             observed = next_event('model_call')
-            if 'response' not in observed:
+            if 'response' not in observed or observed.get('error'):
                 state['reason'] = 'Missing response; replay evidence is incomplete.'
                 raise ReplayStop()
             if canonical(messages) != canonical(observed['messages']):
@@ -54,7 +54,7 @@ def run(job):
                 raise ReplayStop()
             state['queries'] += 1
             state['cursor'] += 1
-            return litellm.ModelResponse(**observed['response'])
+            return litellm.ModelResponse(**observed.get('agent_response', observed['response']))
 
         def _calculate_cost(self, response):
             # The live adapter's unpriced fixed model uses the same zero protocol placeholder.

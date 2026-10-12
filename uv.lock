@@ -1052,6 +1052,7 @@ dependencies = [
     { name = "rich" },
     { name = "tabulate" },
     { name = "tenacity" },
+    { name = "tokenizers" },
 ]
 
 [package.dev-dependencies]
@@ -1075,6 +1076,7 @@ requires-dist = [
     { name = "rich" },
     { name = "tabulate" },
     { name = "tenacity" },
+    { name = "tokenizers", specifier = "==0.23.3" },
 ]
 
 [package.metadata.requires-dev]

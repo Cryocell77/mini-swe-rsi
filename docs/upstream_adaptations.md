@@ -51,6 +51,15 @@ Docker Desktop 的 internal 网络无法直连宿主；增加固定路径中继�
 
 原始 runner 函数体、选择、队列及统计保持不变。Docker exec 适配现在分别记录进程状态、agent 终止状态与源码变化；只有正常提交且实际修改源码才进入上游原始成功摘要。异常或无修改在边界写入确定性的事实摘要并返回失败；原生函数随后提前返回，但外层仍保存谱系并独立评测候选。预算终止留下的修改没有新增 Submitted 选拔门槛。
 
-模型消息采用 `mini-text-bash-v2`：仅支持 system/user/assistant 的字符串正文及 assistant 的单份 `reasoning_content`；删除供应商重复推理、空字段和本地元数据，拒绝原生工具协议。60000 字符按实际发出的规范化 messages 的 JSON 序列化计算；事件同时记录原始/规范化长度。协议版本单独冻结在实验配置，旧配置不能按新协议恢复；模型身份比较仍只针对实际模型配置。
+上一轮修复的模型消息采用 `mini-text-bash-v2`：仅支持 system/user/assistant 的字符串正文及 assistant 的单份 `reasoning_content`；删除供应商重复推理、空字段和本地元数据，拒绝原生工具协议。60000 字符按实际发出的规范化 messages 的 JSON 序列化计算；事件同时记录原始/规范化长度。协议版本单独冻结在实验配置，旧配置不能按新协议恢复；模型身份比较仍只针对实际模型配置。
 
 改进容器的 archive 挂载改为逐文件复制的冻结公开视图，保留 `archive.agent_N.agent_code` 路径、源码 SHA 与只读挂载。SICA 选择仍读取权威原归档。视图原样保留整个通过代码验证的可编辑 agent_code（仅排除 __pycache__，拒绝 .env/.env.* 凭据文件，不限制普通配置名或新增源码扩展名），并只提供当前 dev `results.jsonl`/`perf.json`、公开任务 answer/patch/trace/execution_tree/summary/score，以及过去 meta summary；不包含完整 trajectory 配置、attempt、host_result、debug、排障结果、评分内部记录及宿主快照。轨迹的文本公开，含会话令牌的完整配置不公开。符号链接/特殊文件拒绝进入视图；源文件和挂载副本在执行前后检查 SHA。探针同样使用冻结公开证据。此视图是明确的数据暴露边界偏离，不改变源归档或归档统计。
+
+
+## 第二轮文本协议与上下文预算
+
+新实验使用 `mini-text-bash-v3`，身份与模型身份分开冻结。宿主对规范化后实际发送的 content / reasoning_content 逐字段使用固定 Qwen tokenizer 编码，总预算 32768 tokens，保留 2048 输出与 512 + 每消息32 tokens聊天封装余量。tokenizer仓库revision、文件SHA256、tokenizers库版本和计量算法记录于 `tokenizer.lock.json` / `configuration.json`。这只是宿主输入估计，不复刻服务聊天模板或SICA文件视图重建；实际服务prompt_tokens仍独立记录，事件列出与估计的差值。字符长度仅用于审计。缺失/摘要不匹配的tokenizer不退回通用tokenizer；旧协议或不一致配置在修改预算、创建runtime及请求模型前拒绝恢复。
+
+空正文回复仅在stop结束、没有原生工具/拒绝、reasoning_content（或服务原始reasoning别名）中恰好一个完整官方 `mswea_bash_command` 块时复制该块到正文。允许块外思考文字但只复制动作块，普通思考本身、多个动作和截断回复不转换，非空正文不覆盖。复制后从推理字段移除动作以免重复，冲突的推理别名拒绝转换。事件保留原始response、实际返回agent_response和适配原因；离线回放优先采用实际返回版本，旧事件仍使用其原始response。此规则只修复已经观察到的协议错位，不向模型添加求解策略。
+
+服务配置身份单独保存为 `service_identity.json`：只读 `/api/show` 的显式 `num_ctx` 必须至少32768且模型family为qwen35；冻结参数原文、聊天模板SHA256及架构context_length；verbose元数据的完整tokenizer.ggml字段（含词表、merges和token types）按规范JSON摘要与tokenizer.lock.json逐次比对，审计只保存摘要。结束时再次检查服务身份，防止窗口、模板或tokenizer改变。架构最大窗口不等于服务实际配置窗口。服务实际prompt_tokens加预留输出若超过32768，该次已发生调用仍完整计量和保留原始回复，但不将动作交给agent；回放不会返回带error的拒绝事件。

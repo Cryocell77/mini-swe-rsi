@@ -46,7 +46,7 @@ def test_replay_detects_late_context_change_but_rejects_unused_source_change(tmp
                     self.count += 1
                     value = {'id':'fixture', 'created':int(time.time()), 'object':'chat.completion', 'model':'fixture',
                         'choices':[{'index':0, 'finish_reason':'stop', 'message':{'role':'assistant',
-                        'content':f'THOUGHT: Fixture.\n```mswea_bash_command\n{command}\n```'}}],
+                        'content':'', 'reasoning_content':f'```mswea_bash_command\n{command}\n```'}}],
                         'usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
                     return io.BytesIO(json.dumps(value).encode())
             broker.opener = RecordedEndpoint()
@@ -58,6 +58,9 @@ def test_replay_detects_late_context_change_but_rejects_unused_source_change(tmp
             assert read(logs/'result.json')['exit_status'] == 'Submitted', output
             events = [json.loads(s) for s in (tmp_path/'events.jsonl').read_text().splitlines()]
             observed = [e for e in events if e.get('label') == f'fixture:{i}']
+            calls = [e for e in observed if e['kind'] == 'model_call']
+            assert all(e['response']['choices'][0]['message']['content'] == '' for e in calls)
+            assert all(e['agent_response']['choices'][0]['message']['content'].startswith('```mswea_bash_command') for e in calls)
             job = tmp_path/f'replay_{i}.json'
             result = tmp_path/f'replay_{i}_result.json'
             write(job, {'h0_code':str(codes[0]), 'task':task.read_text(), 'model':'fixture',
