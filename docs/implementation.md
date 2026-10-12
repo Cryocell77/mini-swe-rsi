@@ -115,3 +115,9 @@ SICA ed8275dca4d3c5dbf77229964351fe9b424797dc；mini-swe-agent 04d809ceab9df28f9
 ## 单次测试后报告预算核验
 
 3cc4718真实单次诊断完成，独立开发题通过。额外只读复核发现report.compute_gates仍以30共享调用判定探针预算；该函数未参与smoke_once，但与v5独立角色预算不一致。修复为读取宿主metrics.max_calls：有限额度检查真实是否超额，None表示无共享调用阈值、角色独立限制由受保护broker执行；缺少字段的历史记录保持旧30合同。保留因上下文/时间终止但未实际超额的有效候选，不把普通失败误当预算越界。新增离线用例验证多于30次且在新合同内的探针可通过，以及显式有限上限越界仍拒绝。不修改已完成的真实运行、不再次推理。
+
+## Qwen单题重测前的Ollama兼容（2026-10-12）
+
+用户将.env换回Qwen并要求重新一题测试。只读预检确认配置qwen35-4b-agent，列表为:latest；/models不返回能力字段，/api/show明确num_ctx65536、架构262144，num_predict未设置。不得套DeepSeek393216输出/1M上下文或恢复旧2048限制。新增明确Ollama元数据发现：原名优先，无tag时仅接受同名:latest且由/api/tags摘要核验；冻结原模型digest、完整参数摘要、模板摘要及原生服务版本。实际context取明确num_ctx且不超过架构。若没有独立输出cap，用context-1作为单次上下文内生成的数学上界并明确标derived，不伪称模型声明值；已有正num_predict取与context-1的较小值。保持OpenAI文本调用、温度0、每角色预算和600秒benchmark；不改模型服务配置、不增加优化策略。官方Ollama API确认max_tokens支持，Modelfile默认num_predict=-1。
+
+价格未知的远端仍拒绝；已核验原生Ollama且非cloud模型允许用户明确要求的本地推理，冻结cost_threshold_enforced=false和原因，美元成本记未知，绝不计作免费。新增隔离模拟端点测试alias、元数据校验/身份漂移/不套用DeepSeekcap及未知费用记录。scope选项已向用户确认：Qwen新生成一次提案后测题，或现有候选直接重测；准备工作不依赖选择。旧运行只读封存，新诊断不恢复旧身份。

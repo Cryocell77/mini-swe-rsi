@@ -328,3 +328,11 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 单次生产测试结果：3cc4718完成7步与源码编辑；293提案请求（1 URLError未知usage），独立开发题30请求并通过SWE-bench评分；总墙钟1768.39秒，模型结束身份一致。发现独立report门槛残留历史30调用常量（不参与此次入口），追加设计后仅修复此判据并离线验证，真实产物/代码冻结不改写，不重复推理。
 
 最终独立复核：候选摘要与任务加载/评分一致，模型前后身份一致；324总请求、6060061已计量tokens，1未知usage；单次29分28秒内完成。候选源码实际含16测试函数（角色报告误称14），主agent在只读断网容器独立执行全部通过，0真实推理。报告门槛修正后的离线全套96 passed/9 Docker skipped/22.43秒，未重复已通过的运行时Docker验收。按3cc4718内容重构验证原冻结摘要一致，旧7214文件和上游14/74/7来源未变；仅报告判据、其回归测试及结果文档待提交，候选保持归档而不晋升。
+
+## Qwen重测预检
+
+用户要求换回Qwen后重新测试一题。无推理的metadata预检发现当前broker严格/models声明导致Ollama兼容缺口：模型tag和能力来源不同；服务num_ctx65536且未设置num_predict。先补设计，再修复Ollama明确发现/冻结及本地未知费用记录；不改.env或服务参数、不使用DeepSeek旧身份、不重跑基线。测试scope已发异步澄清，准备工作继续。
+
+实现记录：broker.py核验Ollama版本/tags/show，显式tag别名、digest、有效num_ctx与derived输出边界冻结，非cloud原生模型允许未知价格本地测试且标cost_accounting_available=false；context_budget.py将能力来源概括为认证provider元数据；driver.py从保存metrics判断成本是否可计，避免评分恢复依赖活动broker；tests/test_sica_budget_policy.py增加Ollama模拟身份/容量/云与未知价格校验。首次全套98 passed/9 skipped/1 failed是评分恢复fixture无broker，修正为使用持久metrics后26项定向回归通过，开始含Docker最终验收；尚未真实推理。原始测试命令另一次误指不存在测试文件、未执行测试，日志保留。
+
+最终工程验收108 passed/108.07秒，含Docker模拟端点；新增模型真实身份只读核验通过，digest与旧Qwen一致。工程阶段无真实推理。README/upstream_adaptations披露Ollama推导输出边界和未复现$3费用守卫；scope按明确的一题重测复用上次H1，保留生成模型DeepSeek的来源，不能据此称Qwen会自我改进。准备提交兼容修正后，在新目录执行一次django__django-14752，benchmark600秒，诊断总信封1200秒覆盖启动/评分；此信封是单题工程保护而非原SICA改进时间上限，旧实验不恢复。

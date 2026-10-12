@@ -19,7 +19,7 @@ LOCK_PATH = ROOT / 'tokenizer.lock.json'
 
 def context_contract():
     return {'algorithm': 'provider-capacity-and-usage-v2',
-            'host_tokenizer': None, 'capacity_source': 'authenticated /models',
+            'host_tokenizer': None, 'capacity_source': 'authenticated provider metadata',
             'pre_request_estimate_enforced': False,
             'output_policy': 'declared model maximum', 'post_request_check': 'actual prompt plus completion'}
 

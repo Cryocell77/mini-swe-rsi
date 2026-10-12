@@ -105,3 +105,5 @@ Completion success is the model's declaration, as upstream; no source-change, co
 ## 2026-10-12 v5预算作用域更新
 
 此前30/500共享调用、2048输出、32768 context、60秒命令及600秒improve是历史诊断合同。当前改为每角色500/coder1000独立迭代、每迭代最多5 provider请求、总结1请求、benchmark600秒/$3、improve无独立时间/费用阈值；模型输出和context取认证元数据，DeepSeek通过beta prefix续写。原文件视图重建未移植；公开读取和工具输出取消人为截断，安全隔离仍保留。费用为官方峰值保守上界而非账单，未知价格拒绝benchmark。完整来源、差异、验收和单次测试状态见[sica-budget-alignment-review.md](sica-budget-alignment-review.md)。
+
+Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型digest、参数和模板摘要，context取明确num_ctx且不得超过架构容量；模型未设置独立num_predict时用context-1推导单次上下文内输出边界，明确不冒称服务声明的独立输出cap。对已核验的非cloud原生Ollama允许用户授权的本地测试，$3费用守卫不可复现、实际费用未知；metrics记录cost_accounting_available=false，逐题cost_estimate为null，不记为免费。DeepSeek和其他未定价远端的原守卫不变。只增加传输/身份兼容，不修改SICA控制器、原mini源码、模型配置或解题策略。

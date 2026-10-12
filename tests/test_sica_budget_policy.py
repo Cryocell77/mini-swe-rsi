@@ -62,6 +62,71 @@ def test_remote_identity_never_uses_qwen_tokenizer(broker):
         broker.identity()
 
 
+@pytest.fixture
+def ollama_broker(tmp_path, monkeypatch):
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
+        OPENAI_BASE_URL='http://fixture/v1', OPENAI_API_KEY='private-fixture', LOCAL_LLM_MODEL='qwen35-4b-agent'))
+    budget = Budget(tmp_path)
+    budget.enter('preflight')
+    instance = Broker(tmp_path, budget)
+    data = {'/models':{'data':[{'id':'qwen35-4b-agent:latest'}]},
+            '/api/version':{'version':'fixture'},
+            '/api/tags':{'models':[{'name':'qwen35-4b-agent:latest','digest':'a'*64}]}}
+    shown = {'parameters':'num_ctx 65536\n', 'template':'fixture-template',
+             'model_info':{'general.architecture':'qwen35','qwen35.context_length':262144}}
+    instance.remote = lambda path:data[path]
+    instance.opener = type('Endpoint',(),{'open':staticmethod(lambda *args,**kwargs:io.BytesIO(json.dumps(shown).encode()))})()
+    yield instance, data, shown
+    instance.close()
+
+
+def test_ollama_alias_capabilities_and_unknown_local_cost(ollama_broker):
+    broker, data, shown = ollama_broker
+    identity = broker.identity()
+    assert identity['requested']=='qwen35-4b-agent' and identity['model']=='qwen35-4b-agent:latest'
+    assert identity['weights']=='a'*64 and identity['weights_verifiable']
+    assert broker.context.contract['total_tokens']==65536
+    assert broker.budget_limits()['model_max_output_tokens']==65535
+    assert broker.service_identity['ollama']['num_predict']==-1
+    assert not broker.budget_limits()['cost_threshold_enforced']
+    token = broker.session('task:fixture',solver='fixture')
+    requests = endpoint(broker,iter([reply()]))
+    broker.complete(token,{'messages':[{'role':'user','content':'task'}]})
+    assert requests[0][1]['model']=='qwen35-4b-agent:latest'
+    assert requests[0][1]['max_tokens']==65535
+    assert not broker.finish(token)['cost_accounting_available']
+
+
+def test_ollama_finite_output_and_invalid_or_cloud_metadata(ollama_broker):
+    broker, data, shown = ollama_broker
+    shown['parameters'] += 'num_predict 8192\n'
+    assert broker.identity()['max_tokens']==8192
+    frozen = dict(broker.service_identity)
+    shown['parameters']='num_ctx 32768\nnum_predict 8192\n'
+    broker.identity()
+    assert broker.service_identity!=frozen
+    shown['parameters']='num_predict 8192\n'
+    with pytest.raises(ModelError,match='explicit valid num_ctx'):
+        broker.identity()
+    shown['parameters']='num_ctx 999999\n'
+    with pytest.raises(ModelError,match='explicit valid num_ctx'):
+        broker.identity()
+    shown['parameters']='num_ctx 65536\n'
+    shown['remote_host']='https://cloud.invalid'
+    with pytest.raises(ModelError,match='cloud model'):
+        broker.identity()
+
+
+def test_ollama_missing_digest_or_model_is_not_guessed(ollama_broker):
+    broker, data, shown = ollama_broker
+    data['/api/tags']['models'][0]['digest']=''
+    with pytest.raises(ModelError,match='Unverified Ollama'):
+        broker.identity()
+    data['/models']['data']=[{'id':'some-other-model:latest'}]
+    with pytest.raises(ModelError,match='not advertised'):
+        broker.identity()
+
+
 def test_independent_iterations_and_improvement_deadline(broker):
     token = broker.session('proposal', seconds=None)
     requests = endpoint(broker, iter([reply(),reply(),reply()]))

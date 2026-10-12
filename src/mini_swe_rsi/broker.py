@@ -205,8 +205,53 @@ class Broker:
         models = self.remote('/models')['data']
         requested = self.config['LOCAL_LLM_MODEL']
         selected = next((m for m in models if m['id'] == requested), None)
+        if selected is None and ':' not in requested.rsplit('/', 1)[-1]:
+            selected = next((m for m in models if m['id'] == requested + ':latest'), None)
         if selected is None:
             raise ModelError('Configured model is not advertised by the endpoint')
+        native = None
+        if 'context_window' not in selected or 'max_output_tokens' not in selected:
+            # Ollama's OpenAI model list omits capacities. Verify the native
+            # service and the same model's digest instead of guessing a model.
+            if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'api.deepseek.com':
+                raise ModelError('Endpoint must advertise valid context_window and max_output_tokens')
+            version = self.remote('/api/version').get('version')
+            tags = self.remote('/api/tags').get('models', [])
+            tag = next((m for m in tags if m.get('name') == selected['id']), None)
+            if not isinstance(version, str) or not tag or not re.fullmatch(r'(?:sha256:)?[a-f0-9]{64}', tag.get('digest', '')):
+                raise ModelError('Unverified Ollama service/model identity')
+            request = urllib.request.Request(self.config['OPENAI_BASE_URL'].rstrip('/').removesuffix('/v1') + '/api/show',
+                data=json.dumps({'model': selected['id'], 'verbose': False}).encode(),
+                headers={'Content-Type':'application/json','Authorization':'Bearer '+self.config['OPENAI_API_KEY']})
+            try:
+                with self.opener.open(request, timeout=min(30, self.budget.remaining())) as response:
+                    shown = json.load(response)
+            except Exception as exc:
+                raise ModelError('Ollama model metadata unavailable: ' + type(exc).__name__) from None
+            if shown.get('remote_model') or shown.get('remote_host') or ':cloud' in selected['id']:
+                raise ModelError('Ollama cloud model requires an explicit capacity/pricing contract')
+            parameters = shown.get('parameters', '')
+            match = re.search(r'^num_ctx\s+(\d+)\s*$', parameters, re.MULTILINE)
+            info = shown.get('model_info', {})
+            architecture = info.get('general.architecture')
+            maximum = info.get(str(architecture)+'.context_length')
+            context = int(match.group(1)) if match else None
+            if type(maximum) is not int or context is None or not 1 < context <= maximum:
+                raise ModelError('Ollama must advertise an explicit valid num_ctx and architecture capacity')
+            output_match = re.search(r'^num_predict\s+(-?\d+)\s*$', parameters, re.MULTILINE)
+            num_predict = int(output_match.group(1)) if output_match else -1
+            if num_predict not in (-1, -2) and num_predict <= 0:
+                raise ModelError('Invalid Ollama num_predict')
+            output = min(context-1, num_predict) if num_predict > 0 else context-1
+            template = shown.get('template')
+            if not isinstance(template, str) or not template:
+                raise ModelError('Ollama chat template unavailable')
+            native = {'provider':'ollama', 'version':version, 'digest':tag['digest'],
+                'parameters':parameters, 'architecture_context_length':maximum,
+                'template_sha256':hashlib.sha256(template.encode()).hexdigest(),
+                'output_capacity_source':'positive num_predict bounded by context' if num_predict > 0 else 'derived context-1 bound; provider has no independent output cap',
+                'num_predict':num_predict, 'cloud':False}
+            selected = {**selected, 'digest':tag['digest'], 'context_window':context, 'max_output_tokens':output}
         from .budget_policy import sica_budget
         try:
             limits = sica_budget(selected['max_output_tokens'], selected['context_window'])
@@ -225,6 +270,8 @@ class Broker:
             'context_window':selected['context_window'], 'max_output_tokens':selected['max_output_tokens'],
             'owned_by':selected.get('owned_by'), 'api_capabilities':selected.get('api_capabilities'),
             'prefix_protocol':self.prefix_protocol, 'pricing':self.pricing}
+        if native is not None:
+            self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
         return {'requested':requested, 'model':self.model,
                 'weights':selected.get('digest'), 'weights_verifiable':bool(selected.get('digest')),
                 'temperature_requested':0, 'thinking':'provider default', 'reasoning_effort':'provider default',
@@ -246,6 +293,7 @@ class Broker:
                                     cwd='/testbed', started=time.time(), iterations={},
                                     prompt_tokens=0, completion_tokens=0, cached_tokens=0,
                                     cost_upper_bound_usd=0.0, cost_limit_usd=3 if solver else None,
+                                    cost_accounting_available=bool(getattr(self, 'pricing', None)),
                                     unmetered_calls=0,
                                     deadline=time.time() + (remaining if seconds is None else min(seconds, remaining)),
                                     max_calls=calls, tool_calls=0, errors=[], terminal_reason=None, rejected_calls=[])
@@ -288,7 +336,8 @@ class Broker:
         if model_request and s['max_calls'] is not None and s['calls'] >= s['max_calls']:
             self.reject(s, 'LimitsExceeded')
         if s['cost_limit_usd'] is not None:
-            if not getattr(self, 'pricing', None) and self.context.provider:
+            local_ollama = getattr(self, 'service_identity', {}).get('ollama', {}).get('cloud') is False
+            if not getattr(self, 'pricing', None) and self.context.provider and not local_ollama:
                 self.reject(s, 'Benchmark pricing contract unavailable', 'pricing_contract')
             if s['cost_upper_bound_usd'] >= s['cost_limit_usd']:
                 self.reject(s, 'CostExceeded', 'published_peak_cost_upper_bound',kind=kind)

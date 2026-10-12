@@ -375,7 +375,8 @@ class Driver:
         if grade is None:
             raise GradingUnavailable('Both scoring attempts failed; preserving the answer without another model run')
         record = {'problem_id': task_id, 'score': float(grade['resolved']), 'tokens_used': metrics['tokens'],
-                  'num_cached_tokens': metrics['cached_tokens'], 'cost_estimate': metrics.get('cost_upper_bound_usd', 0.0),
+                  'num_cached_tokens': metrics['cached_tokens'],
+                  'cost_estimate': metrics.get('cost_upper_bound_usd') if metrics.get('cost_accounting_available', False) else None,
                   'wall_time': saved['agent_seconds'], 'timed_out': result.get('exit_status') in ('TimeExceeded', 'TimeoutError'),
                   'cost_threshold_exceeded': result.get('exit_status') == 'CostExceeded', 'timestamp': time.time()}
         write(output / 'host_result.json', {'result': result, 'metrics': metrics, 'grade': grade,
