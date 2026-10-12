@@ -41,6 +41,9 @@ def test_original_meta_loop_keeps_parent_and_proposer_selection_on_resume(tmp_pa
 
         def controller(self, code, logs, args, token, **kwargs):
             executions.append(str(code))
+            assert args[args.index('--parent-iter')+1] == '2'
+            assert args[args.index('--candidate-id')+1] == 'agent_3'
+            assert args[args.index('--best-iter')+1] == ('1' if 'run_1' in str(code) else '0')
             target = kwargs['target']
             # The latest qualifying parent is 2; the best improver is 1.
             assert (target/'parent_marker.txt').read_text() == '2'

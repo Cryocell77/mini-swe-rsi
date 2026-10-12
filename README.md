@@ -68,3 +68,5 @@ Docker测试使用模拟模型，不调用 `.env` 推理服务；验证不同归
 当前新实验协议为 `mini-text-bash-v3`：总上下文32768 tokens，保留2048输出和明确聊天封装余量；固定Qwen tokenizer身份、文件摘要与计量算法，宿主估计与服务实际usage分开记录。旧协议运行只能离线报告，不可按新预算恢复。严格兼容仅在reasoning_content中返回的单个完整动作，保留原始和agent实际收到的回复供审计与回放。详见 [上游适配说明](docs/upstream_adaptations.md)。
 
 最新修复验收与真实提案结果见[第二轮审查报告](docs/context-protocol-review.md)：工程检查通过，真实30调用仍无源码变化，尚未证明RSI。
+
+改进任务另冻结 `sica-mini-improvement-v1`（`configuration.json.improvement_task`），包含任务渲染边界与原始SICA任务源码SHA；缺失或不一致的配置在预算/runtime/模型建立前拒绝恢复。任务明确实际父版本、执行改进者、未评测候选、只读启动归档与实时可写workdir，并说明现有30调用/600秒/命令60秒/输出2048/总上下文32768限制。改进者在mini中直接尽早开展元改进推理，继续保留原SICA提出、实施改进和更新日志的任务意图；benchmark提示不追加此说明。每次改进保存实际提示及宿主/容器身份摘要，真实收益仍须独立评测。

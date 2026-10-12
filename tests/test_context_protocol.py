@@ -48,9 +48,9 @@ def test_actual_qwen_tokenizer_budget_boundary_and_multilingual():
 
 def test_frozen_context_rejected_before_budget_or_runtime(tmp_path):
     from mini_swe_rsi.broker import TEXT_PROTOCOL
-    from mini_swe_rsi.core import write
+    from mini_swe_rsi.core import write, improvement_contract
     from mini_swe_rsi.experiment import Experiment
-    write(tmp_path/'configuration.json', {'message_protocol':TEXT_PROTOCOL, 'context_budget':{}})
+    write(tmp_path/'configuration.json', {'message_protocol':TEXT_PROTOCOL, 'improvement_task': improvement_contract(), 'context_budget':{}})
     with pytest.raises(RuntimeError, match='Frozen context budget changed'):
         Experiment(tmp_path)
     assert not (tmp_path/'budget.json').exists()
@@ -58,7 +58,7 @@ def test_frozen_context_rejected_before_budget_or_runtime(tmp_path):
 
 def test_missing_or_corrupt_tokenizer_never_falls_back(tmp_path, monkeypatch):
     import mini_swe_rsi.context_budget as module
-    from mini_swe_rsi.core import write
+    from mini_swe_rsi.core import write, improvement_contract
     lock = tmp_path/'lock.json'
     monkeypatch.setattr(module, 'LOCK_PATH', lock)
     with pytest.raises(FileNotFoundError):
@@ -156,7 +156,7 @@ def test_service_context_identity_is_separate_and_must_support_budget(num_ctx, f
 
 def test_service_identity_checked_after_model_refresh(tmp_path):
     from types import SimpleNamespace
-    from mini_swe_rsi.core import write
+    from mini_swe_rsi.core import write, improvement_contract
     from mini_swe_rsi.experiment import Experiment
     experiment = Experiment.__new__(Experiment)
     experiment.root = tmp_path

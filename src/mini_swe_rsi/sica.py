@@ -124,7 +124,8 @@ class SicaAdapter:
                 try:
                     status, output = await asyncio.to_thread(driver.controller, code, logs,
                         ['improve', '--workdir', '/home/agent/workdir', '--best-iter', str(best),
-                         '--current-iter', iteration], token, archive=archive, target=target)
+                         '--current-iter', iteration, '--parent-iter', str(adapter.selected_parent),
+                         '--candidate-id', target.parent.name], token, archive=archive, target=target)
                 finally:
                     metrics = broker.finish(token)
                 validate_code(target)
@@ -213,6 +214,7 @@ class SicaAdapter:
         following.mkdir(parents=True)
         aa = self.runner.ArchiveAnalyzer(exp)
         base = int(self.runner.select_base_agent(aa, iteration, score_type='mean_score'))
+        self.selected_parent = base
         await self.runner.run_meta_agent_benchmark(exp_id, iteration, exp, current, following)
         if self.last_proposal is None:
             raise RuntimeError('Upstream proposal did not reach archived agent execution')

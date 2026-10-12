@@ -158,3 +158,27 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 ## 第二轮提交后真实验收
 
 代码commit9ed0d95。主agent边界套件29 passed/11.35秒。真实SICA提案30调用30命令，9次reasoning唯一动作适配后执行；最大输入70340字符，12次超过旧上限，最大实际prompt18941，所有请求符合32768合同。350180tokens/328322cached，101.82秒含评分检查；评分器resolved=true。没有上下文/格式/服务错误；全部命令只读，源码未变，LimitsExceeded进程1。模型与服务身份未变，旧5668文件清单未变。没有重复基线或运行val/test/精简。说明工程修复确实生效，但模型在30次调用内仍未进入编辑，未证明RSI。
+
+## 四项问题只读复查与归因补充
+
+本轮未新增真实模型调用或修改生产代码。针对前四工程项复跑18项Docker回归全部通过/46.47秒。逐轮审计v3提案确认：930条历史消息字段规范、失败摘要正确、339文件公开视图无禁止资产、workdir可写。额外发现agent_1未编辑候选被当作已改进历史版本，最后11命令8次diff；原SICA本身创建候选后挂载整归档，此可见性并非新复制bug，但适配任务未明确候选身份。bridge将尽早调用元改进推理结构替换为检查归档，语义不等价；30步合同未进入实际任务提示。此前只强调模型反复读取的归因不完整，现补充任务协议与预算因素，因果仍待对照验证。详见docs/four-issues-source-edit-analysis.md。
+
+## 第三轮任务协议修复启动
+
+用户授权修复最新诊断的提示意图、候选身份与预算可见性。计划已写入implementation.md；GPT-6.1 Sol / low子agent实施，主agent独立审查/上游对照/验收/commit/真实测试。保持原30调用及v3模型协议，不改SICA选择或mini源码；新任务协议独立冻结，旧实验封存。当前已有四项复查文档随本轮保留。
+
+## 第三轮任务协议实施（子agent，待主agent独立验收）
+
+在SICA→mini边界恢复“尽早直接开展元改进推理”意图；去除把元改进推理改成额外浏览归档的非等价替换，保留原任务提出/实施改进和更新日志要求，不新增策略、反思步骤或预算。任务区分父版本、执行改进者、未评测候选、RO启动归档与RW实时workdir；固定轨道父值与H0改进者分开，探针父恒H0，current_iter沿用上游编号。预算仅在improve显示，benchmark仍读取原任务文件。
+
+新增core.improvement_contract()，独立冻结sica-mini-improvement-v1及bridge/上游任务源码SHA；Experiment在context/Budget/runtime/model前拒绝缺失或不同任务合同。宿主绑定实际归档proposer路径及parent→candidate启动minisweagent源码，独立渲染prompt身份并核对容器实际任务文本SHA及renderer/upstreamSHA。记录host_improvement_task.json、improvement_task.json、improvement_prompt.txt与verified/unverified_failure；成功执行缺失身份证据拒绝，启动/超时失败保留失败状态。
+
+新增原始任务意图、父≠改进者、候选未评测/冻结快照、probe共同H0起点、旧合同提前拒绝及错误挂载身份回归。真实Docker继承fixture增加第三轮固定H0改进者/父H2，核验wire提示、独立身份和真实加载模块、父源码不变及候选更新；均使用模拟模型，不请求真实服务。针对性38项单元通过；首次Docker针对性10项通过/37.40秒。完整首次65通过/1失败，失败为遗留测试调用旧双参数渲染签名，已更新；首轮产物保留在新runs/task-protocol-repair-20261012目录，最终完整套件结果另追加。未修改vendor/.upstream、tokenizer/service合同、搜索/评分/晋升规则、旧runs；未实际请求模型、commit或push。
+
+第三轮最终完整 `RUN_DOCKER_TESTS=1 uv run pytest -q --junitxml=runs/task-protocol-repair-20261012/implementation.xml`：66 passed/98.50秒，仅已有LiteLLM弃用提示。stdout保存implementation-tests.txt；首轮失败记录未覆盖。完整套件包含第三轮fixed H0改进者/parent H2真实Docker继承、wire任务身份及宿主/容器SHA核验；修复通过工程fixture不代表真实模型会改进或RSI收益。主agent继续独立审查/上游核对及授权真实提案。
+
+主agent独立审查补充：发现同进程初始化后若renderer改变，Driver此前重新读取当前contract但未对照已冻结配置。现每次improve在runpy加载renderer/创建容器/模型前，对照已有configuration.json.improvement_task；缺失或不一致拒绝，无配置的独立fixture/API继续采用当前contract。新增初始化后renderer变化及缺合同两项启动前拒绝fixture。仅重跑受影响 `RUN_DOCKER_TESTS=1 uv run pytest -q tests/test_improvement_task.py tests/test_sica_runtime.py`：11 passed/17.43秒，产物renderer-freeze.xml与renderer-freeze-tests.txt。此前66项完整验收属于该小修前，未混称为小修后的全套结果；未真实模型调用或commit。
+
+## 第三轮主agent验收
+
+独立提示原文差异审查和五个固定SICA文件远端核验通过，14原函数AST/code object及mini74文件不变，旧5668封存文件不变。主agent14项独立测试通过/16.98秒；审查追加每次启动前检查冻结taskcontract，子agent修复后11项affected测试通过/17.43秒，代码复审通过。完整66项测试为补充前最终完整套件，结果分开记录。CLI及diff检查通过，工程修复验收；将提交后用新目录同Qwen实测。

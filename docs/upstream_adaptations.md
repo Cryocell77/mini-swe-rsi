@@ -63,3 +63,11 @@ Docker Desktop 的 internal 网络无法直连宿主；增加固定路径中继�
 空正文回复仅在stop结束、没有原生工具/拒绝、reasoning_content（或服务原始reasoning别名）中恰好一个完整官方 `mswea_bash_command` 块时复制该块到正文。允许块外思考文字但只复制动作块，普通思考本身、多个动作和截断回复不转换，非空正文不覆盖。复制后从推理字段移除动作以免重复，冲突的推理别名拒绝转换。事件保留原始response、实际返回agent_response和适配原因；离线回放优先采用实际返回版本，旧事件仍使用其原始response。此规则只修复已经观察到的协议错位，不向模型添加求解策略。
 
 服务配置身份单独保存为 `service_identity.json`：只读 `/api/show` 的显式 `num_ctx` 必须至少32768且模型family为qwen35；冻结参数原文、聊天模板SHA256及架构context_length；verbose元数据的完整tokenizer.ggml字段（含词表、merges和token types）按规范JSON摘要与tokenizer.lock.json逐次比对，审计只保存摘要。结束时再次检查服务身份，防止窗口、模板或tokenizer改变。架构最大窗口不等于服务实际配置窗口。服务实际prompt_tokens加预留输出若超过32768，该次已发生调用仍完整计量和保留原始回复，但不将动作交给agent；回放不会返回带error的拒绝事件。
+
+## 第三轮改进任务协议
+
+模型文本协议仍为 `mini-text-bash-v3`，tokenizer及服务身份合同不变。独立 `sica-mini-improvement-v1` 任务合同由 `core.improvement_contract()` 冻结版本、runtime/bridge.py和原始agent_main.py摘要；配置缺失或不匹配在Budget、runtime和模型创建前拒绝恢复。只在improve入口修正原任务的身份语句与不可用工具术语：尽早元改进推理改为mini内直接开展推理，保留原始提出、实施、最小改动与日志更新意图。不恢复SICA元推理工具的七步结构、委员会或子agent，也不添加人工解题策略或逐步反思。benchmark任务文件原样传给mini。
+
+原生proposal继续调用原有select_base_agent，确定性预选父值传至执行边界；runner内仍按原函数确定父及最优改进者。固定轨道只将执行改进者改为H0，父可不同；探针共同父为H0，执行改进者分别为H*和H0。current_iter编号保持上游语义，candidate单独编号。宿主在执行前核验改进者编号对应实际归档模块，父minisweagent源码对应候选启动源码（原生changelog仍按上游从最近版本继承）。只读公开归档是启动快照，候选在其中的副本并无已评测收益，只有workdir实时可写。提示展示既有30调用、600秒、命令60秒、输出2048和总32768token合同，无预算扩张。
+
+每次改进记录host_improvement_task.json、improvement_task.json及improvement_prompt.txt；宿主独立渲染提示摘要并对照容器记录和实际文本SHA，记录parent/proposer/candidate与renderer/upstream摘要。agent_launch事件保留同一身份及真实挂载信息；这些执行证据不替代独立性能评分。

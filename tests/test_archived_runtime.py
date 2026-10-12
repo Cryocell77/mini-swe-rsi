@@ -92,7 +92,7 @@ def test_controller_deadline_stops_unresponsive_archived_process(tmp_path, monke
         (code/'__main__.py').write_text('import time\ntime.sleep(100)\n')
         token = broker.session('unresponsive-fixture', seconds=1)
         start = time.monotonic()
-        status, _ = driver.controller(code, tmp_path/'logs', ['improve'], token, target=tmp_path/'target')
+        status, _ = driver.controller(code, tmp_path/'logs', ['improve', '--parent-iter', '0', '--best-iter', '0', '--current-iter', '0', '--candidate-id', 'fixture'], token, target=tmp_path/'target')
         broker.finish(token)
         assert status == 137
         assert time.monotonic()-start < 5
@@ -123,7 +123,7 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
         initial_code(target)
         frozen = tree_hash(target)
         token = broker.session('bridge-failure')
-        status, output = driver.controller(code, tmp_path/'logs', ['improve'], token,
+        status, output = driver.controller(code, tmp_path/'logs', ['improve', '--parent-iter', '0', '--best-iter', '0', '--current-iter', '0', '--candidate-id', 'fixture'], token,
                                           archive=tmp_path/'archive', target=target)
         broker.finish(token)
         assert status != 0, output

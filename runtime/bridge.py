@@ -2,6 +2,7 @@
 import argparse
 import ast
 import json
+import hashlib
 import os
 import platform
 import sys
@@ -19,11 +20,10 @@ def rpc(path, value):
         return json.load(f)
 
 
-def improvement_prompt(best, current):
-    tree = ast.parse(Path('/upstream/agent_main.py').read_text())
+def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py")):
+    tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
-    strings = [n.value for n in ast.walk(func) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
-    # Use the original upstream task; substitute unavailable SICA-specific tool terminology only.
+    # Preserve the upstream task intent; adapt tool terminology and execution identities.
     original = next(n for n in ast.walk(func) if isinstance(n, ast.JoinedStr) and any(
         isinstance(v, ast.Constant) and 'It is meta-improvement time.' in str(v.value) for v in n.values))
     text = ''
@@ -36,9 +36,23 @@ def improvement_prompt(best, current):
                          'testing_procedure': 'You can inspect and syntax-check Python locally. Benchmark grading is host-controlled.'}[name])
     text = text.replace('/home/sandbox/workdir', '/home/agent/workdir')
     text = text.replace('invoke the meta improvement reasoning structure as early as reasonably possible',
-                        'inspect the archive using the available bash command interface')
+                        'carry out meta-improvement reasoning directly as early as reasonably possible')
     text = text.replace('using the archive exploration tools available to you', 'reading the archive with bash')
     text = text.replace('(call a sub-agent to)', '')
+    text = text.replace(
+        f'The agent code in this directory is the best performing in the sequence of agent iterations, and corresponds to agent iteration {best}.',
+        f'The code in /home/agent/workdir is the current unassessed candidate {candidate}, copied from selected parent agent_{parent}. '
+        f'The executing improver is agent_{best}; it may differ from the parent. '
+        'The parent is the selected starting version, not necessarily the best performing version.')
+    text = text.replace('combine with the current best performing agent.', 'combine with the selected starting candidate.')
+    text = text.replace('While you have the best performing agent in /home/agent/workdir,',
+                        'While /home/agent/workdir contains the writable candidate copied from the selected parent,')
+    text += (f'\nTask identities: parent=agent_{parent}; proposer=agent_{best}; candidate={candidate}.\n'
+             'Only /home/agent/workdir is the live writable candidate. /home/agent/archive is a read-only frozen startup snapshot; '
+             'any copy of the current candidate there is its initial snapshot, not live edits or an evaluated improvement. '
+             'The current candidate has not been benchmarked and has no established performance benefit.\n'
+             'Existing execution limits: 30 model calls, 600 seconds per task, 60 seconds per bash command, '
+             '2048 output tokens per model call, 32768 total context tokens including output reservation and chat overhead.\n')
     return text
 
 
@@ -49,10 +63,14 @@ def main(entry):
     parser.add_argument('--logdir', required=True)
     parser.add_argument('--workdir', default='/home/agent/workdir')
     parser.add_argument('--best-iter', type=int, default=0)
+    parser.add_argument('--parent-iter', type=int, required=False)
+    parser.add_argument('--candidate-id')
     parser.add_argument('--current-iter', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--cost-threshold', default=3)
     args = parser.parse_args()
+    if args.command == 'improve' and (args.parent_iter is None or not args.candidate_id):
+        raise ValueError('Improvement requires explicit parent and candidate identities')
     code = Path(entry).resolve().parent
     sys.path.insert(0, str(code))
     from minisweagent.agents.default import DefaultAgent
@@ -88,7 +106,16 @@ def main(entry):
                   'platform': platform.uname()._asdict(),
                   'command': args.command}
     (logs / 'activation.json').write_text(json.dumps(activation))
-    task = Path(args.prompt_file).read_text() if args.command == 'benchmark' else improvement_prompt(args.best_iter, args.current_iter)
+    if args.command == 'improve':
+        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id)
+        metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
+                    'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
+                    'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest()}
+        (logs / 'improvement_task.json').write_text(json.dumps(metadata))
+        (logs / 'improvement_prompt.txt').write_text(task)
+    else:
+        task = Path(args.prompt_file).read_text()
     start = time.time()
     try:
         result = agent.run(task)

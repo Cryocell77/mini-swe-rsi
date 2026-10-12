@@ -146,3 +146,10 @@ class Budget:
 def append_event(root, event):
     with (Path(root) / 'events.jsonl').open('a') as f:
         f.write(json.dumps({'time': time.time(), **event}, ensure_ascii=False) + '\n')
+
+
+def improvement_contract():
+    """Freeze the independent task renderer without changing the model protocol."""
+    return {'version': 'sica-mini-improvement-v1',
+            'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
+            'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py')}

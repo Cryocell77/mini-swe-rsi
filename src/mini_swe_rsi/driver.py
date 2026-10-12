@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import hashlib
 import os
 import shutil
 import subprocess
@@ -14,7 +16,7 @@ import docker
 import requests
 
 from .archive_view import archive_view
-from .core import ROOT, append_event, command, digest, read, tree_hash, write
+from .core import ROOT, append_event, command, digest, read, tree_hash, write, improvement_contract
 
 
 class InfrastructureError(RuntimeError):
@@ -107,6 +109,24 @@ class Driver:
         mounts = {str(ROOT / 'runtime'): {'bind': '/runtime', 'mode': 'ro'},
                   str(ROOT / 'vendor/sica'): {'bind': '/upstream', 'mode': 'ro'},
                   str(logs): {'bind': '/logs', 'mode': 'rw'}}
+        task_identity = None
+        if command_args[0] == 'improve':
+            def argument(name):
+                return command_args[command_args.index(name)+1]
+            parent, proposer = int(argument('--parent-iter')), int(argument('--best-iter'))
+            candidate = argument('--candidate-id')
+            contract = improvement_contract()
+            configuration = self.root/'configuration.json'
+            if configuration.exists() and read(configuration).get('improvement_task') != contract:
+                raise RuntimeError('Frozen improvement task contract changed before launch')
+            render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
+            rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
+                              ROOT/'vendor/sica/agent_main.py')
+            task_identity = {'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
+                             'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
+                             'renderer_sha256': contract['renderer_sha256'],
+                             'upstream_task_sha256': contract['upstream_task_sha256']}
+            write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
         module = 'agent_code'
         if archive is not None:
             view = archive_view(archive, logs.parent/(logs.name + '_archive_view'))
@@ -115,6 +135,15 @@ class Driver:
             if tree_hash(view/relative) != tree_hash(code):
                 raise RuntimeError('Sanitized view source differs from selected archive')
             module = 'archive.' + '.'.join(relative.parts)
+            if task_identity and relative != Path(f'agent_{task_identity["proposer"]}/agent_code'):
+                raise RuntimeError('Improvement proposer differs from selected archived module')
+            if task_identity and not (view/f'agent_{task_identity["parent"]}/agent_code').is_dir():
+                raise RuntimeError('Improvement parent is missing from the frozen archive')
+            if task_identity:
+                parent_source = view/f'agent_{task_identity["parent"]}/agent_code/minisweagent'
+                candidate_source = Path(target)/'minisweagent' if target else None
+                if not candidate_source or not candidate_source.is_dir() or tree_hash(parent_source) != tree_hash(candidate_source):
+                    raise RuntimeError('Improvement parent differs from candidate starting source')
         else:
             mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
         if target:
@@ -125,6 +154,8 @@ class Driver:
                'RSI_BROKER': self.broker_url, 'RSI_TOKEN': token,
                'MSWEA_CONFIG_ROOT': '/tmp/mini-config', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
                'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
+        if task_identity:
+            env['RSI_IMPROVEMENT_PROTOCOL'] = task_identity['protocol']
         args = ['python', '-m', module, *command_args, '--logdir', '/logs']
         c = self.client.containers.run(self.image.id, args, detach=True, volumes=mounts,
                 network=self.network.name, environment=env, cap_drop=['ALL'],
@@ -137,7 +168,7 @@ class Driver:
         append_event(self.root, dict(kind='agent_launch', code=str(Path(code).resolve()),
                      code_hash=tree_hash(code), behavioral_hash=tree_hash(code, True),
                      module=module, image_id=self.image.id, container_id=c.id,
-                     command=command_args[0], archive=str(archive) if archive else None,
+                     command=command_args[0], improvement_task=task_identity, archive=str(archive) if archive else None,
                      mounts=[{'destination': m['Destination'], 'read_write': m['RW']} for m in c.attrs['Mounts']],
                      network_internal=True, cap_drop=c.attrs['HostConfig']['CapDrop']))
         deadline = self.broker.sessions[token]['deadline']
@@ -160,6 +191,15 @@ class Driver:
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
             if expired and not (logs/'result.json').exists():
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
+            if task_identity and not (logs/'improvement_task.json').exists():
+                write(logs/'improvement_verification.json', {'status': 'unverified_failure'})
+                if result['StatusCode'] == 0:
+                    raise RuntimeError('Successful improvement omitted prompt identity evidence')
+            if task_identity and (logs/'improvement_task.json').exists():
+                if (read(logs/'improvement_task.json') != task_identity
+                    or digest(logs/'improvement_prompt.txt') != task_identity['prompt_sha256']):
+                    raise RuntimeError('Executed improvement prompt identity differs from host renderer')
+                write(logs/'improvement_verification.json', {'status': 'verified'})
             output = c.logs().decode(errors='replace')
             (logs / 'process.log').write_text(output.replace(token, '<session-token>'))
             if tree_hash(code) != selected_hash:

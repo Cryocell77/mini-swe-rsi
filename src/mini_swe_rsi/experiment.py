@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .broker import Broker, TEXT_PROTOCOL
 from .context_budget import context_contract, ContextBudget
-from .core import ROOT, Budget, Data, append_event, digest, read, tree_hash, write
+from .core import ROOT, Budget, Data, append_event, digest, read, tree_hash, write, improvement_contract
 from .driver import Driver, initial_code
 from .sica import SicaAdapter
 
@@ -47,6 +47,9 @@ class Experiment:
         self.root.mkdir(parents=True, exist_ok=True)
         if (self.root/'configuration.json').exists() and read(self.root/'configuration.json').get('message_protocol') != TEXT_PROTOCOL:
             raise RuntimeError('Message protocol changed; start a separate experiment')
+        task_contract = improvement_contract()
+        if (self.root/'configuration.json').exists() and read(self.root/'configuration.json').get('improvement_task') != task_contract:
+            raise RuntimeError('Improvement task contract changed; start a separate experiment')
         context = context_contract()
         if (self.root/'configuration.json').exists():
             saved = read(self.root/'configuration.json')
@@ -89,7 +92,7 @@ class Experiment:
                 expected = read(self.root/'baseline.json')['code_hash']
                 if any(tree_hash(self.code(run)) != expected for run in (1, 2)):
                     raise RuntimeError('Frozen H0 source changed')
-            configuration = {'message_protocol': TEXT_PROTOCOL, 'context_budget': context, 'upstream': read(ROOT / 'upstream.lock.json'),
+            configuration = {'message_protocol': TEXT_PROTOCOL, 'improvement_task': task_contract, 'context_budget': context, 'upstream': read(ROOT / 'upstream.lock.json'),
                   'data_manifest': str(self.data.path/'manifest.json'),
                   'model': identity, 'service': service_identity, 'limits': {'calls': 30, 'task_seconds': 600,
                    'command_seconds': 60, 'max_tokens': 2048},
@@ -353,10 +356,12 @@ class Experiment:
                 try:
                     status, _ = await asyncio.to_thread(self.driver.controller, proposer, path/'logs',
                         ['improve', '--workdir', '/home/agent/workdir', '--best-iter', str(champion if role == 'evolved' else 0),
-                         '--current-iter', str(pair)], token, archive=self.root/'probe_evidence', target=target)
+                         '--current-iter', str(pair), '--parent-iter', '0',
+                         '--candidate-id', f'probe_pair_{pair}_{role}'], token, archive=self.root/'probe_evidence', target=target)
                 finally:
                     metrics = self.broker.finish(token)
-                write(path/'lineage.json', {'proposer_hash': tree_hash(proposer), 'starting_hash': tree_hash(self.code()),
+                write(path/'lineage.json', {'parent': 0, 'proposer': champion if role == 'evolved' else 0,
+                     'candidate': f'probe_pair_{pair}_{role}', 'proposer_hash': tree_hash(proposer), 'starting_hash': tree_hash(self.code()),
                      'candidate_hash': tree_hash(target), 'process_status': status, 'metrics': metrics,
                      'exit_status': read(path/'logs/result.json').get('exit_status') if (path/'logs/result.json').exists() else 'ProcessError'})
                 await self.evaluate_versions({'candidate': target}, 'dev', path/'dev')

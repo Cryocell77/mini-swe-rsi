@@ -86,11 +86,32 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
         assert tree_hash(experiment/'agent_1/agent_code') == first_hash
         assert 'INHERITED_REPAIR_FIXTURE' not in seen[0][0]['content']
         assert 'INHERITED_REPAIR_FIXTURE' in seen[2][0]['content']
-        assert len(seen) == 4 and len(summaries) == 2
+        second_hash = tree_hash(experiment/'agent_2/agent_code')
+        performance(2, 1)
+        third = asyncio.run(adapter.proposal(1, 2, fixed=True))
+        assert third['parent'] == 2 and third['proposer_hash'] == original_hash
+        assert third['execution_succeeded'] and third['raw_source_changed']
+        assert tree_hash(experiment/'agent_2/agent_code') == second_hash
+        assert 'INHERITED_REPAIR_FIXTURE' not in seen[4][0]['content']
+        for index, (parent, proposer, candidate) in enumerate(((0, 0, 'agent_1'), (1, 1, 'agent_2'), (2, 0, 'agent_3'))):
+            prompt = seen[index*2][1]['content']
+            assert f'parent=agent_{parent}; proposer=agent_{proposer}; candidate={candidate}' in prompt
+            assert 'as early as reasonably possible' in prompt
+            assert 'current candidate has not been benchmarked' in prompt
+            assert '30 model calls' in prompt and '32768 total context tokens' in prompt
+            logs = experiment/f'agent_{index}/meta_improvement_logs'
+            identity = read(logs/'improvement_task.json')
+            assert read(logs/'improvement_verification.json')['status'] == 'verified'
+            host_identity = read(logs/'host_improvement_task.json')
+            assert identity == {k: v for k, v in host_identity.items() if k != 'contract'}
+            assert (identity['parent'], identity['proposer'], identity['candidate']) == (parent, proposer, candidate)
+            import hashlib
+            assert identity['prompt_sha256'] == hashlib.sha256((logs/'improvement_prompt.txt').read_bytes()).hexdigest()
+        assert len(seen) == 6 and len(summaries) == 3
         launches = [json.loads(line) for line in (tmp_path/'events.jsonl').read_text().splitlines()
                     if json.loads(line)['kind'] == 'agent_launch']
-        assert [e['module'] for e in launches] == ['archive.agent_0.agent_code', 'archive.agent_1.agent_code']
-        assert [e['code_hash'] for e in launches] == [original_hash, first_hash]
+        assert [e['module'] for e in launches] == ['archive.agent_0.agent_code', 'archive.agent_1.agent_code', 'archive.agent_0.agent_code']
+        assert [e['code_hash'] for e in launches] == [original_hash, first_hash, original_hash]
         assert all(next(m['read_write'] for m in e['mounts']
                         if m['destination'] == '/home/agent/workdir') for e in launches)
         assert all(not next(m['read_write'] for m in e['mounts']
