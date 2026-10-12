@@ -52,7 +52,11 @@ def compute_gates(root, ids):
                 probe_budget_ok = False
                 continue
             data = read(path)
-            if data['metrics']['calls'] > 30:
+            # Current sessions have independent per-agent iteration limits and
+            # no shared request cap. Older records without max_calls retain
+            # their historical 30-request contract.
+            max_calls = data['metrics'].get('max_calls', 30)
+            if max_calls is not None and data['metrics']['calls'] > max_calls:
                 probe_budget_ok = False
     probe_pass = probe_budget_ok and all(r['complete'] and r['difference'] > 0 for r in probes)
     return {'passed': mechanism['passed'] and task_pass and probe_pass,

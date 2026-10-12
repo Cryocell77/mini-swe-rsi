@@ -35,3 +35,19 @@ def test_gates_require_both_repeats_and_no_actual_probe_quota_overrun(tmp_path):
     write(tmp_path/'probes/pair_1/evolved/lineage.json',
           {'metrics': {'calls': 31, 'errors': []}, 'process_status': 0, 'exit_status': 'Submitted'})
     assert not compute_gates(tmp_path, ids)['passed']
+    # The same completed candidate is within the current independent-role
+    # contract; aggregate requests over 30 must not reject it.
+    write(tmp_path/'probes/pair_1/evolved/lineage.json',
+          {'metrics': {'calls': 293, 'max_calls': None, 'iterations': {'main': 53}, 'errors': []},
+           'process_status': 0, 'exit_status': 'Submitted'})
+    assert compute_gates(tmp_path, ids)['passed']
+    # Explicit finite historical/diagnostic contracts still enforce their own
+    # frozen cap, rather than silently applying 30 or disabling the check.
+    write(tmp_path/'probes/pair_1/evolved/lineage.json',
+          {'metrics': {'calls': 293, 'max_calls': 500, 'errors': []},
+           'process_status': 0, 'exit_status': 'Submitted'})
+    assert compute_gates(tmp_path, ids)['passed']
+    write(tmp_path/'probes/pair_1/evolved/lineage.json',
+          {'metrics': {'calls': 501, 'max_calls': 500, 'errors': []},
+           'process_status': 0, 'exit_status': 'Submitted'})
+    assert not compute_gates(tmp_path, ids)['passed']

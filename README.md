@@ -92,4 +92,6 @@ DeepSeek输出截断使用其beta prefix协议续写；不支持prefix的服务�
 uv run python scripts/smoke_once.py --output runs/budget-alignment-smoke
 ```
 
-仅一次提案，运行源码变化才评测预先固定dev题django__django-14752；不重测baseline/val/test。旧模型H0公开证据只供分析。原24小时已过期时入口拒绝启动；只有用户重新授权单次测试时间后，才可显式添加 `--new-time-budget-seconds 1800`。此参数创建独立诊断时间合同，保留旧实验原始起点，不能用于把旧实验超时改写为完成。当前真实测试待新的时间授权；工程验收见[预算对齐记录](docs/sica-budget-alignment-review.md)。
+仅一次提案，运行源码变化才评测预先固定dev题django__django-14752；不重测baseline/val/test。旧模型H0公开证据只供分析。原24小时已过期时入口拒绝启动；只有用户重新授权单次测试时间后，才可显式添加 `--new-time-budget-seconds 1800`。此参数创建独立诊断时间合同，保留旧实验原始起点，不能用于把旧实验超时改写为完成。工程验收见[预算对齐记录](docs/sica-budget-alignment-review.md)。
+
+2026-10-12用户授权新增30分钟后，代码3cc4718的单次真实检查在1768.39秒内完成：七步流程完成，模型修改了归档mini的agent源码与配置，候选加载后在预定开发题上独立评分通过。没有重测基线或运行val/test，也没有第二次提案。此结果证明一次自改源码及候选执行链路运行成功，不证明收益或递归继承。完整证据与保留问题见[单次测试报告](docs/sica-budget-alignment-smoke.md)。
