@@ -1,1 +1,65 @@
 # mini-swe-rsi
+
+固定模型的 Harness 自改进实验：以原始 SICA 控制器驱动官方 mini-swe-agent，候选运行与评分隔离，验证递归继承、任务收益和同起点改进能力。只有三项门槛全部通过后才进行代码精简。
+
+本次实跑未通过递归机制门槛：已交付原生适配版与失败报告，最小实现尚未生成。结果见 [首次实验摘要](docs/results-summary.md)；本机完整产物位于 `runs/sica-qwen-20261011/`。
+
+已修复失败状态传播、重复推理字段计量与归档证据暴露问题，独立验收33项测试通过；见[修复验收记录](docs/repair-review.md)。本次验收不代表RSI收益成立。新协议实验请使用新的运行目录，旧实验保留供离线报告使用。
+
+## 安装
+
+需要 Python 3.12、uv、Docker。模型服务从根目录 `.env` 读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`LOCAL_LLM_MODEL`。凭据不进入候选或 Git。
+
+```bash
+python3 scripts/bootstrap.py
+uv sync --locked
+uv venv .eval-venv
+uv pip install --python .eval-venv/bin/python -r evaluator.lock.txt
+uv pip install --python .eval-venv/bin/python --no-deps .upstream/swebench
+docker build -t mini-swe-rsi-runtime:0.1 runtime
+```
+
+SICA/mini/SWE-bench 提交和源码摘要固定在 `upstream.lock.json`；宿主依赖固定在 `uv.lock`，容器依赖在 `runtime/requirements.lock`，评分依赖在 `evaluator.lock.txt`。实际运行还保存 `runtime-image.tar`、镜像摘要和系统包清单；可用 `docker load -i RUN/runtime-image.tar` 恢复完全相同的运行镜像。
+
+数据默认复用 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其他位置用 `--data PATH`，必须具有相同数据与清单摘要。实验另保存 `image_inventory.json`，将全部160项镜像身份绑定到运行，恢复时拒绝变化。清单包含已验证的 x86_64 镜像摘要；缺少镜像时只按不可变摘要恢复。默认不要求本机GPU，推理由 `.env` 服务提供。
+
+## 运行
+
+```bash
+uv run mini-swe-rsi baseline --run runs/experiment --preflight-only
+uv run mini-swe-rsi baseline --run runs/experiment
+uv run mini-swe-rsi evolve --run runs/experiment
+uv run mini-swe-rsi report --run runs/experiment
+```
+
+`baseline` 自动完成预检并补齐 dev30；预检前三题作为真实 H0 尝试复用。`evolve` 自动补齐基线，在原生选择逻辑外调度两轨道，各最多四次搜索提案；如果剩余提案数已不可能达到两代行为变化，则提前停止并保存源码摘要证明。只有机制证据成立才运行两对同起点探针与验证门槛。`report` 完全离线。
+
+`evaluate --run runs/experiment` 执行冻结候选验证。**不会自动精简**：失败或预算不足时交付失败报告，test100 保持封存。若门槛通过，需完成工程精简与固定轨迹差分验证，将其证明保存为该运行的 `simplification_replay.json`（`passed`、`minimal_hash`）；随后：
+
+```bash
+uv run mini-swe-rsi evaluate --run runs/experiment --final --minimal /absolute/path/to/minimal/agent_code
+```
+
+最终阶段冻结四版本摘要并交错评测 test100。重启不会重置预算，也不会重复生成中断的模型提案。请勿并行启动同一实验。执行时限覆盖阶段与全局24小时；中断后的人工离线时间也消耗已启动阶段的墙钟预算。
+
+## 验收与输出
+
+- 递归机制：至少两代有行为见证的代码变化，且演化版本实际执行后续改进。
+- 任务收益：两次 val30 配对均胜过 H0，推理 tokens <= H0 的110%。
+- 改进能力：两个同起点探针对均胜过固定 H0，属于初步证据。
+- 最终效果：精简版-H0 的配对95% CI下界>0；精简版-参考版下界>=−3个百分点。
+
+`results/run_1` 保存递归轨道，`results/run_2` 保存固定改进者轨道；`probes` 保存同起点候选；`private` 保存评分和非搜索评测；`events.jsonl` 保存调用、执行版本、隔离边界与谱系。`report.json` / `report.md` 汇总实际覆盖、成功率、tokens、耗时和停止原因。缺失题目不计作完整成绩；基础设施错误最多原样重跑一次，agent错误不重试。
+
+本地模型未提供可核实定价，因此美元成本为未知。SICA接口中的零成本是占位，不能解读为免费。
+
+## 验证
+
+```bash
+uv run pytest -q
+RUN_DOCKER_TESTS=1 uv run pytest -q
+```
+
+Docker测试使用模拟模型，不调用 `.env` 推理服务；验证不同归档实现实际加载、只读挂载和无私有数据挂载。固定轨迹回放先在隔离容器中校准候选自身轨迹，再与其实际父版本比较；它检查后续上下文变化，也排除继承已有行为后仅改未使用代码的假阳性。其他测试覆盖原始选择逻辑、持久预算、模型身份强制、上下文限制、缺失覆盖、评分原答案恢复和候选路径隔离。
+
+必要适配和许可证说明见 [上游适配说明](docs/upstream_adaptations.md)，各项目的采用范围见 [项目对比](docs/project_comparison.md)。源码精简不会提前混入首轮适配实验。
