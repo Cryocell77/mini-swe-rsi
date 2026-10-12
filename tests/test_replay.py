@@ -1,4 +1,5 @@
 """A real archived agent trace must replay identically unless effective behavior changes."""
+from mini_swe_rsi.context_budget import ContextBudget
 import io
 import json
 import os
@@ -19,7 +20,7 @@ def test_replay_detects_late_context_change_but_rejects_unused_source_change(tmp
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixture'
     driver = Driver(tmp_path, None, broker, budget)
     solver = driver.client.containers.run(driver.image.id,
@@ -64,7 +65,7 @@ def test_replay_detects_late_context_change_but_rejects_unused_source_change(tmp
             job = tmp_path/f'replay_{i}.json'
             result = tmp_path/f'replay_{i}_result.json'
             write(job, {'h0_code':str(codes[0]), 'task':task.read_text(), 'model':'fixture',
-                'platform':read(logs/'activation.json')['platform'], 'events':observed})
+                'platform':read(logs/'activation.json')['platform'], 'events':observed, 'budget':broker.budget_limits()})
             subprocess.run([sys.executable,'-m','mini_swe_rsi.replay',str(job),str(result)], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
             proof = read(result)

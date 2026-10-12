@@ -7,6 +7,13 @@ import sys
 from pathlib import Path
 
 
+def unbounded_observation(template):
+    # Remove only the known mini observation budget branch; preserve candidate additions.
+    import re
+    pattern = r'{%-?\s*if output\.output \| length < 10000\s*-?%}.*?{%-?\s*endif\s*-?%}'
+    return re.sub(pattern, '<output>{{output.output}}</output>', template, flags=re.S)
+
+
 def canonical(messages):
     keys = ('role', 'content', 'reasoning_content')
     return [{k: m[k] for k in keys if m.get(k) is not None} for m in messages]
@@ -26,7 +33,15 @@ def run(job):
     from minisweagent.environments.local import LocalEnvironment
     from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
 
-    events = [e for e in job['events'] if e['kind'] in ('model_call', 'tool_call')]
+    events = []
+    for e in job['events']:
+        if e['kind'] not in ('model_call','tool_call'):
+            continue
+        if e['kind'] == 'model_call' and 'logical_completion_final' in e:
+            if not e['logical_completion_final']:
+                continue
+            e = {**e, 'messages':e['original_messages']}
+        events.append(e)
     state = {'queries': 0, 'tools': 0, 'cursor': 0, 'changed': False, 'reason': None}
 
     def next_event(kind):
@@ -82,9 +97,12 @@ def run(job):
 
     config = yaml.safe_load((Path(reference_code)/'minisweagent/config/mini_textbased.yaml').read_text())
     config['agent'].pop('mode', None)
-    config['agent'].update(step_limit=30, cost_limit=0, wall_time_limit_seconds=600, output_path=None)
+    policy = job.get('budget', {})
+    if policy:
+        config['model']['observation_template'] = unbounded_observation(config['model']['observation_template'])
+    config['agent'].update(step_limit=policy.get('main_iterations',30), cost_limit=0, wall_time_limit_seconds=policy.get('benchmark_wall_seconds',600), output_path=None)
     config['model'].update(model_name='openai/'+job['model'], cost_tracking='ignore_errors')
-    env = RecordedEnvironment(cwd='/testbed', timeout=60, env=config['environment'].get('env', {}))
+    env = RecordedEnvironment(cwd='/testbed', timeout=policy.get('command_default_seconds',60), env=config['environment'].get('env', {}))
     agent = DefaultAgent(RecordedModel(**config['model']), env, **config['agent'])
     ended_normally = False
     try:

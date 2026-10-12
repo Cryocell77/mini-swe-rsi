@@ -48,20 +48,20 @@ def tool_aliases(source=SOURCE):
     return aliases
 
 
-def instructions(role="orchestrator", calls=30):
+def instructions(role="orchestrator", calls=500):
     text = '''SICA callable transport: emit one normal mini bash action whose entire command is
 sica-workflow '<JSON object>'
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
-As the orchestrator, use only structured workflow operations, inspection, and final submission; arbitrary bash is unavailable. Invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. All roles share the SAME 30 actual calls and 600 seconds with you; there is no additional role budget.
+As the orchestrator, use only structured workflow operations, inspection, and final submission; arbitrary bash is unavailable. Invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and remain subject to the host global/stage deadline.
 Read-only inspection operations: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":5} maps to original ArchiveAnalyzer.\n {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
-Structured read uses inclusive 1-based start_line/end_line, at most 500 lines (default 1..200); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
+Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
 Compatibility: original file views/archive analysis use these public read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to mini submission. Return the FULL report with this command: printf '%s\\n' 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n<full report here>' (replace the placeholder, preserve the newline). Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
     if role != 'orchestrator':
         start = text.index('Operations:')
         stop = text.index('Read-only inspection operations:')
-        capabilities = 'This delegated role cannot invoke, inspect, or complete the parent reasoning structure. All roles share the same 30 actual model calls, 600 seconds, 60-second commands, 2048 output tokens and 32768 total context tokens; there is no fresh allowance. '
+        capabilities = 'This delegated role cannot invoke, inspect, or complete the parent reasoning structure. Each role invocation has its independent SICA iteration allowance (software_developer 1000; other roles 500), up to five provider requests per completion. Commands have a 600-second tool safety timeout; output and context capacities come from the frozen model declaration. Global/stage time remains shared. '
         if role in ('software_developer','general_problem_solver'):
             capabilities += 'Editing and local checks use normal mini bash. Committee is callable as {"op":"committee","context":"...","proposal":"..."}. '
         text = text[:start] + capabilities + '\n' + text[stop:]
@@ -76,7 +76,7 @@ Compatibility: original file views/archive analysis use these public read/list/s
     aliases = {name:op for name,op in tool_aliases().items() if op in permitted}
     if aliases:
         text += '\nRegistered original TOOL_NAME aliases (same operations and permissions): ' + json.dumps(aliases,sort_keys=True)
-    return text.replace('SAME 30 actual calls', f'SAME {calls} actual calls').replace('same 30 actual model calls', f'same {calls} actual model calls')
+    return text
 
 
 
@@ -85,7 +85,7 @@ ROLE_MAP = {'orchestrator':'main_orchestrator', 'archive_explorer':'archive_expl
             'reviewer':'review_committee_member'}
 
 
-def role_templates(config, role, calls=30):
+def role_templates(config, role, calls=500):
     """Improve-only adapter, derived from the actually selected archived config.
 
     Keep the archived text action formatting/parser vocabulary. Replace generic
@@ -103,12 +103,11 @@ def role_templates(config, role, calls=30):
     operation_error_guidance = ('For structured-operation errors, use this valid inspection syntax: '
         if role in ('software_developer','general_problem_solver') else 'Use a supported inspection operation or exact final submission. Valid inspection syntax: ')
     adapted['model']['observation_template'] = ("<returncode>{{output.returncode}}</returncode>\n"
-        "<exception>{{output.exception_info}}</exception>\n<output>{{output.output[:10000]}}</output>\n"
+        "<exception>{{output.exception_info}}</exception>\n<output>{{output.output}}</output>\n"
         "{% if output.returncode != 0 %}" + operation_error_guidance + example
         + " Only /home/agent/workdir and /home/agent/archive are inspection roots. "
           "Use one JSON argument; do not append shell pipes or redirects.{% endif %}\n"
-        "{% if output.output | length > 10000 %}Output truncated. Use a bounded structured read, for example: "
-        + example + "{% endif %}\nShared session: {{output.session_status | default({})}}")
+        "Shared session: {{output.session_status | default({})}}")
     adapted['model']['format_error_template'] = ("Format error: {{error | default('incomplete action')}}. "
         "Return exactly one complete mswea_bash_command block, with a THOUGHT before it. "
         "Use one structured command, for example:\n```mswea_bash_command\n" + example + "\n```\n"
@@ -116,7 +115,7 @@ def role_templates(config, role, calls=30):
     return adapted
 
 
-def template_manifest(config, calls=30):
+def template_manifest(config, calls=500):
     fields = {'agent':('system_template','instance_template'),
               'model':('observation_template','format_error_template')}
     def selected(value):
@@ -269,25 +268,23 @@ class Workflow:
         if path.exists() and not (path.is_file() or path.is_dir()):
             raise ValueError('Only regular files/directories may be inspected')
         if op == 'read':
-            start, end = request.get('start_line', 1), request.get('end_line', 200)
-            if type(start) is not int or type(end) is not int or start < 1 or end < start or end-start >= 500:
-                raise ValueError('read requires 1-based inclusive start_line/end_line, at most 500 lines')
             lines = path.read_text(errors='replace').splitlines()
+            start, end = request.get('start_line', 1), request.get('end_line', max(1,len(lines)))
+            if type(start) is not int or type(end) is not int or start < 1 or end < start:
+                raise ValueError('read requires 1-based inclusive start_line/end_line')
             content = '\n'.join(f'{i+1}: {lines[i]}' for i in range(start-1,min(end,len(lines))))
             return {'path':str(path), 'evidence_kind':'historical_archive' if roots[1] == path or roots[1] in path.parents else 'live_candidate',
                     'start_line':start, 'end_line':min(end,len(lines)), 'total_lines':len(lines),
-                    'content':content[:30000], 'content_truncated':len(content)>30000}
+                    'content':content, 'content_truncated':False}
         if op == 'list':
-            return sorted(p.name for p in path.iterdir())[:1000]
+            return sorted(p.name for p in path.iterdir())
         hits = []
         for p in ([path] if path.is_file() else path.rglob('*')):
             if p.is_file() and any(p.resolve() == r or r in p.resolve().parents for r in roots):
                 try:
                     for i,line in enumerate(p.read_text(errors='replace').splitlines()):
                         if request['pattern'] in line:
-                            hits.append(f'{p}:{i+1}:{line[:300]}')
-                            if len(hits) >= 100:
-                                return hits
+                            hits.append(f'{p}:{i+1}:{line}')
                 except OSError:
                     pass
         return hits

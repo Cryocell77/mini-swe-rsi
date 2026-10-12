@@ -1,4 +1,5 @@
 """Independent acceptance of original SICA -> archived mini -> RW edit -> inheritance."""
+from mini_swe_rsi.context_budget import ContextBudget
 import asyncio
 import io
 import json
@@ -22,7 +23,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
         OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='private-fixture-key', LOCAL_LLM_MODEL='fixture'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixture'
     seen = []
 
@@ -103,7 +104,7 @@ def test_original_sica_edits_candidate_then_executes_that_archived_improver(tmp_
             assert f'parent=agent_{parent}; proposer=agent_{proposer}; candidate={candidate}' in prompt
             assert 'as early as reasonably possible' in prompt
             assert 'current candidate has not been benchmarked' in prompt
-            assert '500 model calls' in prompt and '32768 total context tokens' in prompt
+            assert 'each agent invocation has its own iteration limit' in prompt and '"context_max_tokens": 32768' in prompt
             logs = experiment/f'agent_{index}/meta_improvement_logs'
             identity = read(logs/'improvement_task.json')
             assert read(logs/'improvement_verification.json')['status'] == 'verified'

@@ -1,4 +1,5 @@
 """Real Docker boundary and two-version loading, using a fake inference endpoint only."""
+from mini_swe_rsi.context_budget import ContextBudget
 import json
 import os
 import time
@@ -17,10 +18,10 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixture'
     seen = []
-    def complete(token, payload):
+    def complete(token, payload, *identity):
         seen.append(payload['messages'])
         return {'id':'fixture', 'created':int(time.time()), 'object':'chat.completion', 'model':'fixture',
                 'choices':[{'index':0, 'finish_reason':'stop', 'message':{'role':'assistant',
@@ -84,7 +85,7 @@ def test_controller_deadline_stops_unresponsive_archived_process(tmp_path, monke
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixture'
     driver = Driver(tmp_path, None, broker, budget)
     try:
@@ -112,9 +113,9 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixture'
-    def fail(token, payload):
+    def fail(token, payload, *identity):
         raise ModelError('ContextLimitExceeded')
     broker.complete = fail
     driver = Driver(tmp_path, None, broker, budget)

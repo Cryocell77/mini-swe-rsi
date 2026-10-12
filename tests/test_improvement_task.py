@@ -23,8 +23,9 @@ def test_original_improvement_intent_and_distinct_identities():
     assert 'best performing agent in /home/agent/workdir' not in prompt
     assert 'read-only frozen startup snapshot' in prompt
     assert 'current candidate has not been benchmarked' in prompt
-    assert '30 model calls, 600 seconds per task, 60 seconds per bash command' in prompt
-    assert '2048 output tokens' in prompt and '32768 total context tokens' in prompt
+    assert 'each agent invocation has its own iteration limit' in prompt
+    assert 'improvement has no separate task deadline' in prompt
+    assert '2048 output tokens' not in prompt and '32768 total context tokens' not in prompt
     contract = improvement_contract()
     assert contract['renderer_sha256'] == hashlib.sha256((ROOT/'runtime/bridge.py').read_bytes()).hexdigest()
 
@@ -44,12 +45,12 @@ def test_expanded_budget_changes_only_improvement_allowance_text_and_freezes_con
         new['agent']['system_template'] = old['agent']['system_template']
         assert new == old
     contract = improvement_contract()
-    assert contract['limits'] == {'calls':500,'seconds':600}
-    assert contract['version'] == 'sica-mini-improvement-v4'
-    # The production task/default broker allowance remains30; only improve sessions override it.
+    assert contract['limits'] == {'calls':None,'seconds':None}
+    assert contract['version'] == 'sica-mini-improvement-v5'
+    # Runtime roles enforce independent iterations; there is no shared actual-request quota.
     from inspect import signature
     from mini_swe_rsi.broker import Broker
-    assert signature(Broker.session).parameters['calls'].default == 30
+    assert signature(Broker.session).parameters['calls'].default is None
 
 
 @pytest.mark.parametrize('contract', [None, {'version': 'old'}, {**improvement_contract(), 'renderer_sha256': 'changed'}])
@@ -130,7 +131,9 @@ def test_declared_identity_is_bound_to_actual_mounted_source_before_launch(tmp_p
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
     # No client/runtime exists: validation must fail before any container launch.
-    driver.broker = SimpleNamespace(sessions={'fixture':{'max_calls':500}})
+    from mini_swe_rsi.budget_policy import sica_budget
+    driver.broker = SimpleNamespace(sessions={'fixture':{'max_calls':None,'deadline':__import__('time').time()+600}},
+                                    budget_limits=lambda:sica_budget(8192,65536))
     monkeypatch.setattr('mini_swe_rsi.driver.archive_view', lambda *a: archive)
     args = ['improve', '--best-iter', '1' if mismatch == 'proposer' else '0',
             '--parent-iter', '1' if mismatch == 'parent' else '0',

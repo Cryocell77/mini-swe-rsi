@@ -53,13 +53,12 @@ class Experiment:
         context = context_contract()
         if (self.root/'configuration.json').exists():
             saved = read(self.root/'configuration.json')
-            if saved.get('context_budget') != context or saved.get('limits') != {'calls': 30, 'task_seconds': 600, 'command_seconds': 60, 'max_tokens': 2048}:
+            if saved.get('context_budget') != context:
                 raise RuntimeError('Frozen context budget changed; start a separate experiment')
             for key, filename in (('model', 'model_identity.json'), ('service', 'service_identity.json')):
                 identity_path = self.root/filename
                 if not identity_path.exists() or saved.get(key) != read(identity_path):
                     raise RuntimeError('Frozen experiment identity records are inconsistent')
-        context_meter = ContextBudget()
         self.budget = Budget(self.root)
         if phase is None:
             phase = ('search' if (self.root/'baseline.json').exists() else
@@ -67,7 +66,7 @@ class Experiment:
         self.budget.enter(phase)
         self.data = Data(data_path) if data_path else Data()
         self.data.freeze_images(self.root)
-        self.broker = Broker(self.root, self.budget, context=context_meter)
+        self.broker = Broker(self.root, self.budget)
         self.driver = None
         try:
             identity = self.broker.identity()
@@ -94,8 +93,7 @@ class Experiment:
                     raise RuntimeError('Frozen H0 source changed')
             configuration = {'message_protocol': TEXT_PROTOCOL, 'improvement_task': task_contract, 'context_budget': context, 'upstream': read(ROOT / 'upstream.lock.json'),
                   'data_manifest': str(self.data.path/'manifest.json'),
-                  'model': identity, 'service': service_identity, 'limits': {'calls': 30, 'task_seconds': 600,
-                   'command_seconds': 60, 'max_tokens': 2048},
+                  'model': identity, 'service': service_identity, 'limits': self.broker.budget_limits(),
                   'runtime_image': self.driver.image.id,
                   'native_run': 1, 'fixed_proposer_run': 2}
             if (self.root/'configuration.json').exists():
@@ -191,8 +189,8 @@ class Experiment:
                 # Summaries are generated with the same fixed model, including reused preflight attempts.
                 if not (target/'summary.txt').exists():
                     summary = await self.adapter.runner.generate_contextual_summary(
-                        self.data.rows[pid]['problem_statement'], (target/'patch.diff').read_text()[:6000],
-                        (target/'trace.txt').read_text()[-18000:], r['score'], None, 'Private tests withheld.')
+                        self.data.rows[pid]['problem_statement'], (target/'patch.diff').read_text(),
+                        (target/'trace.txt').read_text(), r['score'], None, 'Private tests withheld.')
                     (target/'summary.txt').write_text(summary)
                 completed[pid] = r
         save_records(tracker_path, completed)

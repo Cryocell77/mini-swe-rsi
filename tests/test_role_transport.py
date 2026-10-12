@@ -1,4 +1,5 @@
 """Improve-only transport regressions, including the fourth-run observed failures."""
+from mini_swe_rsi.context_budget import ContextBudget
 import importlib.util
 import io
 import json
@@ -46,7 +47,7 @@ def test_all_roles_use_original_system_core_user_and_selected_format_contract():
     before = w['template_manifest'](config)
     config['model']['observation_template'] += '\narchived change'
     assert w['template_manifest'](config)['selected_config_templates_sha256'] != before['selected_config_templates_sha256']
-    assert improvement_contract()['version'] == 'sica-mini-improvement-v4'
+    assert improvement_contract()['version'] == 'sica-mini-improvement-v5'
 
 
 def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch):
@@ -65,8 +66,11 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
     out = flow.inspect({'op':'read','path':str(candidate/'link'),'start_line':2,'end_line':3})
     assert out['path'] == str(historical) and out['evidence_kind']=='historical_archive'
     assert out['content']=='2: second\n3: third'
-    for bounds in ({'start_line':0},{'start_line':1,'end_line':501},{'start_line':True},{'end_line':'2'}):
+    for bounds in ({'start_line':0},{'start_line':True},{'end_line':'2'}):
         with pytest.raises(ValueError):flow.inspect({'op':'read','path':str(historical),**bounds})
+    whole = flow.inspect({'op':'read','path':str(historical)})
+    assert whole['content']=='1: task from old testbed\n2: second\n3: third'
+    assert not whole['content_truncated']
     (candidate/'escape').symlink_to('/etc/passwd')
     with pytest.raises(ValueError):flow.inspect({'op':'read','path':str(candidate/'escape')})
     assert flow.execute({'command':"sica-workflow '{\"op\":\"read\",\"path\":\"/home/agent/archive/old.txt\"}' | head -80"},True)['returncode']==1
@@ -75,7 +79,7 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
 
 def test_status_rejections_and_generic_error_do_not_inherit_old_terminal_reason(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget);broker.model='fixture'
+    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget,context=ContextBudget());broker.model='fixture'
     token=broker.session('roles',calls=1)
     def status(auth=token):
         req=urllib.request.Request(f'http://127.0.0.1:{broker.port}/status',data=b'{}',headers={'Authorization':'Bearer '+auth})
@@ -133,7 +137,7 @@ def test_actual_fourth_run_actions_are_rejected_without_rewriting(tmp_path):
 
 def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget)
+    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget,context=ContextBudget())
     token=broker.session('editor',solver='fixture')
     monkeypatch.setattr('mini_swe_rsi.broker.subprocess.run',lambda *a,**kw:pytest.fail('expired command executed'))
     try:

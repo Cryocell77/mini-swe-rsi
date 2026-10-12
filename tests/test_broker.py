@@ -1,3 +1,4 @@
+from mini_swe_rsi.context_budget import ContextBudget
 import io
 import json
 import time
@@ -13,7 +14,7 @@ def test_model_and_limits_are_host_owned(tmp_path, monkeypatch):
                       OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     received = []
     class Opener:
@@ -50,7 +51,7 @@ def test_context_error_is_non_retryable_for_official_client(tmp_path, monkeypatc
                       OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     token = broker.session('context-client')
     client = OpenAI(base_url=f'http://127.0.0.1:{broker.port}/v1', api_key=token,
@@ -72,7 +73,7 @@ def test_finish_waits_for_inflight_usage_accounting(tmp_path, monkeypatch):
                       OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     entered, release = threading.Event(), threading.Event()
     class DelayedResponse:
@@ -103,7 +104,7 @@ def test_normalized_text_messages_match_budget_and_wire(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='secret'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     received = []
     class Opener:
@@ -138,7 +139,7 @@ def test_service_actual_prompt_over_budget_is_metered_but_never_returned(tmp_pat
         OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='secret'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     class Opener:
         def open(self, request, **kwargs):
@@ -167,7 +168,7 @@ def test_missing_or_invalid_service_prompt_usage_cannot_bypass_budget(tmp_path, 
         OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='secret'))
     budget = Budget(tmp_path)
     budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path, budget, context=ContextBudget())
     broker.model = 'fixed'
     class Opener:
         def open(self, request, **kwargs):

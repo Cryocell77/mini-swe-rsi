@@ -74,7 +74,8 @@ class Driver:
         self.transport = self.client.networks.create('mini-rsi-transport-' + uuid.uuid4().hex[:12])
         self.relay = self.client.containers.create(self.image.id, ['python', '/runtime/relay.py'],
             volumes={str(ROOT/'runtime'): {'bind': '/runtime', 'mode': 'ro'}},
-            environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}'},
+            environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}',
+                         'RSI_RELAY_TIMEOUT':str(max(1,self.budget.remaining())+30)},
             network=self.transport.name, cap_drop=['ALL'], security_opt=['no-new-privileges'],
             mem_limit='128m', pids_limit=64, read_only=True, tmpfs={'/tmp':'size=16m'})
         self.network.connect(self.relay)
@@ -111,6 +112,7 @@ class Driver:
                   str(ROOT / 'vendor/sica'): {'bind': '/upstream', 'mode': 'ro'},
                   str(logs): {'bind': '/logs', 'mode': 'rw'}}
         task_identity = None
+        execution_budget = None
         if command_args[0] == 'improve':
             if (logs/'workflow_state.json').exists():
                 raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
@@ -123,10 +125,11 @@ class Driver:
             configuration = self.root/'configuration.json'
             if configuration.exists() and read(configuration).get('improvement_task') != contract:
                 raise RuntimeError('Frozen improvement task contract changed before launch')
-            shared_calls = self.broker.sessions[token]['max_calls']
+            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':max(1,self.broker.sessions[token]['deadline']-time.time())}
+            shared_calls = execution_budget['main_iterations']
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
-                              ROOT/'vendor/sica/agent_main.py', calls=shared_calls)
+                              ROOT/'vendor/sica/agent_main.py', calls=shared_calls, budget=execution_budget)
             template_manifest = runpy.run_path(str(ROOT/'runtime/workflow.py'))['template_manifest']
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
             task_identity = {'template_manifest':template_manifest(selected_config, shared_calls), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
@@ -160,7 +163,9 @@ class Driver:
             mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir', 'mode': 'rw'}
         if prompt:
             mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
-        env = {'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
+        if execution_budget is None:
+            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':max(1,self.broker.sessions[token]['deadline']-time.time())}
+        env = {'RSI_BUDGET_CONFIG':json.dumps(execution_budget), 'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
                'RSI_BROKER': self.broker_url, 'RSI_TOKEN': token,
                'MSWEA_CONFIG_ROOT': '/tmp/mini-config', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
                'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
@@ -263,7 +268,7 @@ class Driver:
         self.budget.check()
         validate_code(code)
         directory = Path(directory).resolve()
-        job = {**job, 'reference_code': '/home/agent/agent_code'}
+        job = {**job, 'reference_code': '/home/agent/agent_code', 'budget':self.broker.budget_limits()}
         write(directory/'job.json', job)
         output = directory/'output'
         output.mkdir(exist_ok=True)
@@ -370,9 +375,9 @@ class Driver:
         if grade is None:
             raise GradingUnavailable('Both scoring attempts failed; preserving the answer without another model run')
         record = {'problem_id': task_id, 'score': float(grade['resolved']), 'tokens_used': metrics['tokens'],
-                  'num_cached_tokens': metrics['cached_tokens'], 'cost_estimate': 0.0,
+                  'num_cached_tokens': metrics['cached_tokens'], 'cost_estimate': metrics.get('cost_upper_bound_usd', 0.0),
                   'wall_time': saved['agent_seconds'], 'timed_out': result.get('exit_status') in ('TimeExceeded', 'TimeoutError'),
-                  'cost_threshold_exceeded': False, 'timestamp': time.time()}
+                  'cost_threshold_exceeded': result.get('exit_status') == 'CostExceeded', 'timestamp': time.time()}
         write(output / 'host_result.json', {'result': result, 'metrics': metrics, 'grade': grade,
               'record': record, 'total_seconds': time.time()-saved['started'],
               'patch_base_commit': saved['patch_base_commit'],

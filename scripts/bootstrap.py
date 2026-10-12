@@ -30,3 +30,7 @@ for name, entry in lock.items():
         destination = root/'vendor/sica_workflow'/filename
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(raw)
+
+    for filename, expected in entry.get('budget_files', {}).items():
+        if hashlib.sha256((target/filename).read_bytes()).hexdigest() != expected:
+            raise ValueError(f'{name}: budget source differs: {filename}')

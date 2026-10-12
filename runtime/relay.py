@@ -16,14 +16,15 @@ class Relay(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         length = int(self.headers.get('Content-Length', 0))
-        if not 0 < length <= 2_000_000:
+        if length <= 0:
             self.send_error(413)
             return
         request = urllib.request.Request(os.environ['HOST_BROKER'] + self.path,
                   data=self.rfile.read(length), headers={'Content-Type': 'application/json',
-                  'Authorization': self.headers.get('Authorization', '')})
+                  'Authorization': self.headers.get('Authorization', ''),
+                  'X-RSI-Agent':self.headers.get('X-RSI-Agent','main'), 'X-RSI-Role':self.headers.get('X-RSI-Role','orchestrator')})
         try:
-            response = opener.open(request, timeout=185)
+            response = opener.open(request, timeout=float(os.environ['RSI_RELAY_TIMEOUT']))
         except urllib.error.HTTPError as e:
             response = e
         except Exception:

@@ -101,3 +101,7 @@ Completion success is the model's declaration, as upstream; no source-change, co
 最终审查补充运行时边界：适配层采用单活动结构，活动中再次invoke拒绝；固定原sequential.run可创建多个invocation状态。七步定义、成功/失败推进与四评审拼接对齐，不代表完整动态注册/多活动结构运行时逐位复现。本轮保留单活动合同，不以重复invoke新建结构掩盖真实未推进。另固定原BaseAgent/MainOrchestrator的MAX_ITERATIONS=500，而本实验全角色共享30实际调用；30并非上游默认资源规模。
 
 2026-10-12用户授权新预算对照：元改进任务合同v4明确limits为全角色共享500实际模型调用、600秒；解题仍30/600，其余参数不变。生产提案/探针从合同建立会话，宿主以真实max_calls渲染元任务与角色说明/摘要并传给容器，本地主agent步数使用同额度；子角色仍没有独立新预算。提示仅替换额度数字，不加入新策略。此为扩大预算诊断，仍不是原SICA每agent500迭代（可能含continuation）的完整运行时/资源复现；旧实验不恢复或改写，原24小时截止继续生效。
+
+## 2026-10-12 v5预算作用域更新
+
+此前30/500共享调用、2048输出、32768 context、60秒命令及600秒improve是历史诊断合同。当前改为每角色500/coder1000独立迭代、每迭代最多5 provider请求、总结1请求、benchmark600秒/$3、improve无独立时间/费用阈值；模型输出和context取认证元数据，DeepSeek通过beta prefix续写。原文件视图重建未移植；公开读取和工具输出取消人为截断，安全隔离仍保留。费用为官方峰值保守上界而非账单，未知价格拒绝benchmark。完整来源、差异、验收和单次测试状态见[sica-budget-alignment-review.md](sica-budget-alignment-review.md)。

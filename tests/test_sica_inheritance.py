@@ -20,12 +20,12 @@ def test_original_meta_loop_keeps_parent_and_proposer_selection_on_resume(tmp_pa
 
     class BrokerFixture:
         def session(self, *args, **kwargs):
-            assert kwargs == {'calls':500, 'seconds':600}
+            assert kwargs == {'calls':None, 'seconds':None}
             return 'fixture'
 
         def finish(self, token):
             return {'tokens': 20, 'cached_tokens': 0, 'calls': 1,
-                    'deadline': time.time()+590, 'errors': []}
+                    'started':time.time(), 'deadline': time.time()+590, 'errors': []}
 
         def summary(self, messages, label):
             return 'Fixture summary'

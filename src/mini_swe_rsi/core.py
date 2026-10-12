@@ -59,6 +59,10 @@ def command(args, timeout=60, **kwargs):
 def secrets():
     from dotenv import dotenv_values
     env = dotenv_values(ROOT / '.env')
+    names = {env[k] for k in ('LOCAL_LLM_MODEL', 'LLM_MODEL_NAME') if env.get(k)}
+    if len(names) > 1:
+        raise ValueError('Conflicting model names in .env')
+    env['LOCAL_LLM_MODEL'] = next(iter(names), None)
     required = ['OPENAI_BASE_URL', 'OPENAI_API_KEY', 'LOCAL_LLM_MODEL']
     if any(not env.get(k) for k in required):
         raise ValueError('Missing model configuration in .env')
@@ -155,8 +159,10 @@ def improvement_contract():
     actual = {p.name:digest(p) for p in sources.iterdir() if p.is_file()}
     if actual != {n:v['sha256'] for n,v in expected.items()}:
         raise RuntimeError('Pinned workflow sources differ from upstream lock')
-    return {'version': 'sica-mini-improvement-v4',
-            'limits': {'calls': 500, 'seconds': 600},
+    from .budget_policy import policy_contract
+    return {'version': 'sica-mini-improvement-v5',
+            'limits': {'calls': None, 'seconds': None},
+            'budget_policy': policy_contract(),
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
             'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
             'workflow_sha256': digest(ROOT/'runtime/workflow.py'),

@@ -8,7 +8,7 @@
 
 ## 安装
 
-需要 Python 3.12、uv、Docker。模型服务从根目录 `.env` 读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`LOCAL_LLM_MODEL`。凭据不进入候选或 Git。
+需要 Python 3.12、uv、Docker。模型服务从根目录 `.env` 读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`LOCAL_LLM_MODEL`（或 `LLM_MODEL_NAME`，两者同时存在时必须相同）。凭据不进入候选或 Git。
 
 ```bash
 python3 scripts/bootstrap.py
@@ -65,7 +65,7 @@ Docker测试使用模拟模型，不调用 `.env` 推理服务；验证不同归
 必要适配和许可证说明见 [上游适配说明](docs/upstream_adaptations.md)，各项目的采用范围见 [项目对比](docs/project_comparison.md)。源码精简不会提前混入首轮适配实验。
 
 
-当前新实验协议为 `mini-text-bash-v3`：总上下文32768 tokens，保留2048输出和明确聊天封装余量；固定Qwen tokenizer身份、文件摘要与计量算法，宿主估计与服务实际usage分开记录。旧协议运行只能离线报告，不可按新预算恢复。严格兼容仅在reasoning_content中返回的单个完整动作，保留原始和agent实际收到的回复供审计与回放。详见 [上游适配说明](docs/upstream_adaptations.md)。
+历史上下文诊断协议为 `mini-text-bash-v3`：总上下文32768 tokens，保留2048输出和明确聊天封装余量；固定Qwen tokenizer身份、文件摘要与计量算法，宿主估计与服务实际usage分开记录。旧协议运行只能离线报告，不可按新预算恢复。严格兼容仅在reasoning_content中返回的单个完整动作，保留原始和agent实际收到的回复供审计与回放。详见 [上游适配说明](docs/upstream_adaptations.md)。
 
 历史上下文修复验收见[第二轮审查报告](docs/context-protocol-review.md)，角色/工具兼容与30调用真实结果见[第五轮审查报告](docs/role-transport-review.md)：工程检查通过，尚未证明RSI。
 
@@ -75,6 +75,21 @@ Docker测试使用模拟模型，不调用 `.env` 推理服务；验证不同归
 
 历史七步元改进恢复使用独立任务合同 `sica-mini-improvement-v2`：显式结构调用、当前阶段完成入口、原四种委员会评审及归档分析/编码/文档角色，统一从实际选中的归档 mini 加载并共享30次真实调用预算。阶段完成仍由模型声明，允许提前提交；状态记录会如实标记未完成。只读角色限制的是工具接口，并非同容器内恶意Python的独立安全沙箱。原工具的文本传输映射、不可用web/旧测试命令及其他偏离见 [适配说明](docs/upstream_adaptations.md)。旧任务合同不能按新工作流恢复；工程fixture不代表真实RSI收益。
 
-当前元改进任务合同为 `sica-mini-improvement-v4`，冻结全角色共享500次实际模型调用/600秒，用于已授权预算诊断；任务求解仍30调用/600秒。上下文32768、输出2048、命令60秒、并发1及模型不变，角色说明和主agent本地步数与实际会话额度一致。此设置不是原SICA每agent500迭代的完整预算复现；不兼容旧运行恢复。只做一次新提案，不重测基线/val/test，有运行源码变化才评预定开发题。
+历史预算诊断任务合同为 `sica-mini-improvement-v4`，冻结全角色共享500次实际模型调用/600秒，用于已授权预算诊断；任务求解仍30调用/600秒。上下文32768、输出2048、命令60秒、并发1及模型不变，角色说明和主agent本地步数与实际会话额度一致。此设置不是原SICA每agent500迭代的完整预算复现；不兼容旧运行恢复。只做一次新提案，不重测基线/val/test，有运行源码变化才评预定开发题。
 
 500调用诊断结果见[预算对照报告](docs/budget-500-review.md)：真实86请求后达到600秒，已进入评审和编码，但长报告提交错误及编码回复截断，未修改源码，RSI仍未成立。
+
+
+## 当前预算合同：原SICA作用域（v5）
+
+默认按每角色独立迭代：协调者/归档/求解/评审500，编码者1000；一轮最多5次provider请求（总结默认1次），全部真实请求计量。基准任务600秒/$3；自我改进无单独600秒限制，受全局24小时和阶段时间约束。工具600秒、命令声明5..1800秒取有效最小值。模型输出/context使用已认证服务的能力声明；当前deepseek-flash公布1048576 context和393216输出。无匹配本地tokenizer时由服务执行context上限，宿主审核实际usage，不再套用旧Qwen32768/2048。
+
+DeepSeek输出截断使用其beta prefix协议续写；不支持prefix的服务显式失败。最多5次仍截断时不执行未完成动作。工具/观察/公开读取不再截断。SICA事件总线的文件视图重建未移植；300000字符仅记录为原版重建触发条件，不作为mini上下文上限。安全根路径、独立评分、源体积和容器资源隔离仍保留。DeepSeek $3守卫按[官方峰值价格](https://api-docs.deepseek.com/quick_start/pricing/)计算保守成本上界，非实际账单；无冻结价格的服务拒绝基准推理，避免虚报零成本。旧运行不能按新合同恢复。
+
+一次运行检查入口：
+
+```bash
+uv run python scripts/smoke_once.py --output runs/budget-alignment-smoke
+```
+
+仅一次提案，运行源码变化才评测预先固定dev题django__django-14752；不重测baseline/val/test。旧模型H0公开证据只供分析。原24小时已过期时入口拒绝启动；只有用户重新授权单次测试时间后，才可显式添加 `--new-time-budget-seconds 1800`。此参数创建独立诊断时间合同，保留旧实验原始起点，不能用于把旧实验超时改写为完成。当前真实测试待新的时间授权；工程验收见[预算对齐记录](docs/sica-budget-alignment-review.md)。

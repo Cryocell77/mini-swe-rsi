@@ -1,3 +1,4 @@
+from mini_swe_rsi.context_budget import ContextBudget
 import importlib.util
 import json
 import shlex
@@ -91,7 +92,7 @@ def test_child_failure_not_fake_success(tmp_path):
 
 
 @pytest.mark.skipif(__import__('os').environ.get('RUN_DOCKER_TESTS') != '1', reason='Docker fixture')
-@pytest.mark.parametrize('limit', [30, 6, 500])
+@pytest.mark.parametrize('limit', [30, 6, 500, None])
 def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, monkeypatch, limit):
     import io
     import re
@@ -101,7 +102,8 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     from mini_swe_rsi.driver import Driver, initial_code
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture-secret',LOCAL_LLM_MODEL='fixture'))
     budget=Budget(tmp_path);budget.enter('preflight')
-    broker=Broker(tmp_path,budget);broker.model='fixture'
+    context = ContextBudget({'max_output_tokens':393216,'context_window':1048576}) if limit is None else ContextBudget()
+    broker=Broker(tmp_path,budget,context=context);broker.model='fixture'
     requests=[]; main_turn=0; coder_turn=0
     plan=['meta_improvement_reasoning_structure' if limit==30 else 'invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
     if limit == 500:
@@ -115,7 +117,7 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
             assert 'Please solve this issue' not in user and 'Create a script to reproduce' not in user
             assert 'Shared session at role start:' in user and 'remaining_calls' in user
             assert 'Trusted current improvement context:' in user
-            assert f'{limit} actual' in system
+            assert 'independent' in system and '1000' in system
             assert all(not payload.get(key) for key in ('tools','tool_choice','functions','function_call'))
             for message in payload['messages'][2:]:
                 if message['role']=='user':
@@ -159,14 +161,20 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         status,_=driver.controller(code,tmp_path/'logs',['improve','--parent-iter','0','--best-iter','0','--candidate-id','agent_1','--current-iter','0'],token,archive=archive,target=target)
         usage=broker.finish(token)
         state=read(tmp_path/'logs/workflow_state.json')
-        assert len(requests)==usage['calls'] and len(requests)<=limit
-        assert all(p['model']=='fixture' and p['max_tokens']==2048 for p in requests)
+        assert len(requests)==usage['calls'] and (limit is None or len(requests)<=limit)
+        assert all(p['model']=='fixture' and p['max_tokens']==context.contract['output_tokens'] for p in requests)
         assert tree_hash(code)==original
         assert read(tmp_path/'logs/improvement_verification.json')['status']=='verified'
         roles=list((tmp_path/'logs/roles').glob('*/activation.json'))
         assert all(read(p)['agent_file'].startswith('/home/agent/archive/agent_0/agent_code/') for p in roles)
         assert all(read(p)['shared_broker_session'] for p in roles)
-        if limit in (30,500):
+        assert read(tmp_path/'logs/activation.json')['step_limit']==500
+        assert read(tmp_path/'logs/activation.json')['wall_time_limit_seconds']==0
+        assert all(read(p)['step_limit']==(1000 if read(p)['role'].endswith('software_developer') else 500) for p in roles)
+        if limit is None:
+            assert usage['max_calls'] is None and usage['iterations']['main']==13
+            assert usage['iterations']['006_software_developer']==2
+        if limit in (30,500,None):
             assert status==0 and state['status']=='completed' and state['completed_steps']==7
             assert len(roles)==7 # four reviewers, archive, coder, general
             assert (target/'fixture.txt').read_text()=='editor'
@@ -201,12 +209,12 @@ def test_global_thirty_actual_calls_and_deadline_across_roles(tmp_path, monkeypa
     from mini_swe_rsi.core import Budget
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
     budget=Budget(tmp_path);budget.enter('preflight')
-    broker=Broker(tmp_path,budget);broker.model='fixture';actual=[]
+    broker=Broker(tmp_path,budget,context=ContextBudget());broker.model='fixture';actual=[]
     class Endpoint:
         def open(self,request,**kw):
             actual.append(json.loads(request.data))
             return io.BytesIO(json.dumps({'choices':[],'usage':{'prompt_tokens':5,'completion_tokens':2,'total_tokens':7}}).encode())
-    broker.opener=Endpoint();token=broker.session('roles')
+    broker.opener=Endpoint();token=broker.session('roles',calls=30)
     def delegate(identity,prompt,readonly):
         broker.complete(token,{'model':'forbidden-stronger','messages':[{'role':'user','content':prompt}]})
         return {'exit_status':'Submitted','submission':identity}

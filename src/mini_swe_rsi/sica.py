@@ -87,7 +87,7 @@ class SicaAdapter:
                     shutil.copy(last / filename, trace / filename)
             tracker.update_problem(pid, **{k: v for k, v in record.items() if k != 'problem_id'})
             summary = await adapter.runner.generate_contextual_summary(job.problem.statement,
-                (trace / 'patch.diff').read_text()[:6000], (trace / 'trace.txt').read_text()[-18000:],
+                (trace / 'patch.diff').read_text(), (trace / 'trace.txt').read_text(),
                 record['score'], None, 'Official independent grading; private tests and references withheld.')
             (trace / 'summary.txt').write_text(summary)
             (trace / 'score.txt').write_text(str(record['score']))
@@ -151,7 +151,7 @@ class SicaAdapter:
                                + ' No benchmark improvement is established by this execution status.\n')
                     (logs/'summary.txt').write_text(summary)
                 append_event(adapter.root, proposal)
-                return success, f"{metrics['tokens']}|{metrics['cached_tokens']}|0|{600-max(0, metrics['deadline']-__import__('time').time())}", output[-2000:] if status else ''
+                return success, f"{metrics['tokens']}|{metrics['cached_tokens']}|{metrics.get('cost_upper_bound_usd',0)}|{__import__('time').time()-metrics['started']}", output[-2000:] if status else ''
             if args[:2] == ['docker', 'buildx']:
                 # mini has a frozen runtime dependency contract; source/config changes load next launch.
                 return True, 'Fixed dependency image; source changes take effect on next launch.', ''

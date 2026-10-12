@@ -47,6 +47,15 @@
         "path": "LICENSE",
         "sha256": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
       }
+    },
+    "budget_files": {
+      "base_agent/agent.py": "ac3e2183920c81a0591960be91a061d316a4fd924db539f9b8cedaab24b61b24",
+      "base_agent/__main__.py": "1f5abd87a173e68db330227ead7581121b13ebeb607a8209231b13bab01a6fc9",
+      "base_agent/src/agents/base_agent.py": "3d5684cd2e3c72e3345e69db9178b037fb5eaf51fe65366e4a39d8b3768de963",
+      "base_agent/src/llm/providers/base_provider.py": "83bcf1df346ec9cc2ef375f1ae41864cec0c6a51241de0b1be910612a2bfd052",
+      "base_agent/src/llm/providers/deepseek.py": "59c0cd32d5097e86d039c40cf3f2daa507b08f835b77418df0b82e6cc6f577f1",
+      "base_agent/src/tools/execute_command.py": "9a3c4df635d983829170a90e27071c9ce03ba1daf739716433b3f04d4b54738e",
+      "base_agent/src/llm/api.py": "f14dcf6eb72dcfb63df93da8aa67e8ef64e5f96b34b99d9b3478bb0fd542f829"
     }
   },
   "mini": {

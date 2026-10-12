@@ -303,3 +303,20 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 18次同一评审printf长报告未转义内部引号，拆为290参数，bash -n仅语法检查18次均无效，未执行；累积上下文触发宿主30730+2048>32768拒绝，不增加实际调用。编码浏览/环境检查/pip安装后，第79/80/81回复2048 tokens/length截断，未形成写入。整体与运行源码均未变，预定开发题跳过，无基线/val/test。预算屏障解决但无自改进，不能将7次声明算RSI成功；先处理报告提交和编码输出截断比继续盲增调用或立刻换模型更可解释。新增budget-500-review.md报告，所有负面结果保留，不追加采样。
 
 最终独立完整性检查：11源码/测试冻结摘要不变，前轮9246文件未改；此次与30调用版本的实际元任务提示仅额度数字不同，模型/服务/context/任务求解限制/upstream一致，预算started继承原24小时起点，候选源码摘要与改进者完全相同。本次841运行文件另封存，final_integrity.json记录；仅README/日志/报告追加，diff检查通过，提交结果文档。
+
+
+## 全预算对齐启动
+
+已读要求/implementation/历史真实审计及iteration技能。两个6.1 Sol low子agent额度中断；其中bridge.py已部分修改，尚未验收，主agent接手并先补充设计。新增预算策略将冻结原SICA作用域；原24h已到期，未重新授权前不请求真实模型。
+
+预算实现文件记录：新增budget_policy.py统一角色迭代、5次续写、工具和模型cap；core.py兼容新model键、升级v5与源策略摘要；context_budget.py新增生产provider元数据/实际usage机制，旧Qwen计量仅用于历史离线回放；broker.py移除共享默认quota/600秒improve、固定输出与请求/工具输出截断，加入角色计数、DeepSeek beta prefix合并计量、全局期限及$3成本守卫；driver/experiment/sica贯通冻结预算、动态超时和真实耗时/成本，摘要不裁剪；bridge/relay/workflow贯通独立角色budget与身份header，移除10000/30000/500行/搜索/列表截断；replay.py合并provider续写事件并复用新任务预算。原vendor及mini源码未改。scripts/bootstrap.py校验新增6份预算来源hash；upstream.lock.json登记这些固定提交来源。相关旧测试使用显式历史Qwen context fixture，新test_sica_budget_policy.py测试新服务能力、alias、角色独立、续写5次总请求/不执行片段、计量、工具600和输出、成本及原24h不重置。
+
+初批11失败是旧合同断言/fixture未包含started/新冻结预算、原500行限制断言；补足fixture并改为新合同断言后90 passed/8 Docker skipped。新模型官方价格页已可读取，冻结deepseek-flash峰值cached/input/output每百万$0.006/$0.3/$1.2，$3守卫据保守成本上界，不宣称实际账单或精确复现原价格；其他未定价服务benchmark显式拒绝而不虚报零成本。
+
+首个Docker验收在mock complete旧签名不接受角色header后触发客户端退避，手动中止；修正fixture签名后完整98项通过（121.87秒）。后续审查发现整体替换benchmark observation会覆盖候选自改进模板，改为仅删除原mini10000字符预算分支并保留候选其余模板；回放同变换，新增定向回归。补齐cached usage汇总、tool cost检查/终止类型及CLI过期预算拒绝测试。scripts/smoke_once.py提供一次生产提案与有源码变化才评预定dev题，已过期原24h不启动；仅显式新时间参数可创建另一次诊断额度且不修改旧实验。README标记旧v3/v4为历史合同并记录当前作用域、价格上界与未移植文件视图。新增portable cap Docker案例验证393216输出与独立500/1000角色计数，准备冻结后最终全套验收。
+
+最终作用域复核追加：上游公共llm/api.py的max_continuations默认为None，虽provider内部默认4，runner总结实际不进入continuation，所以总结是1请求而非4。已补核固定提交api.py并锁定为第7份预算来源，修正policy及总结处理；截断总结只作为部分文本归档，绝不进入动作执行。此前初步4次说法作废。
+
+边界验收追加：固定SICA源码AST对照测试误将coder普通Assign按AnnAssign查找导致StopIteration，修正测试提取方式；38项定向回归通过。考虑服务keepalive可能让socket空闲timeout不能约束总墙钟，broker新增总请求期限、尽力关闭连接及晚到usage审计，超时未知费用标unmetered，不让finish无限等待。cached usage无效时仍保留已知收费token并按全量未缓存估保守成本，不能丢记为0。
+
+最终验收：冻结源码全套105 passed/101.56秒，含Docker模拟端点，失败0；源码冻结摘要、SICA14份/mini74份/预算来源7份及前轮7214个运行文件均复核一致。过期预算CLI退出2且未创建运行目录，真实模型请求0，没有baseline/val/test或新的提案。新sica-budget-alignment-review.md与upstream_adaptations.md记录完整作用域、保留差异、工程结果和需新时间授权的单次测试入口。准备本地commit，不push。
