@@ -214,3 +214,9 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 主agent独立远端逐字核验14份上游文件、14个原runner函数AST/code object、mini74文件及旧5668文件清单，均通过；独立比对七步全部字段、四份specialisation及成功/失败/非法完成状态，均通过。最终冻结树完整 `RUN_DOCKER_TESTS=1 uv run pytest -q --junitxml=runs/sica-workflow-repair-20261012/parent-final.xml`：80 passed/240.72秒，仅已有LiteLLM弃用提示一项。stdout为parent-final.txt。此前主agent针对性14 passed/1 skipped单独保留。最终10个冻结文件摘要未变；diff检查通过。
 
 审查无阻断问题，接受明确的串行同模型、文本工具、未移植文件视图及角色工具只读非OS沙箱等偏离；没有新增强制编辑/晋升门槛。报告sica-workflow-review.md。工程验收后提交，再在全新目录运行一次同Qwen提案，沿用原24小时起点和历史公开dev30证据，不重测基线；只有运行源码确有修改才独立测预定一题，不运行val/test。
+
+## 第四轮提交后真实验收
+
+代码commit c6bb1fd。一次同Qwen真实提案，87.65秒，30调用（主5/归档25），total187079、cached164315、未计量0。首个wire完整任务与宿主/容器身份verified，实际归档agent/model及共享会话核验通过。真实invoke并delegate archive_explorer，但第一步0/7，未到编码或委员会；角色对历史失败任务路径产生8条命令、2次尝试Python修复，接口拒绝。10次普通命令拒绝、5次结构命令多参数错误消耗额度。源码与父完全相同；mini APIError包装的底层为LimitsExceeded，两个轨迹末尾明确，无端点失败/上下文溢出，最大实际prompt13295。模型/服务结束身份不变，旧5668文件和固定源码再次核验通过。
+
+按预先条件跳过单题开发测评，未重复基线/val/test或额外提案。工程恢复通过；真实模型的阶段收敛/任务识别/文本工具遵循仍未在原30调用内完成，不以一次失败断言必须换模型，也不将模拟七步成功冒称真实RSI。产物real_smoke_audit.json与sica-workflow-review.md。最终仅追加报告，不改已验收运行代码。
