@@ -182,3 +182,7 @@ H0开发集完整30题，成功6题（20%），模型身份前后一致。此分
 ## 第三轮主agent验收
 
 独立提示原文差异审查和五个固定SICA文件远端核验通过，14原函数AST/code object及mini74文件不变，旧5668封存文件不变。主agent14项独立测试通过/16.98秒；审查追加每次启动前检查冻结taskcontract，子agent修复后11项affected测试通过/17.43秒，代码复审通过。完整66项测试为补充前最终完整套件，结果分开记录。CLI及diff检查通过，工程修复验收；将提交后用新目录同Qwen实测。
+
+## 第三轮提交后真实验收
+
+代码commit0129c97；runs/task-protocol-repair-20261012/real-smoke实际一次同Qwen SICA提案。宿主/容器task SHA身份verified，新提示完整进入wire。30调用30只读命令，0次diff、2次空正文动作适配，287462total/267756cached，53.47秒；最大prompt17472、completion127且全部stop，无上下文/格式/服务错误及未计量调用。源码未变、LimitsExceeded进程1，失败摘要正确。模型/服务身份不变；旧5668封存文件不变。没有候选，未重复H0开发题或评分器已通过检查，不重测基线/val/test。工程验收通过，RSI仍未证明；身份与预算提示已送达但未转化为编辑行为。详细报告task-protocol-review.md。
