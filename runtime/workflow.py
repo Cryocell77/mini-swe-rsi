@@ -72,10 +72,31 @@ Compatibility: original file views/archive analysis use these public read/list/s
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         description = next(ast.literal_eval(n.value) for n in cls.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'TOOL_DESCRIPTION' for t in n.targets))
         text += '\nOriginal '+filename+' tool description:\n'+description
+    # Remove capabilities which do not belong to this original role. The same
+    # AST-derived policy is enforced at dispatch, not merely described here.
+    text = text.replace('{"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true}',
+                        '{"op":"<current step_..._complete tool>","success":true}')
+    text = text.replace('Read-only inspection operations: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":5} maps to original ArchiveAnalyzer.',
+                        'Read-only inspection operations:')
+    text = text.replace('original file views/archive analysis use these public read/list/search operations',
+                        'original file views use the permitted inspection operations')
+    if role == 'archive_explorer':
+        text += '\nArchive analysis: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":3}. Best/worst count defaults to 3 and must be below 10, as in the original tool.'
+    if 'search' not in role_capabilities(role)['operations']:
+        text = text.replace(', {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}', '')
     permitted = ('invoke','committee') if role == 'orchestrator' else ('committee',) if role in ('software_developer','general_problem_solver') else ()
     aliases = {name:op for name,op in tool_aliases().items() if op in permitted}
     if aliases:
         text += '\nRegistered original TOOL_NAME aliases (same operations and permissions): ' + json.dumps(aliases,sort_keys=True)
+    caps = role_capabilities(role)
+    text += '\nPermitted operations for this role: ' + ', '.join(sorted(caps['operations']))
+    text += '\nPermitted delegated roles: ' + ', '.join(sorted(caps['delegates']))
+    for delegate in sorted(caps['delegates']):
+        text += '\n' + definitions()[2][ROLE_MAP[delegate]]['AGENT_DESCRIPTION']
+    if caps['delegates']:
+        text += '\nDelegation syntax: {"op":"delegate","role":"<permitted role>","task":"complete self-contained instructions"}.'
+    if role == 'orchestrator':
+        text += '\nArchive statistics and best/worst traces belong to archive_explorer; delegate archive analysis to that agent. The current step completion tool takes success only; its invocation is bound by the host. Call the exact current step name, not the structure name. Unsupported upstream ReasoningAgent is not registered.'
     return text
 
 
@@ -83,6 +104,30 @@ Compatibility: original file views/archive analysis use these public read/list/s
 ROLE_MAP = {'orchestrator':'main_orchestrator', 'archive_explorer':'archive_explorer',
             'software_developer':'coder', 'general_problem_solver':'problem_solver',
             'reviewer':'review_committee_member'}
+
+
+def role_capabilities(role, source=SOURCE):
+    """Map the supported original AVAILABLE_TOOLS/AGENTS, without extra grants."""
+    cls = next(n for n in ast.parse((source/(ROLE_MAP[role]+'.py')).read_text()).body if isinstance(n, ast.ClassDef))
+    fields = {t.id: n.value for n in cls.body if isinstance(n, ast.Assign)
+              for t in n.targets if isinstance(t, ast.Name) and t.id in ('AVAILABLE_TOOLS','AVAILABLE_AGENTS')}
+    def names(key):
+        return {n.id for n in fields[key].elts} if isinstance(fields[key], ast.Set) else set()
+    tools, agents = names('AVAILABLE_TOOLS'), names('AVAILABLE_AGENTS')
+    ops = {'read','list'}
+    if 'RipGrepTool' in tools:
+        ops.add('search')
+    if 'MetaImprovementReasoningStructure' in tools:
+        ops.update(('invoke','state','complete'))
+    if 'ReviewCommittee' in tools:
+        ops.add('committee')
+    if {'BestProblems','WorstProblems','CompareIterations'} <= tools:
+        ops.add('archive')
+    delegates = {name for original,name in (('ArchiveExplorer','archive_explorer'),
+                 ('CodingAgent','software_developer'),('ProblemSolvingAgent','general_problem_solver')) if original in agents}
+    if delegates:
+        ops.add('delegate')
+    return {'operations':ops, 'delegates':delegates}
 
 
 def role_templates(config, role, calls=500):
@@ -198,23 +243,32 @@ class Workflow:
             self.event(kind='role_error', identity=identity, error=str(exc))
             raise
 
-    def dispatch(self, request):
+    def dispatch(self, request, role='orchestrator'):
         requested_op = request['op']
         op = self.aliases.get(requested_op, requested_op)
-        self.event(kind='operation_request', requested_op=requested_op, op=op)
+        current_completion = self.current().get('completion_tool')
+        if requested_op == current_completion and current_completion is not None:
+            if request.get('tool', current_completion) != current_completion:
+                raise ValueError('Conflicting completion tool')
+            op = 'complete'
+            request = {**request, 'tool':current_completion}
+        caps = role_capabilities(role)
+        self.event(kind='operation_request', requested_op=requested_op, op=op, role=role)
+        if op not in caps['operations']:
+            raise ValueError(f'Operation {requested_op} is unavailable to {role}; permitted: {sorted(caps["operations"])}')
         if op == 'invoke':
             if self.active:
                 raise ValueError('Structure already active')
             self.status = 'active'
             self.completed_steps = 0
-            self.active = {'invocation_id':'reasoning_structure_invocation_'+uuid.uuid4().hex, 'index':0,'step_ids':['step_'+uuid.uuid4().hex for _ in self.steps]}
+            self.active = {'invocation_id':'reasoning_structure_invocation_'+uuid.uuid4().hex[-4:], 'index':0,'step_ids':['step_'+uuid.uuid4().hex[-4:] for _ in self.steps]}
             self.event(kind='invoke', state=self.current())
             return self.current()
         if op == 'state':
             return self.current()
         if op == 'complete':
-            if not self.active or request.get('invocation_id') != self.active['invocation_id'] or request.get('tool') != self.current()['completion_tool']:
-                raise ValueError('Only the active invocation/current completion tool is available')
+            if not self.active or request.get('invocation_id', self.active['invocation_id']) != self.active['invocation_id'] or request.get('tool') != self.current()['completion_tool']:
+                raise ValueError('Only the active invocation/current completion tool is available: ' + str(current_completion))
             success = request.get('success', True)
             if type(success) is not bool:
                 raise ValueError('success must be boolean')
@@ -231,8 +285,8 @@ class Workflow:
             self.event(kind='complete', previous=previous, declared_success=success, output=output)
             return output
         if op == 'delegate':
-            if request.get('role') not in ('archive_explorer','software_developer','general_problem_solver'):
-                raise ValueError('Only declared public delegate roles are callable')
+            if request.get('role') not in caps['delegates']:
+                raise ValueError('Delegate is unavailable to this original role')
             return self.call_role(request['role'], request['task'])
         if op == 'committee':
             reviews = ''
@@ -247,8 +301,11 @@ class Workflow:
             if kind == 'compare':
                 return analyzer.compare_iterations_formatted(request['iterations'])
             if kind in ('best','worst'):
+                count = request.get('n',3)
+                if type(count) is not int or count >= 10:
+                    raise ValueError('Archive count must be an integer below 10')
                 method = analyzer.get_best_performing_problems_formatted if kind == 'best' else analyzer.get_worst_performing_problems_formatted
-                return method(request['iteration'], request.get('n',5), request.get('benchmark'))
+                return method(request['iteration'], count, request.get('benchmark'))
             raise ValueError('Unknown archive analysis operation')
         if op in ('read','list','search'):
             return self.inspect(request)
@@ -289,7 +346,7 @@ class Workflow:
                     pass
         return hits
 
-    def execute(self, action, readonly=False):
+    def execute(self, action, readonly=False, role=None):
         command = action.get('command','')
         requested_op = None
         try:
@@ -300,11 +357,9 @@ class Workflow:
                 request = json.loads(parts[1])
                 requested_op = request.get('op')
                 op = self.aliases.get(requested_op, requested_op)
-                if readonly == 'editor' and op not in ('read','list','search','archive','committee','delegate'):
-                    raise ValueError('Delegates cannot alter the parent workflow lifecycle')
-                if readonly is True and op not in ('read','list','search','archive'):
-                    raise ValueError('Read-only role cannot invoke mutable workflow operations')
-                return {'output':json.dumps(self.dispatch(request)), 'returncode':0}
+                # Role comes from the actual executing environment, never JSON.
+                trusted_role = role or ('reviewer' if readonly is True else 'software_developer' if readonly == 'editor' else 'orchestrator')
+                return {'output':json.dumps(self.dispatch(request, trusted_role)), 'returncode':0}
             if readonly and readonly != 'editor':
                 if len(parts) >= 2 and parts[0] == 'echo' and parts[1] == 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT' and not any(p in (';', '&&', '||', '|', '>', '<') for p in parts[2:]):
                     return {'output':' '.join(parts[1:])+'\n','returncode':0}

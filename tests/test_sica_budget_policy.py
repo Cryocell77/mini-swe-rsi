@@ -76,6 +76,11 @@ def ollama_broker(tmp_path, monkeypatch):
              'model_info':{'general.architecture':'qwen35','qwen35.context_length':262144}}
     instance.remote = lambda path:data[path]
     instance.opener = type('Endpoint',(),{'open':staticmethod(lambda *args,**kwargs:io.BytesIO(json.dumps(shown).encode()))})()
+    # Native tokenizer authenticity is exercised separately; this capacity fixture
+    # supplies the same verified metadata without shipping a second vocabulary.
+    instance.service_configuration = lambda model, identity=None: {
+        'parameters':shown['parameters'],
+        'template_sha256':__import__('hashlib').sha256(shown['template'].encode()).hexdigest()}
     yield instance, data, shown
     instance.close()
 

@@ -348,3 +348,15 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 发现新上下文风险：最后完整输入304296字符，服务prompt32770；只读/api/ps确认实际加载65536，/api/show核验冻结tokenizer一致后离线计数文本88160/最后历史反馈69462，未含chat framing，超过context。无上下文错误不代表输入完整，可能服务截断/处理差异，不能归结为纯模型能力或时间额度问题。原SICA归档函数未改，但archive best字符串缺少read操作的历史来源包装，模型任务混淆与过长反馈边界仍需后续修复；本轮仅测试不改策略。
 
 主agent核对实现摘要、上游5/9/7及mini74文件、模型前后身份、无候选修改；843本次产物封存、容器清理。临时旧H1重测中止独立核算32调用/155873tokens/305.82秒，无评分，不算本次提案。新增qwen-rsi-single-smoke.md完整报告；108项工程验收沿用原记录，本轮文档修改不重复全套、无新推理。准备本地提交报告，不push、不提交秘密和runs。
+
+## 2026-10-13 修复启动
+
+按用户新授权继续research[F]-iteration流程，已读要求/历史日志/实现和真实结果；无idea_report，沿用implementation。固定SICA21份锁定来源及直接归档/协调者/顺序结构副本已核验。发现主角色工具越权、完成额外参数负担、无输入发送前保护；先追加设计，保持上游、模型参数与预算。只修接口与完整性审计，不添加成功策略，工程验收commit后一次Qwen条件单题。
+
+实现记录：runtime/workflow.py以原AST推导支持的角色工具/委派边界，动态短步骤名与宿主绑定invocation，提示提供真实权限及原委派描述，archive默认3/<10；runtime/bridge.py传真实环境role、支持输入完整性失败分类、修正主提示归档入口；core.py升级v6。context_budget.py新增服务验证tokenizer后的内容计数/保守framing保护，保留未知provider路径与原输出上界；broker.py核验Qwen服务tokenizer/模板元数据，冻结合同并记录wire摘要/发送前拒绝与返回大幅计数缺失保护。tests现有合同断言和Docker步骤完成调用改为v6/直接工具名，Ollama容量fixture明确模拟元数据验证，另加真实身份和完整性专门用例。没有修改上游或数据/模型参数。
+
+新增tests/test_input_integrity_and_permissions.py覆盖真实原工具权限、默认3/<10、当前动态步骤仅success、错误/过期完成身份拒绝、越权伪造role不生效、超长输入0请求、截断响应保留usage却不返回动作、服务tokenizer验证及无精确模板宣称。首轮完整Docker验收113 passed/173.69秒。随后真实只读metadata预检发现verbose参数行顺序不同导致身份误拒绝（0推理），broker.py改为排序参数键值行且保留值内空格，新增顺序/真实值变化回归；context_budget.py根合同同步标识已验证tokenizer及前置保护，避免元数据自相矛盾；输入完整性失败使用独立错误码。旧失败日志保留，完成新验收前不启动真实提案。
+
+独立只读复核：95项固定来源摘要一致、旧Qwen843/DeepSeek920封存文件未变；metadata预检连续身份一致，旧请求content86717文本tokens准确发送前拒绝、0模型调用。上轮88160含辅助reasoning字段，本轮content计数差异已披露。DeepSeek清单有files包装，首个核验脚本按扁平结构误读并FileNotFound，修正只读脚本后920项通过，无原产物修改。新增sica-tool-boundary-review.md逐项原源对照、保留差异和输入核验能力边界，README标当前v6。等待参数顺序修正后的最终验收，再提交并一次真实测试。
+
+最终冻结验收115 passed/173.66秒，含Docker模拟端点，失败0；src/runtime/tests与accepted_source_freeze匹配，diff检查通过，上游与旧产物未变。主agent逐项审查接受v6工具归属、宿主绑定步骤完成与已验证文本/明显缺失审计；精确chat序列保留仍未证明，原ReasoningAgent/事件总线未移植边界保留。准备本地commit后仅一次Qwen提案与条件dev，无baseline/val/test。

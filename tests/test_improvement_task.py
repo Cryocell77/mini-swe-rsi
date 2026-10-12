@@ -46,7 +46,7 @@ def test_expanded_budget_changes_only_improvement_allowance_text_and_freezes_con
         assert new == old
     contract = improvement_contract()
     assert contract['limits'] == {'calls':None,'seconds':None}
-    assert contract['version'] == 'sica-mini-improvement-v5'
+    assert contract['version'] == 'sica-mini-improvement-v6'
     # Runtime roles enforce independent iterations; there is no shared actual-request quota.
     from inspect import signature
     from mini_swe_rsi.broker import Broker

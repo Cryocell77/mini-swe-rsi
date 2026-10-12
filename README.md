@@ -99,3 +99,5 @@ uv run python scripts/smoke_once.py --output runs/budget-alignment-smoke
 2026-10-12用户授权新增30分钟后，代码3cc4718的单次真实检查在1768.39秒内完成：七步流程完成，模型修改了归档mini的agent源码与配置，候选加载后在预定开发题上独立评分通过。没有重测基线或运行val/test，也没有第二次提案。此结果证明一次自改源码及候选执行链路运行成功，不证明收益或递归继承。完整证据与保留问题见[单次测试报告](docs/sica-budget-alignment-smoke.md)。
 
 Qwen 新提案单次测试见 [真实测试报告](docs/qwen-rsi-single-smoke.md)：28 调用后提前提交、源码未变、条件开发题跳过。发现超长历史反馈与当前任务混淆及服务输入完整性风险；尚无 Qwen 自改进或 RSI 收益证据。
+
+当前元任务合同为 v6，恢复原 SICA 角色工具归属，步骤完成调用绑定宿主身份；经服务验证的 Qwen tokenizer 提供输入容量和明显截断审计（不承诺精确模板保留）。见[接口修复审查](docs/sica-tool-boundary-review.md)。旧 v5 运行保留只读，不能恢复到 v6。

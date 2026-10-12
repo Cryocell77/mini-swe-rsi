@@ -125,3 +125,13 @@ SICA ed8275dca4d3c5dbf77229964351fe9b424797dc；mini-swe-agent 04d809ceab9df28f9
 ## Qwen新提案与条件单题（最终确认）
 
 用户已选择Qwen自己生成一次提案。中止临时现有DeepSeek H1重测并保留其独立产物runs/qwen-single-task-20261012/task-smoke（KeyboardInterrupt，305.82秒）。确认无活动测试容器后，用已验收6404c36生产scripts/smoke_once.py在全新runs/qwen-rsi-20261012/real-smoke运行一次H0起点提案；复用历史公开H0 dev证据仅作分析，无新基线。沿用1800秒诊断保护信封，非原SICA上限；实际改进仍按独立500/1000迭代、不设improve600秒合同，模型身份/能力按当前Qwen服务冻结。若有效运行源码变化才评分django__django-14752，若超时/未改则如实终止，不重采样或手工补策略。记录临时重测额外成本，不能混入新的提案结果。
+
+## 2026-10-13 原工具边界与Qwen输入核验
+
+先按固定SICA AVAILABLE_TOOLS/AVAILABLE_AGENTS恢复受支持映射：main可结构/委员会/三角色委派及read/list；archive_explorer独有archive分析，默认best/worst count3并限制原lt10；reviewer可read/list/search；coder/problem_solver可read/list/search、委员会及正常shell，problem_solver可委派coder。原ReasoningAgent仍未适配，明确列为不支持，不扩大角色工具。归档overview为ArchiveExplorer核心提示中的原分析，主角色经委派获得报告；不阻止原允许的手动文件查看。提示只列实际权限且带可委派角色原AGENT_DESCRIPTION。通过真实runtime角色身份实施检查，不能只改文案或允许模型自报更高权限。
+
+完成工具采用原动态step_<短id>_complete名称，invocation由宿主闭包等效绑定；保留旧complete+tool+可选旧invocation显式兼容但拒绝错名/过期id。不得将op=complete自动当作当前步骤或结构总名，不强制7步完成或源码编辑。升级元任务v6冻结新合同，旧运行只读。
+
+Qwen原生Ollama且服务tokenizer摘要匹配冻结资产时，启用独立输入审计：content文本token计数、保守chat framing裕量、发送前容量拒绝，不把max_output上界当实际预留来恢复旧2048；冻结tokenizer/template/算法来源并记录完整wire消息摘要。返回prompt计数若显著低于发送文本计数则拒绝返回动作，usage照常计量。服务模板为{{ .Prompt }}，无法仅据元数据重建精确OpenAI chat序列；只承诺已验证文本计数和明显截断检测，不声称字节级输入保留。其他模型仍保留provider计量，不套Qwen tokenizer。无自动裁剪/摘要/反思策略。
+
+验证：离线重放前次88160输入准确拒绝且0模型请求；模拟被截断响应不得执行；按原AST验证权限/默认数/闭包参数；Docker模拟角色越权拒绝及简化完成七步/真实归档代码继承。全套通过、上游及旧运行摘要一致后commit，再一次真实Qwen提案，记录前后身份、输入审计、源码变化和条件评分；失败不重采样。

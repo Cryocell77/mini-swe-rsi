@@ -104,13 +104,15 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
     budget=Budget(tmp_path);budget.enter('preflight')
     context = ContextBudget({'max_output_tokens':393216,'context_window':1048576}) if limit is None else ContextBudget()
     broker=Broker(tmp_path,budget,context=context);broker.model='fixture'
-    requests=[]; main_turn=0; coder_turn=0
+    requests=[]; main_turn=0; coder_turn=0; archive_turn=0
     plan=['meta_improvement_reasoning_structure' if limit==30 else 'invoke','complete','complete','committee','complete','archive_explorer','software_developer','complete','complete','general_problem_solver','complete','complete','submit']
     if limit == 500:
         plan = ['list']*35 + plan  # Prove the actual archived main agent crosses its former30 limit.
+    if limit is None:
+        plan = ['forbidden_archive'] + plan
     class Endpoint:
         def open(self,request,**kw):
-            nonlocal main_turn,coder_turn
+            nonlocal main_turn,coder_turn,archive_turn
             payload=json.loads(request.data);requests.append(payload)
             system, user = payload['messages'][0]['content'], payload['messages'][1]['content']
             assert system.startswith(tuple(d['SYSTEM_PROMPT'] for d in w.definitions()[2].values()))
@@ -131,7 +133,9 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
                 cmd="printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\nreview complete')
             elif 'You are an expert archive analyst' in task:
                 assert 'high-level overview' in task
-                cmd="printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\narchive evidence')
+                archive_turn+=1
+                cmd=(command({'op':'archive','kind':'best','iteration':0})['command'] if limit is None and archive_turn==1
+                     else "printf '%s\\n' "+shlex.quote('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\narchive evidence'))
             elif 'You are an expert software engineer' in task:
                 coder_turn+=1
                 cmd="printf editor > /home/agent/workdir/fixture.txt" if coder_turn==1 else 'echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
@@ -142,9 +146,10 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
                 if op=='submit':cmd='echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
                 else:
                     req={'op':op}
-                    if op=='complete':
+                    if op=='forbidden_archive':req={'op':'archive','kind':'best','iteration':0}
+                    elif op=='complete':
                         text='\n'.join(str(m.get('content','')) for m in payload['messages'])
-                        req.update(invocation_id=re.findall(r'reasoning_structure_invocation_[a-f0-9]+',text)[-1],tool=re.findall(r'step_[a-f0-9]+_complete',text)[-1])
+                        req = {'op':re.findall(r'step_[a-f0-9]+_complete',text)[-1], 'success':True}
                     elif op=='list':req['path']='/home/agent/workdir'
                     elif op=='committee':req.update(context='fixture evidence',proposal='fixture design')
                     elif op in ('archive_explorer','software_developer','general_problem_solver'):req={'op':'delegate','role':op,'task':'fixture task'}
@@ -172,13 +177,16 @@ def test_docker_native_workflow_roles_share_archived_model_and_broker(tmp_path, 
         assert read(tmp_path/'logs/activation.json')['wall_time_limit_seconds']==0
         assert all(read(p)['step_limit']==(1000 if read(p)['role'].endswith('software_developer') else 500) for p in roles)
         if limit is None:
-            assert usage['max_calls'] is None and usage['iterations']['main']==13
+            assert usage['max_calls'] is None and usage['iterations']['main']==14
             assert usage['iterations']['006_software_developer']==2
+            events=[json.loads(line) for line in (tmp_path/'logs/workflow_events.jsonl').read_text().splitlines()]
+            assert any(e.get('kind')=='operation_error' and 'unavailable to orchestrator' in e.get('error','') for e in events)
+            assert any(e.get('op')=='archive' and e.get('role')=='archive_explorer' for e in events)
         if limit in (30,500,None):
             assert status==0 and state['status']=='completed' and state['completed_steps']==7
             assert len(roles)==7 # four reviewers, archive, coder, general
             assert (target/'fixture.txt').read_text()=='editor'
-            assert len(requests)==(56 if limit==500 else 21)
+            assert len(requests)==(56 if limit==500 else 23 if limit is None else 21)
         else:
             assert status!=0 and state['status']=='incomplete' and state['completed_steps']==2
             assert len(requests)==6 and not (target/'fixture.txt').exists()

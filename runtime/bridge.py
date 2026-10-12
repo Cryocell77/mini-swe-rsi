@@ -34,7 +34,7 @@ def rpc(path, value, identity='main', role='orchestrator'):
 
 def classified_failure(exc, status):
     reason = status.get('terminal_reason')
-    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded','CostExceeded'):
+    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded','InputIntegrityError','CostExceeded'):
         reason = type(exc).__name__
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
@@ -56,7 +56,7 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
     text = text.replace('/home/sandbox/workdir', '/home/agent/workdir')
     text = text.replace('invoke the meta improvement reasoning structure as early as reasonably possible',
                         'invoke the meta improvement reasoning structure as early as reasonably possible')
-    text = text.replace('using the archive exploration tools available to you', 'using structured archive analysis and read/list/search operations')
+    text = text.replace('using the archive exploration tools available to you', 'using delegated archive analysis and permitted file inspection')
     text = text.replace(
         f'The agent code in this directory is the best performing in the sequence of agent iterations, and corresponds to agent iteration {best}.',
         f'The code in /home/agent/workdir is the current unassessed candidate {candidate}, copied from selected parent agent_{parent}. '
@@ -113,7 +113,7 @@ def main(entry):
         identity = 'main'
         role = 'orchestrator'
         def execute(self, action, **kwargs):
-            out = workflow.execute(action, self.readonly) if workflow else None
+            out = workflow.execute(action, self.readonly, self.role) if workflow else None
             if out is None:
                 out = rpc('/tool', action, self.identity, self.role)
             if workflow:
