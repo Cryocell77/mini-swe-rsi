@@ -66,3 +66,5 @@ Docker测试使用模拟模型，不调用 `.env` 推理服务；验证不同归
 
 
 当前新实验协议为 `mini-text-bash-v3`：总上下文32768 tokens，保留2048输出和明确聊天封装余量；固定Qwen tokenizer身份、文件摘要与计量算法，宿主估计与服务实际usage分开记录。旧协议运行只能离线报告，不可按新预算恢复。严格兼容仅在reasoning_content中返回的单个完整动作，保留原始和agent实际收到的回复供审计与回放。详见 [上游适配说明](docs/upstream_adaptations.md)。
+
+最新修复验收与真实提案结果见[第二轮审查报告](docs/context-protocol-review.md)：工程检查通过，真实30调用仍无源码变化，尚未证明RSI。
