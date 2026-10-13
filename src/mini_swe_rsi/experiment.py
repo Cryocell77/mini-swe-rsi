@@ -206,12 +206,20 @@ class Experiment:
               'code_hash': tree_hash(self.code())})
 
     async def evolve(self):
+        scope_path = self.root/'execution_scope.json'
+        scope = read(scope_path) if scope_path.exists() else {}
+        tracks = scope.get('tracks', ['recursive', 'fixed'])
+        if tracks not in (['recursive'], ['recursive', 'fixed']):
+            raise ValueError('Unsupported evolution track scope')
+        recursive_only = tracks == ['recursive']
+        append_event(self.root, {'kind':'evolution_scope', 'tracks':tracks,
+                               'held_out_deferred':recursive_only})
         if not (self.root/'baseline.json').exists():
             await self.baseline()
         self.budget.enter('search')
         with working(self.root):
             for generation in range(4):
-                for run in ((1, 2) if generation % 2 == 0 else (2, 1)):
+                for run in ((1,) if recursive_only else ((1, 2) if generation % 2 == 0 else (2, 1))):
                     self.budget.check()
                     await self.adapter.proposal(run, generation, fixed=run == 2)
                     if run == 1 and self.recursion_unreachable(generation+1):
@@ -223,7 +231,23 @@ class Experiment:
                             'reason':'Recursive mechanism threshold is unreachable within four proposals; no simplification or held-out evaluation.'})
                         return
                     await self.adapter.benchmark(Path(f'results/run_{run}'), Path(f'results/run_{run}/agent_{generation+1}'))
-            best = {str(run): self.adapter.best(Path(f'results/run_{run}')) for run in (1, 2)}
+            best = {str(run): self.adapter.best(Path(f'results/run_{run}'))
+                    for run in ((1,) if recursive_only else (1, 2))}
+        if recursive_only:
+            self.assert_model()
+            mechanism = self.mechanism()
+            write(self.root/'mechanism.json', mechanism)
+            write(self.root/'recursive_track_result.json', {
+                'complete': True, 'native':best['1'],
+                'native_hash':tree_hash(self.code(1, best['1'])),
+                'mechanism':mechanism, 'fixed_track_run':False,
+                'probes_validation_final':'deferred by user scope'})
+            write(self.root/'gates.json', {
+                'passed':False, 'status':'remaining_evaluations_deferred',
+                'mechanism':mechanism, 'task_benefit':{'status':'not_run'},
+                'improver_benefit':{'status':'not_run'},
+                'reason':'Recursive-only scope; no fixed track, probes, held-out evaluation or simplification.'})
+            return
         write(self.root/'champions.json', {'native': best['1'], 'fixed': best['2'],
                   'native_hash': tree_hash(self.code(1, best['1'])),
                   'fixed_hash': tree_hash(self.code(2, best['2']))})

@@ -412,3 +412,5 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 2026-10-13：新配置deepseek-flash官方服务重新启动完整实验，修复.env地址字段拼写。独立目录/Users/maxwell/Documents/mini-swe-rsi/runs/deepseek-full-retest-20261013-113143；前15请求无错误，尚无评分。原qfmodel异常成绩不复用；无额外总/阶段限制，保留原生合同及精简/test门槛。
 
 2026-10-13 恢复实验：保存pylint-dev__pylint-5859补丁2811字节、29次已记录请求/238043 tokens；HTTPError来自本地broker失联，任务时间重建约182.17秒，成本/末次计量不认证。独立评分1.0，未追加模型解题；清理本实验残留容器/网络。LaunchAgent com.mini-swe-rsi.deepseek-recovery-20261013托管，确认PPID1、5秒心跳；stage_status.json准确进入baseline，6/30已评分、4通过，第7题pytest-dev__pytest-7168已开始，新请求无错误。模型/Harness源码未改，不需重跑140项工程验收；恢复脚本语法、生产身份核验和真实独立评分通过。
+
+2026-10-13：用户将当前实验缩为仅递归轨道。新增显式execution_scope.json读取，仅调度run_1最多4提案并生成recursive_track_result.json；默认双轨行为不变，原SICA选择/提案/评分逻辑不改，固定轨道/探针/held-out暂缓。当前基线进程未中断，后续新evolve子进程读取新范围；fixed提案0。定向机制/恢复/门槛与新范围测试8项通过（1.94秒），验证没有fixed proposal/best查询或probe/val调用。
