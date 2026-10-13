@@ -68,6 +68,8 @@ class Experiment:
         self.data.freeze_images(self.root)
         from .core import freeze_dev_selection
         freeze_dev_selection(self.data, self.root)
+        from .core import apply_failed_search_selection
+        apply_failed_search_selection(self.data, self.root)
         self.broker = Broker(self.root, self.budget)
         self.driver = None
         try:

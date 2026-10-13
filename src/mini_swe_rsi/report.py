@@ -71,7 +71,9 @@ def build_report(root):
               'cost_usd': None, 'cost_note': 'Local endpoint has no verified price. SICA cost=0 is only a protocol placeholder.'}
     dev_count = read(root/'dev_selection.json')['count'] if (root/'dev_selection.json').exists() else 30
     result['development_tasks'] = dev_count
-    for name in ('dev_selection', 'recursive_track_result', 'configuration', 'preflight', 'patch_collection_repair', 'baseline', 'champions', 'mechanism', 'gates', 'failure', 'futility', 'image_validation', 'verification'):
+    search_count = read(root/'search_selection.json')['count'] if (root/'search_selection.json').exists() else dev_count
+    result['search_tasks'] = search_count
+    for name in ('search_selection', 'dev_selection', 'recursive_track_result', 'configuration', 'preflight', 'patch_collection_repair', 'baseline', 'champions', 'mechanism', 'gates', 'failure', 'futility', 'image_validation', 'verification'):
         p = root/f'{name}.json'
         if p.exists():
             result[name] = read(p)
@@ -196,7 +198,7 @@ def build_report(root):
                 partial.append({'iteration':int(folder.name.split('_')[1]),
                                 'coverage':sum(r.get('score') is not None for r in rows.values()),
                                 'started_tasks':len(rows),
-                                'expected':dev_count,'score_is_not_complete':True,
+                                'expected':search_count,'score_is_not_complete':True,
                                 'lineage':read(folder/'lineage.json') if (folder/'lineage.json').exists() else None})
         result.setdefault('incomplete_search', {})['recursive' if run == 1 else 'fixed'] = partial
         result['search']['recursive' if run == 1 else 'fixed'] = agents
@@ -247,7 +249,7 @@ def build_report(root):
         value = result['conclusions'][key]
         lines.append(f'{label}：{"通过" if value is True else "未通过" if value is False else "未测得／证据不足"}。')
     if any(result['search'].values()):
-        lines += ['', f'| 轨道 | 归档版本 | dev{dev_count} 成功率 | 任务 tokens | 与H0源码相同 |', '|---|---:|---:|---:|---|' ]
+        lines += ['', f'| 轨道 | 归档版本 | 搜索子集{search_count}题成功率 | 任务 tokens | 与H0源码相同 |', '|---|---:|---:|---:|---|' ]
         for arm, agents in result['search'].items():
             for agent in agents:
                 perf = agent['perf']

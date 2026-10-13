@@ -416,3 +416,5 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 2026-10-13：用户将当前实验缩为仅递归轨道。新增显式execution_scope.json读取，仅调度run_1最多4提案并生成recursive_track_result.json；默认双轨行为不变，原SICA选择/提案/评分逻辑不改，固定轨道/探针/held-out暂缓。当前基线进程未中断，后续新evolve子进程读取新范围；fixed提案0。定向机制/恢复/门槛与新范围测试8项通过（1.94秒），验证没有fixed proposal/best查询或probe/val调用。
 
 2026-10-13 dev20切换：按用户确认停止supervisor，保留前20题评分（11通过，含此前补评异常题），原tracker和第21题trace完整归档；新增有序前缀冻结与恢复校验，基线coverage/进度/报告按实际子集计数，用户暂缓范围不误报成Harness无收益。选择/范围/机制/恢复/评分/报告定向21项通过；模型/Harness/runtime/upstream未改，SICA晋升依据仍为完整选定开发子集。
+
+2026-10-13：部署基线失败子集切换。数据清单/模型/Harness策略不改；新search_selection.json经原始20题结果摘要校验，恢复时固定使用失败9题。报告分离baseline20与search9；当前第1提案继续，checkpoint待lineage后切换，未宣称已完成。定向子集/报告/递归范围/继承/恢复/门槛20项通过（0.36秒）。
