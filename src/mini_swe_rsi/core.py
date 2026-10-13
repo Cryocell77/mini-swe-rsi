@@ -98,6 +98,8 @@ class Data:
                 raise ValueError('Eligibility evidence changed or missing: ' + task_id)
 
     def ids(self, split):
+        if split == 'dev' and hasattr(self, 'dev_ids'):
+            return list(self.dev_ids)
         return list(self.manifest['splits'][split])
 
     def image(self, task_id):
@@ -121,6 +123,26 @@ class Data:
             if job.get('frozen_image') != inventory[job['task']['instance_id']]:
                 raise ValueError('Prior scoring image differs from current inventory')
         write(path, inventory)
+
+
+def freeze_dev_selection(data, root):
+    """Freeze an ordered prefix without changing the approved source manifest."""
+    root = Path(root)
+    scope = read(root/'execution_scope.json') if (root/'execution_scope.json').exists() else {}
+    frozen = root/'dev_selection.json'
+    if 'dev_count' not in scope and not frozen.exists():
+        return
+    count = scope.get('dev_count', len(data.manifest['splits']['dev']))
+    original = data.manifest['splits']['dev']
+    if type(count) is not int or not 1 <= count <= len(original):
+        raise ValueError('Invalid development prefix size')
+    selection = {'policy':'source manifest ordered prefix', 'count':count,
+                 'ids':original[:count], 'source_manifest_sha256':MANIFEST_HASH}
+    if frozen.exists() and read(frozen) != selection:
+        raise ValueError('Frozen development selection changed')
+    if not frozen.exists():
+        write(frozen, selection)
+    data.dev_ids = tuple(selection['ids'])
 
 
 class BudgetExceeded(RuntimeError):

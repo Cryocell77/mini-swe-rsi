@@ -66,6 +66,8 @@ class Experiment:
         self.budget.enter(phase)
         self.data = Data(data_path) if data_path else Data()
         self.data.freeze_images(self.root)
+        from .core import freeze_dev_selection
+        freeze_dev_selection(self.data, self.root)
         self.broker = Broker(self.root, self.budget)
         self.driver = None
         try:
@@ -201,7 +203,7 @@ class Experiment:
         if not (fixed/'benchmarks/swe_lite_dev/perf.json').exists():
             shutil.copytree(agent/'benchmarks', fixed/'benchmarks', dirs_exist_ok=True)
         self.assert_model()
-        write(self.root/'baseline.json', {'complete': True, 'coverage': 30,
+        write(self.root/'baseline.json', {'complete': True, 'coverage': len(self.data.ids('dev')),
               'perf': read(agent/'benchmarks/swe_lite_dev/perf.json'),
               'code_hash': tree_hash(self.code())})
 

@@ -91,7 +91,7 @@ class SicaAdapter:
                 record['score'], None, 'Official independent grading; private tests and references withheld.')
             (trace / 'summary.txt').write_text(summary)
             (trace / 'score.txt').write_text(str(record['score']))
-            await adapter.runner.update_benchmark_progress(exp_dir, job.benchmark.name, pid, 30)
+            await adapter.runner.update_benchmark_progress(exp_dir, job.benchmark.name, pid, len(data.ids('dev')))
             return True
 
         original_statistics = self.runner.generate_benchmark_statistics

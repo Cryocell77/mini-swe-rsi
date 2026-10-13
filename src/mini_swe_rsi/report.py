@@ -69,7 +69,9 @@ def build_report(root):
     root = Path(root).resolve()
     result = {'run': str(root), 'test_sealed': not (root/'test_seal.json').exists(),
               'cost_usd': None, 'cost_note': 'Local endpoint has no verified price. SICA cost=0 is only a protocol placeholder.'}
-    for name in ('configuration', 'preflight', 'patch_collection_repair', 'baseline', 'champions', 'mechanism', 'gates', 'failure', 'futility', 'image_validation', 'verification'):
+    dev_count = read(root/'dev_selection.json')['count'] if (root/'dev_selection.json').exists() else 30
+    result['development_tasks'] = dev_count
+    for name in ('dev_selection', 'recursive_track_result', 'configuration', 'preflight', 'patch_collection_repair', 'baseline', 'champions', 'mechanism', 'gates', 'failure', 'futility', 'image_validation', 'verification'):
         p = root/f'{name}.json'
         if p.exists():
             result[name] = read(p)
@@ -106,6 +108,8 @@ def build_report(root):
         if result.get('failure') and (stopped_at-result['budget']['started'] >= 24*3600
             or (active and stopped_at-active[1] >= PHASE_HOURS[active[0]]*3600)):
             result['stop_classification'] = 'budget_insufficient'
+        elif result.get('gates', {}).get('status') == 'remaining_evaluations_deferred':
+            result['stop_classification'] = 'user_scope_deferred'
         elif result.get('gates') and not result['gates'].get('passed'):
             gates = result['gates']
             result['stop_classification'] = ('mechanism_not_established' if not gates.get('mechanism',{}).get('passed')
@@ -192,7 +196,7 @@ def build_report(root):
                 partial.append({'iteration':int(folder.name.split('_')[1]),
                                 'coverage':sum(r.get('score') is not None for r in rows.values()),
                                 'started_tasks':len(rows),
-                                'expected':30,'score_is_not_complete':True,
+                                'expected':dev_count,'score_is_not_complete':True,
                                 'lineage':read(folder/'lineage.json') if (folder/'lineage.json').exists() else None})
         result.setdefault('incomplete_search', {})['recursive' if run == 1 else 'fixed'] = partial
         result['search']['recursive' if run == 1 else 'fixed'] = agents
@@ -231,7 +235,7 @@ def build_report(root):
         images = result['image_validation']
         lines += [f"镜像清单冻结160项；本地已核对 {images['present']} 项，缺失 {len(images['missing'])} 项。缺失镜像恢复未计入已缓存任务的吞吐预测。", '']
     if 'baseline' in result:
-        lines.append(f"H0 开发集成功率：{result['baseline']['perf']['avg_score']:.2%}（30题完整覆盖）。")
+        lines.append(f"H0 开发集成功率：{result['baseline']['perf']['avg_score']:.2%}（{result['baseline'].get('coverage', dev_count)}题完整覆盖）。")
     else:
         lines.append('基线尚未完成，不报告完整成功率。')
     for label, value in [('递归机制', result.get('mechanism',{}).get('passed')),
@@ -243,7 +247,7 @@ def build_report(root):
         value = result['conclusions'][key]
         lines.append(f'{label}：{"通过" if value is True else "未通过" if value is False else "未测得／证据不足"}。')
     if any(result['search'].values()):
-        lines += ['', '| 轨道 | 归档版本 | dev30 成功率 | 任务 tokens | 与H0源码相同 |', '|---|---:|---:|---:|---|' ]
+        lines += ['', f'| 轨道 | 归档版本 | dev{dev_count} 成功率 | 任务 tokens | 与H0源码相同 |', '|---|---:|---:|---:|---|' ]
         for arm, agents in result['search'].items():
             for agent in agents:
                 perf = agent['perf']
