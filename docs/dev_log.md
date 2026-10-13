@@ -410,3 +410,5 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 2026-10-13：用户明确要求当前配置完整实验。停止临时单题诊断（0模型调用），在runs/qwen38-full-experiment-20261013启动新基线→两轨道→条件探针/验证；stage_status.json持续记录进度。取消总/阶段墙钟限制，保留原生限制与门槛，最终test100须通过精简及回放后开启。当前仅启动，不声明结果或RSI成功。
 
 2026-10-13：新配置deepseek-flash官方服务重新启动完整实验，修复.env地址字段拼写。独立目录/Users/maxwell/Documents/mini-swe-rsi/runs/deepseek-full-retest-20261013-113143；前15请求无错误，尚无评分。原qfmodel异常成绩不复用；无额外总/阶段限制，保留原生合同及精简/test门槛。
+
+2026-10-13 恢复实验：保存pylint-dev__pylint-5859补丁2811字节、29次已记录请求/238043 tokens；HTTPError来自本地broker失联，任务时间重建约182.17秒，成本/末次计量不认证。独立评分1.0，未追加模型解题；清理本实验残留容器/网络。LaunchAgent com.mini-swe-rsi.deepseek-recovery-20261013托管，确认PPID1、5秒心跳；stage_status.json准确进入baseline，6/30已评分、4通过，第7题pytest-dev__pytest-7168已开始，新请求无错误。模型/Harness源码未改，不需重跑140项工程验收；恢复脚本语法、生产身份核验和真实独立评分通过。
