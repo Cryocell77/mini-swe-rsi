@@ -408,3 +408,5 @@ README追加当前v4预算诊断说明，旧任务协议段落标历史；独立
 2026-10-13：取消外加诊断总时限后，冻结qfmodel候选单题已评分1.0但600秒TimeExceeded；36请求/325042 tokens，订阅美元成本未知。源码冻结、95上游文件、3454历史封存文件一致，无基线或新提案；详见docs/qfmodel-single-smoke.md。
 
 2026-10-13：用户明确要求当前配置完整实验。停止临时单题诊断（0模型调用），在runs/qwen38-full-experiment-20261013启动新基线→两轨道→条件探针/验证；stage_status.json持续记录进度。取消总/阶段墙钟限制，保留原生限制与门槛，最终test100须通过精简及回放后开启。当前仅启动，不声明结果或RSI成功。
+
+2026-10-13：新配置deepseek-flash官方服务重新启动完整实验，修复.env地址字段拼写。独立目录/Users/maxwell/Documents/mini-swe-rsi/runs/deepseek-full-retest-20261013-113143；前15请求无错误，尚无评分。原qfmodel异常成绩不复用；无额外总/阶段限制，保留原生合同及精简/test门槛。
