@@ -131,10 +131,11 @@ def adapt_response(response):
     if len(set(fields.values())) != 1:
         return returned, 'unchanged: conflicting reasoning fields'
     reasoning = next(iter(fields.values()))
-    # Count markers/fences separately so malformed extra actions cannot hide
-    # outside the one complete match. Only the matched block reaches content.
+    # Plain-text mentions of the format marker are not actions. Count complete
+    # command blocks and all fences instead, so extra/malformed fenced actions
+    # still fail closed. Only the matched block reaches content.
     matches = list(re.finditer(r'```mswea_bash_command[ \t]*\n((?:(?!```).)+?)\n```', reasoning, re.DOTALL))
-    if len(matches) == 1 and reasoning.count('mswea_bash_command') == 1 and reasoning.count('```') == 2 and matches[0].group(1).strip():
+    if len(matches) == 1 and reasoning.count('```') == 2 and matches[0].group(1).strip():
         match = matches[0]
         message['content'] = match.group(0)
         for key in fields:

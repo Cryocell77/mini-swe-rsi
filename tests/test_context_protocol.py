@@ -166,3 +166,34 @@ def test_service_identity_checked_after_model_refresh(tmp_path):
         service_identity={'template_sha256':'changed'})
     with pytest.raises(RuntimeError, match='Service context configuration changed'):
         experiment.assert_model()
+
+
+@pytest.mark.parametrize('prose', [
+    'The format marker is mswea_bash_command. Mentioning mswea_bash_command is not an action.',
+    '格式是 `mswea_bash_command`，请输出一个 mswea_bash_command 命令块。',
+    '<thought>Use mswea_bash_command for a read-only operation.</thought>',
+])
+def test_plain_marker_mentions_do_not_hide_one_complete_action(prose):
+    raw = response(prose + '\n' + ACTION + '\nThe marker mswea_bash_command was used above.')
+    original = copy.deepcopy(raw)
+    returned, why = adapt_response(raw)
+    assert returned['choices'][0]['message']['content'] == ACTION
+    assert 'mswea_bash_command' in returned['choices'][0]['message']['reasoning_content']
+    assert why.startswith('promoted')
+    assert raw == original
+
+
+@pytest.mark.parametrize('reasoning', [
+    'Format mswea_bash_command.\n' + ACTION + '\n' + ACTION,
+    'Format mswea_bash_command.\n' + ACTION + '\n```mswea_bash_command\necho unfinished',
+    'Format mswea_bash_command.\n```bash\necho example\n```\n' + ACTION,
+    'Format mswea_bash_command.\n' + ACTION + '\n```',
+    'Format mswea_bash_command only; no command block.',
+])
+def test_marker_mentions_do_not_relax_fence_ambiguity_rules(reasoning):
+    raw = response(reasoning)
+    original = copy.deepcopy(raw)
+    returned, why = adapt_response(raw)
+    assert returned == original
+    assert raw == original
+    assert why.startswith('unchanged')
