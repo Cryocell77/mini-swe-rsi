@@ -26,7 +26,7 @@ def test_promote_only_action_preserves_raw_response():
 @pytest.mark.parametrize('raw', [response(ACTION + '\n' + ACTION),
     response(ACTION[:-3]), response(finish='length'), response(content='Existing'),
     response(tool_calls=[{'id': 'call'}]), response(function_call={'name': 'x'}),
-    response(refusal='No'), response('```mswea_bash_command\n \n```'), response('plain thoughts'), response('```bash\necho hi\n```')])
+    response(refusal='No'), response('```mswea_bash_command\n \n```'), response('plain thoughts')])
 def test_ambiguous_reasoning_is_never_promoted(raw):
     returned, why = adapt_response(raw)
     assert returned == raw

@@ -106,11 +106,50 @@ def normalize_messages(messages):
     return normalized
 
 
+_ACTION_TAG = re.compile(r'</?(?:tool_call|mswea_bash_command|bash_command)\b')
+_FENCED_ACTION = re.compile(
+    r'^```(?P<format>mswea_bash_command|bash)[ \t]*\r?\n'
+    r'(?P<command>(?:(?!```).)+?)\r?\n```[ \t]*(?=\r?$)',
+    re.MULTILINE | re.DOTALL)
+_XML_ACTION = re.compile(
+    r'(?P<outer><tool_call>\s*)?'
+    r'<(?P<tag>mswea_bash_command|bash_command)>[ \t]*\r?\n?'
+    r'(?P<command>.*?)</(?P=tag)>(?(outer)\s*</tool_call>)', re.DOTALL)
+
+
+def _single_text_action(text):
+    """Parse a closed set of complete envelopes, never repair missing syntax."""
+    if re.search(r'^~~~', text, re.MULTILINE):
+        raise ValueError('unsupported or mixed fence')
+    if '```' in text:
+        matches = list(_FENCED_ACTION.finditer(text))
+        if len(matches) != 1 or text.count('```') != 2:
+            raise ValueError('multiple, incomplete or unsupported fences')
+        match = matches[0]
+        kind = match['format']
+    else:
+        matches = list(_XML_ACTION.finditer(text))
+        if not matches and not _ACTION_TAG.search(text):
+            return None
+        if len(matches) != 1:
+            raise ValueError('multiple or incomplete XML actions')
+        match = matches[0]
+        kind = 'xml:' + match['tag']
+        if _ACTION_TAG.search(match['command']):
+            raise ValueError('nested XML actions')
+    outside = text[:match.start()] + text[match.end():]
+    if _ACTION_TAG.search(outside):
+        raise ValueError('mixed or incomplete action envelopes')
+    command = match['command']
+    if not command.strip():
+        raise ValueError('empty action')
+    return match, kind, '```mswea_bash_command\n' + command + '\n```'
+
+
 def adapt_response(response):
-    """Promote only an unambiguous complete action, never free-form reasoning."""
+    """Normalize one explicit text action; retain the untouched provider evidence."""
     returned = copy.deepcopy(response)
     choices = returned.get('choices')
-    reason = 'unchanged'
     if not isinstance(choices, list) or len(choices) != 1:
         return returned, 'unchanged: expected one choice'
     choice = choices[0]
@@ -119,33 +158,43 @@ def adapt_response(response):
     message = choice.get('message', {})
     if not isinstance(message, dict) or message.get('role') != 'assistant':
         return returned, 'unchanged: invalid assistant message'
-    if message.get('content') not in (None, ''):
-        return returned, 'unchanged: nonempty content'
     if choice.get('finish_reason') != 'stop':
         return returned, 'unchanged: non-stop finish'
     if any(message.get(key) for key in ('tool_calls', 'function_call', 'refusal')):
         return returned, 'unchanged: native tool or refusal'
+    content = message.get('content')
+    if content not in (None, ''):
+        if not isinstance(content, str):
+            return returned, 'unchanged: invalid content'
+        try:
+            action = _single_text_action(content)
+        except ValueError as exc:
+            # Merely returning mixed content is unsafe: mini might execute the
+            # one canonical block while ignoring a second XML/bash action.
+            message['content'] = 'Action format rejected: ' + str(exc)
+            return returned, 'rejected ambiguous content: ' + str(exc)
+        if action is None or action[1] == 'mswea_bash_command':
+            return returned, 'unchanged: nonempty content'
+        match, kind, canonical = action
+        message['content'] = content[:match.start()] + canonical + content[match.end():]
+        return returned, 'normalized single complete content action: ' + kind
     fields = {key: message[key] for key in ('reasoning_content', 'reasoning') if message.get(key) is not None}
     if not fields or any(not isinstance(value, str) for value in fields.values()):
         return returned, 'unchanged: missing or invalid reasoning'
     if len(set(fields.values())) != 1:
         return returned, 'unchanged: conflicting reasoning fields'
     reasoning = next(iter(fields.values()))
-    # Plain-text mentions of the format marker are not actions. Count complete
-    # command blocks and all fences instead, so extra/malformed fenced actions
-    # still fail closed. Only the matched block reaches content.
-    matches = list(re.finditer(r'```mswea_bash_command[ \t]*\n((?:(?!```).)+?)\n```', reasoning, re.DOTALL))
-    if len(matches) == 1 and reasoning.count('```') == 2 and matches[0].group(1).strip():
-        match = matches[0]
-        message['content'] = match.group(0)
-        for key in fields:
-            message[key] = (reasoning[:match.start()] + reasoning[match.end():]).strip()
-        reason = 'promoted single complete reasoning action; removed action from ' + ','.join(fields)
-    else:
-        reason = 'unchanged: reasoning has no unique complete action'
-
-    return returned, reason
-
+    try:
+        action = _single_text_action(reasoning)
+    except ValueError:
+        action = None
+    if action is None:
+        return returned, 'unchanged: reasoning has no unique complete action'
+    match, kind, canonical = action
+    message['content'] = canonical
+    for key in fields:
+        message[key] = (reasoning[:match.start()] + reasoning[match.end():]).strip()
+    return returned, 'promoted single complete reasoning action; removed action from ' + ','.join(fields) + '; format=' + kind
 
 class Broker:
     def __init__(self, root, budget, context=None, billing_mode=None,

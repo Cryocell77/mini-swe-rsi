@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -31,6 +32,28 @@ class InfrastructureError(RuntimeError):
 
 class GradingUnavailable(InfrastructureError):
     """A grading failure must never trigger another model-generated answer."""
+
+
+MECHANISM_BOOTSTRAP = r"""
+import hashlib, os, runpy, sys
+from pathlib import Path
+try:
+    root = Path(os.environ['RSI_SOURCE_ROOT']).resolve(strict=True)
+    entry = Path(sys.argv[1]).resolve(strict=True)
+    entry.relative_to(root)
+    assert root == Path('/source') and Path.cwd() == root
+    assert entry.is_file()
+    Path(os.environ['MSWEA_GLOBAL_CONFIG_DIR']).mkdir(parents=True, exist_ok=True)
+    expected = os.environ['RSI_MECHANISM_TEST_SHA256']
+    assert hashlib.sha256(entry.read_bytes()).hexdigest() == expected
+except Exception as exc:
+    print('RSI_MECHANISM_SETUP_ERROR ' + type(exc).__name__, flush=True)
+    sys.exit(125)
+print('RSI_MECHANISM_SETUP_OK ' + expected, flush=True)
+sys.path.insert(0, str(root))
+sys.argv = sys.argv[1:]
+runpy.run_path(str(entry), run_name='__main__')
+"""
 
 
 def validate_code(code):
@@ -534,36 +557,53 @@ class Driver:
             raise InfrastructureError('Mechanism check timeout must be 1..600 seconds')
         return {'test_path': relative, 'args': args, 'timeout_seconds': timeout}
 
-    def _run_mechanism_process(self, source, test_file, args, timeout):
-        """Run one frozen mechanism test in a new network-disabled container."""
+    def _run_mechanism_process(self, source, test_file, args, timeout, *, test_path):
+        """Preserve the declared test location in an isolated source overlay."""
         source, test_file = Path(source).resolve(), Path(test_file).resolve()
-        container = self.client.containers.run(self.image.id,
-            ['python', '/mechanism/test.py', *args], detach=True,
-            volumes={str(source): {'bind': '/source', 'mode': 'ro'},
-                     str(test_file): {'bind': '/mechanism/test.py', 'mode': 'ro'}},
-            network_disabled=True, read_only=True, tmpfs={'/tmp': 'size=32m'},
-            working_dir='/source', environment={'PYTHONPATH': '/source',
-                'DO_NOT_TRACK': '1', 'MSWEA_CONFIG_ROOT': '/tmp/mini-config'},
-            cap_drop=['ALL'], security_opt=['no-new-privileges'], mem_limit='512m',
-            nano_cpus=1000000000, pids_limit=64)
-        self.running.append(container)
-        try:
+        relative = Path(self._mechanism_plan({'test_path': test_path})['test_path'])
+        test_bytes = test_file.read_bytes()
+        test_hash = hashlib.sha256(test_bytes).hexdigest()
+        # The parent may not have tests/ at all. Never create mountpoints or
+        # overwrite tests in an archived source; only the disposable overlay.
+        with tempfile.TemporaryDirectory(prefix='mini-rsi-mechanism-') as temporary:
+            overlay = Path(temporary)/'source'
+            shutil.copytree(source, overlay, ignore=shutil.ignore_patterns('__pycache__'))
+            entry = overlay/relative
+            if entry.is_dir():
+                raise InfrastructureError('Mechanism entry collides with a directory')
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_bytes(test_bytes)
+            container = self.client.containers.run(self.image.id,
+                ['python', '-c', MECHANISM_BOOTSTRAP, '/source/' + relative.as_posix(), *args], detach=True,
+                volumes={str(overlay): {'bind': '/source', 'mode': 'ro'}},
+                network_disabled=True, read_only=True, tmpfs={'/tmp': 'size=32m'},
+                working_dir='/source', environment={'PYTHONPATH': '/source',
+                    'RSI_SOURCE_ROOT':'/source', 'RSI_MECHANISM_TEST_SHA256':test_hash,
+                    'PYTHONDONTWRITEBYTECODE':'1', 'DO_NOT_TRACK': '1',
+                    'MSWEA_GLOBAL_CONFIG_DIR': '/tmp/mini-config', 'HOME':'/tmp'},
+                cap_drop=['ALL'], security_opt=['no-new-privileges'], mem_limit='512m',
+                nano_cpus=1000000000, pids_limit=64)
+            self.running.append(container)
             try:
-                status = container.wait(timeout=timeout).get('StatusCode', 1)
-            except requests.exceptions.ReadTimeout:
                 try:
-                    container.kill()
-                except docker.errors.APIError:
+                    status = container.wait(timeout=timeout).get('StatusCode')
+                except requests.exceptions.ReadTimeout:
+                    try:
+                        container.kill()
+                    except docker.errors.APIError:
+                        pass
+                    raise InfrastructureError('Mechanism test process timed out; no parent failure conclusion')
+                output = container.logs().decode(errors='replace')
+                if (type(status) is not int or status in (125, 137)
+                        or 'RSI_MECHANISM_SETUP_OK ' + test_hash not in output.splitlines()):
+                    raise InfrastructureError('Mechanism execution setup invalid; no parent failure conclusion')
+                return status, output
+            finally:
+                try:
+                    container.remove(force=True)
+                except docker.errors.NotFound:
                     pass
-                raise InfrastructureError('Mechanism test process timed out; no parent failure conclusion')
-            output = container.logs().decode(errors='replace')
-            return int(status), output
-        finally:
-            try:
-                container.remove(force=True)
-            except docker.errors.NotFound:
-                pass
-            self.running.remove(container)
+                self.running.remove(container)
 
     def mechanism_check(self, parent, candidate, plan, output, *, job_id=None,
                         check_revision='1'):
@@ -591,12 +631,14 @@ class Driver:
         if not frozen_test.exists():
             frozen_test.write_bytes(test_bytes)
         test_hash = hashlib.sha256(test_bytes).hexdigest()
-        before = {'parent': execution_hash(parent), 'candidate': execution_hash(candidate)}
+        before = {'parent': tree_hash(parent), 'candidate': tree_hash(candidate)}
         parent_status, parent_output = self._run_mechanism_process(
-            parent, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'])
+            parent, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'],
+            test_path=frozen_plan['test_path'])
         candidate_status, candidate_output = self._run_mechanism_process(
-            candidate, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'])
-        after = {'parent': execution_hash(parent), 'candidate': execution_hash(candidate)}
+            candidate, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'],
+            test_path=frozen_plan['test_path'])
+        after = {'parent': tree_hash(parent), 'candidate': tree_hash(candidate)}
         if before != after:
             raise InfrastructureError('Harness changed during mechanism check')
         logs = {}
@@ -609,6 +651,8 @@ class Driver:
                           'output_sha256': hashlib.sha256(text.encode()).hexdigest()}
         return {'test_path': frozen_plan['test_path'], 'test_sha256': test_hash,
                 'parent': logs['parent'], 'candidate': logs['candidate'],
+                'execution_contract': {'version':'relative-source-overlay-v1', 'source_root':'/source',
+                                       'test_entry':'/source/' + frozen_plan['test_path'], 'setup_valid':True},
                 'same_test': True, 'parent_failed': parent_status != 0,
                 'candidate_passed': candidate_status == 0}
 
