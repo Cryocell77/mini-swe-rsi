@@ -534,7 +534,7 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
         for event in improve_launches:
             mounts = {mount["destination"]: mount["read_write"] for mount in event["mounts"]}
             assert mounts["/home/agent/agent_code"] is False
-            assert mounts["/home/agent/workdir"] is True
+            assert mounts["/home/agent/workdir"] is False
         benchmark_launches = [event for event in events
                               if event.get("kind") == "agent_launch"
                               and event.get("command") == "benchmark"]

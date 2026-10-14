@@ -212,6 +212,8 @@ class Broker:
                         out = broker.status(token)
                     elif self.path == '/tool':
                         out = broker.tool(token, payload)
+                    elif self.path == '/stage_boundary':
+                        out = broker.stage_boundary(token)
                     elif self.path == '/candidate_check':
                         out = broker.candidate_check(token, payload,
                                                      self.headers.get('X-RSI-Agent','main'),
@@ -701,7 +703,7 @@ class Broker:
                 self._state_condition.wait()
             data = self.sessions.pop(token)
             return {k: (None if k == 'deadline' and not math.isfinite(v) else v)
-                    for k, v in data.items() if k != 'solver'}
+                    for k, v in data.items() if k not in ('solver', 'stage_tools')}
 
     def status(self, token):
         # Readable even after expiration; never disclose session credentials or container identity.
@@ -1015,6 +1017,13 @@ class Broker:
                     self.events.append(event)
                     append_event(self.root,event)
 
+    def stage_boundary(self, token):
+        with self.request_lock:
+            tools = self.sessions[token].get('stage_tools')
+            if tools is not None:
+                tools.close()
+            return {'status':'closed'}
+
     def tool(self, token, action):
         with self.request_lock:
             try:
@@ -1041,6 +1050,8 @@ class Broker:
         seconds = max(.1, min(duration, limits['tool_timeout_seconds'], s['deadline']-time.time(), self.budget.remaining()))
         args = ['docker', 'exec', '-w', s['cwd'], s['solver'], 'timeout', '-k', '2', str(seconds),
                 'bash', '-lc', command]
+        if s.get('stage_tools') is not None:
+            args = s['stage_tools'].command(command, seconds)
         with tempfile.TemporaryFile() as output:
             try:
                 p = subprocess.run(args, stdout=output, stderr=subprocess.STDOUT, timeout=seconds+5)

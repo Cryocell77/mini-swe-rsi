@@ -172,7 +172,7 @@ class OnlineLoop:
         files = [ROOT/'runtime/bridge.py', ROOT/'runtime/workflow.py',
                  ROOT/'runtime/relay.py', ROOT/'vendor/sica/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
-                  ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py','recovery.py')]
+                  ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py','recovery.py','stage_tools.py')]
         files += [ROOT/'upstream.lock.json']
         files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
         return {'improvement': improvement_contract(),

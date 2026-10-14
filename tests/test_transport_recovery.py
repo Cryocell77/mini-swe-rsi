@@ -142,6 +142,11 @@ def test_online_resume_restores_live_state_and_continues_counter(tmp_path):
     assert resumed.dispatch({'op': 'state'})['index'] == 2
     with pytest.raises(ValueError, match='Structure already active'):
         resumed.dispatch({'op': 'invoke'})
+    with pytest.raises(ValueError, match='only at step 4'):
+        resumed.call_role('software_developer', 'continue implementation')
+    assert resumed.counter == 18
+    resumed.dispatch({'op':resumed.current()['completion_tool'],
+                      'check_plan':{'criterion':'current_task_failure_fixed'}})
     resumed.call_role('software_developer', 'continue implementation')
     assert resumed.counter == 19
 
@@ -274,6 +279,11 @@ def test_committee_cache_rehashes_real_workdir_after_source_change(tmp_path):
     request = {'op': 'committee', 'context': 'context', 'proposal': 'proposal'}
     flow.dispatch(request)
     assert len(calls) == 4
+    flow.dispatch({'op':'invoke'})
+    flow.active['index']=3
+    flow.completed_steps=3
+    flow.status='improving'
+    flow.save()
     source.write_text('VALUE = 2\n')
     flow.dispatch(request)
     assert len(calls) == 8

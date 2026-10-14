@@ -222,6 +222,11 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
                  'criterion="mechanism_parent_failed_candidate_passed" together with '
                  'mechanism_plan={"test_path":"tests/mechanism_check.py","args":[],"timeout_seconds":60}. '
                  'The test path is declared before implementation; create the actual meaningful test in step 4. '
+                 'ONLY step 4 may modify Harness source, configuration or tests. Steps 1-3 are read-only. '
+                 'Do not delegate software_developer before completing step 3. '
+                 'Step 5 uses a read-only candidate in an isolated tool sandbox; temporary outputs go in /tmp. '
+                 'Steps 6-7 may edit only description.txt and agent_change_log.md. '
+                 'A failed check rejects this candidate; never repair code in step 5 or later. '
                  'At step 5 call candidate_check with this exact host identity: '
                  + json.dumps({'op': 'candidate_check', **check_identity}, ensure_ascii=False)
                  + '. The host uses the frozen step-3 plan. Do not change runtime source after the check; '
@@ -462,6 +467,7 @@ def main(entry):
                        'main', 'orchestrator')
         workflow = workflow_module.Workflow(logs, delegate, identities=identities,
                                             online=args.online, feedback=feedback_data,
+                                            stage_boundary=(lambda: rpc('/stage_boundary', {})) if args.online else None,
                                             candidate_check=candidate_check if args.online else None,
                                             resume_state=resume_authorization['state'] if resume_authorization else None,
                                             resume_committee_cache=(resume_authorization['committee_cache_seed']

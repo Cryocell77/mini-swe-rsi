@@ -243,7 +243,8 @@ class Driver:
                 if resume_checkpoint is None and tree_hash(target) != selected_hash:
                     raise RuntimeError('Online candidate does not start from the active parent version')
         if target:
-            mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir', 'mode': 'rw'}
+            mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir',
+                'mode': 'ro' if task_identity and task_identity.get('online') else 'rw'}
         if prompt:
             mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
         if execution_budget is None:
@@ -264,6 +265,10 @@ class Driver:
         if command_args[0] == 'improve':
             self.broker.sessions[token]['solver'] = c.id
             self.broker.sessions[token]['cwd'] = '/home/agent/workdir'
+            if task_identity and task_identity.get('online'):
+                from .stage_tools import StageTools
+                self.broker.sessions[token]['stage_tools'] = StageTools(
+                    self, logs, target, view if archive is not None else None)
         append_event(self.root, dict(kind='agent_launch', code=str(Path(code).resolve()),
                      code_hash=tree_hash(code), behavioral_hash=tree_hash(code, True),
                      module=module, image_id=self.image.id, container_id=c.id,
@@ -317,6 +322,9 @@ class Driver:
                 raise RuntimeError('Mounted source changed during execution')
             return result['StatusCode'], output
         finally:
+            stage_tools = self.broker.sessions[token].get('stage_tools')
+            if stage_tools is not None:
+                stage_tools.close()
             if timer is not None:
                 timer.cancel()
             try:

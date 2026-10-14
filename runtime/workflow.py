@@ -239,10 +239,11 @@ def identity_context(identities, active_stage):
 class Workflow:
     def __init__(self, logs, delegate, source=SOURCE, identities=None, online=False,
                  feedback=None, candidate_check=None, resume_state=None,
-                 resume_committee_cache=None):
+                 resume_committee_cache=None, stage_boundary=None):
         self.logs = Path(logs)
         self.logs.mkdir(parents=True, exist_ok=True)
         self.delegate = delegate
+        self.stage_boundary = stage_boundary
         self.identities = identities or {}
         self.online = bool(online)
         self.feedback = feedback or {}
@@ -275,6 +276,7 @@ class Workflow:
             if not self.feedback:
                 raise ValueError('Online workflow requires a public task feedback package')
             self._write_feedback_index()
+        self.assert_stage_source()
         self.save()
 
     @staticmethod
@@ -430,10 +432,52 @@ class Workflow:
             description += f"\nThe step {identifier} has failed if: {step['failed_description']}. If you detect this failure mode, then invoke this tool immediately."
         return {**a, **step, 'completion_tool': identifier+'_complete', 'completion_description':description}
 
+    def check_stage_role(self, role):
+        if not self.online:
+            return
+        index = self.active['index'] if self.active else None
+        if role == 'software_developer' and (index != 3 or self.status != 'improving'):
+            raise ValueError('software_developer is available only at step 4; finish proposal review first')
+        if role == 'general_problem_solver' and (index not in (3, 4, 5, 6) or self.status != 'improving'):
+            raise ValueError('general_problem_solver is available only at steps 4-7')
+
+    def stage_source_hash(self):
+        root = self.identities.get('workdir')
+        if not root or not Path(root).is_dir():
+            return None
+        digest = hashlib.sha256()
+        for item in sorted(Path(root).rglob('*')):
+            if item.is_symlink() or not (item.is_file() or item.is_dir()):
+                raise ValueError('Candidate contains a symlink or special file')
+            if not item.is_file() or '__pycache__' in item.parts:
+                continue
+            relative = item.relative_to(root)
+            if str(relative) in ('description.txt', 'agent_change_log.md'):
+                continue
+            digest.update(str(relative).encode() + b'\0' + item.read_bytes())
+        return digest.hexdigest()
+
+    def assert_stage_source(self, freeze=False):
+        if not self.online:
+            return
+        index = self.active['index'] if self.active else None
+        source_hash = self.stage_source_hash()
+        if source_hash is None:
+            return
+        path = self.logs / 'stage_source_guard.json'
+        if not path.exists() or freeze:
+            temporary = path.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'source_sha256':source_hash}))
+            temporary.replace(path)
+        elif index != 3 and json.loads(path.read_text())['source_sha256'] != source_hash:
+            raise ValueError('Harness source changed outside step 4; candidate cannot advance')
+
     def call_role(self, role, task, specialisation='', context=''):
         mapping = {'archive_explorer':'archive_explorer','software_developer':'coder','general_problem_solver':'problem_solver','reviewer':'review_committee_member'}
         if role not in mapping:
             raise ValueError('Unknown role')
+        self.check_stage_role(role)
+        self.assert_stage_source()
         self.counter += 1
         identity = f'{self.counter:03d}_{role}'
         call_state = self.current()
@@ -473,6 +517,7 @@ class Workflow:
             raise
 
     def dispatch(self, request, role='orchestrator'):
+        self.assert_stage_source()
         requested_op = request['op']
         op = self.aliases.get(requested_op, requested_op)
         current_completion = self.current().get('completion_tool')
@@ -513,6 +558,8 @@ class Workflow:
             if type(success) is not bool:
                 raise ValueError('success must be boolean')
             previous = self.current()
+            if self.online and self.stage_boundary is not None:
+                self.stage_boundary()
             diagnostic_evidence = None
             if self.online and success and previous['index'] in (0, 1):
                 diagnostic_evidence = self._require_diagnostic_role_evidence(previous)
@@ -538,6 +585,8 @@ class Workflow:
                     'identity': diagnostic_evidence['identity'],
                     'role': diagnostic_evidence['role'],
                     'step_index': previous['index']}
+            if self.online and success and previous['index'] == 3:
+                self.assert_stage_source(freeze=True)
             if success:
                 self.completed_steps += 1
             if not success or self.active['index'] == len(self.steps)-1:
@@ -800,6 +849,9 @@ class Workflow:
         return plan
 
     def finish(self, result):
+        if self.online and self.stage_boundary is not None:
+            self.stage_boundary()
+        self.assert_stage_source()
         if self.status not in ('completed','failed','skipped_no_actionable_improvement','diagnosis_failed'):
             self.status = 'incomplete'
         self.event(kind='task_exit', exit_status=result.get('exit_status'), status=self.status, completed_steps=self.completed_steps)
@@ -896,6 +948,9 @@ class Workflow:
                 if len(parts) == 3 and parts[0] == 'printf' and parts[1] == '%s\\n' and parts[2].startswith('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n'):
                     return {'output':parts[2]+'\n','returncode':0}
                 raise ValueError('Role permits only structured workflow operations or exact submission')
+            if self.online and (not self.active or self.active['index'] not in (3, 4, 5, 6)):
+                raise ValueError('Shell is unavailable outside steps 4-7; only step 4 permits source edits')
+            self.assert_stage_source()
             return None
         except WorkflowTransportError:
             # A provider request failure is terminal for this model process;
