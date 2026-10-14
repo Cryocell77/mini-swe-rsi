@@ -51,6 +51,26 @@ def tree_hash(path, behavioral=False):
     return h.hexdigest()
 
 
+def execution_hash(path):
+    """Hash the selected mini Harness runtime, including package resources."""
+    h = hashlib.sha256()
+    path = Path(path)
+    excluded_root = {'README.md', 'LICENSE.mini', 'description.txt', 'agent_change_log.md'}
+    for p in sorted(path.rglob('*')):
+        if not p.is_file() or p.is_symlink() or '__pycache__' in p.parts:
+            continue
+        relative = p.relative_to(path)
+        if relative.parts and relative.parts[0] != 'minisweagent' and p.name not in ('__init__.py', '__main__.py'):
+            continue
+        # These names are documentation files only at the archive root.  A
+        # package resource with the same basename can be loaded at runtime and
+        # must remain part of the immutable execution identity.
+        if len(relative.parts) == 1 and p.name in excluded_root:
+            continue
+        h.update(str(relative).encode() + b'\0' + p.read_bytes())
+    return h.hexdigest()
+
+
 def command(args, timeout=60, **kwargs):
     return subprocess.run([str(a) for a in args], capture_output=True, text=True,
                           timeout=timeout, check=True, **kwargs).stdout

@@ -15,6 +15,8 @@ SOURCE = Path(__file__).resolve().parents[1] / 'vendor/sica_workflow'
 if not SOURCE.exists():
     SOURCE = Path('/workflow_sources')
 
+FINAL_OUTPUT_SENTINEL = 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
+
 
 def definitions(source=SOURCE):
     tree = ast.parse((source/'meta_improvement.py').read_text())
@@ -49,19 +51,24 @@ def tool_aliases(source=SOURCE):
 
 
 def instructions(role="orchestrator", calls=500):
-    text = '''SICA callable transport: emit one normal mini bash action whose entire command is
-sica-workflow '<JSON object>'
+    text = '''SICA callable transport: for structured operations, emit one normal mini bash action whose entire command is
+sica-workflow {"op":"..."}
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
+{"op":"submit","report":"<full non-empty report>"},
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
-As the orchestrator, use only structured workflow operations, inspection, and final submission; arbitrary bash is unavailable. Invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and remain subject to the host global/stage deadline.
+Use sica-workflow only for structured operations. For final submission, prefer the structured submit operation with the complete non-empty report text; the host adds the mini completion sentinel. Do not wrap printf or another shell command inside sica-workflow. Arbitrary bash is unavailable to restricted roles. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and remain subject to the host global/stage deadline.
 Read-only inspection operations: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":5} maps to original ArchiveAnalyzer.\n {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
 Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
-Compatibility: original file views/archive analysis use these public read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to mini submission. Return the FULL report with this command: printf '%s\\n' 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n<full report here>' (replace the placeholder, preserve the newline). Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
+Compatibility: original file views/archive analysis use these public read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The legacy printf submission remains accepted for compatibility, but do not put printf inside sica-workflow. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
     if role != 'orchestrator':
         start = text.index('Operations:')
         stop = text.index('Read-only inspection operations:')
-        capabilities = 'This delegated role cannot invoke, inspect, or complete the parent reasoning structure. Each role invocation has its independent SICA iteration allowance (software_developer 1000; other roles 500), up to five provider requests per completion. Commands have a 600-second tool safety timeout; output and context capacities come from the frozen model declaration. Global/stage time remains shared. '
+        capabilities = ('This delegated role cannot invoke, inspect, or complete the parent reasoning structure. '
+                        'It may finish its own run with {"op":"submit","report":"<full non-empty report>"}; '
+                        'Each role invocation has its independent SICA iteration allowance (software_developer 1000; other roles 500), '
+                        'up to five provider requests per completion. Commands have a 600-second tool safety timeout; output and context '
+                        'capacities come from the frozen model declaration. Global/stage time remains shared. ')
         if role in ('software_developer','general_problem_solver'):
             capabilities += 'Editing and local checks use normal mini bash. Committee is callable as {"op":"committee","context":"...","proposal":"..."}. '
         text = text[:start] + capabilities + '\n' + text[stop:]
@@ -144,19 +151,22 @@ def role_templates(config, role, calls=500):
     adapted['agent']['system_template'] = (definitions()[2][ROLE_MAP[role]]['SYSTEM_PROMPT']
         + '\n' + definitions()[2][ROLE_MAP[role]]['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role, calls))
     adapted['agent']['instance_template'] = '{{task}}\nShared session at role start: {{session_status}}'
-    example = "sica-workflow '{\"op\":\"read\",\"path\":\"/home/agent/workdir/README.md\",\"start_line\":1,\"end_line\":40}'"
+    example = 'sica-workflow {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":40}'
+    submission_example = 'sica-workflow {"op":"submit","report":"<full non-empty report>"}'
     operation_error_guidance = ('For structured-operation errors, use this valid inspection syntax: '
         if role in ('software_developer','general_problem_solver') else 'Use a supported inspection operation or exact final submission. Valid inspection syntax: ')
     adapted['model']['observation_template'] = ("<returncode>{{output.returncode}}</returncode>\n"
         "<exception>{{output.exception_info}}</exception>\n<output>{{output.output}}</output>\n"
         "{% if output.returncode != 0 %}" + operation_error_guidance + example
         + " Only /home/agent/workdir and /home/agent/archive are inspection roots. "
-          "Use one JSON argument; do not append shell pipes or redirects.{% endif %}\n"
+          "Use one JSON argument; do not append shell pipes or redirects. For final submission use " + submission_example + ".{% endif %}\n"
         "Shared session: {{output.session_status | default({})}}")
     adapted['model']['format_error_template'] = ("Format error: {{error | default('incomplete action')}}. "
         "Return exactly one complete mswea_bash_command block, with a THOUGHT before it. "
         "Use one structured command, for example:\n```mswea_bash_command\n" + example + "\n```\n"
-        "Do not append shell pipes or redirects to structured commands. For final submission use the exact report command in your system instructions.")
+        "Do not append shell pipes or redirects to structured commands. For final submission use this structured command: "
+        'sica-workflow {"op":"submit","report":"<full non-empty report>"}. '
+        "Do not wrap printf inside sica-workflow.")
     return adapted
 
 
@@ -181,25 +191,72 @@ def identity_context(identities, active_stage):
 
 
 class Workflow:
-    def __init__(self, logs, delegate, source=SOURCE, identities=None):
+    def __init__(self, logs, delegate, source=SOURCE, identities=None, online=False,
+                 feedback=None, candidate_check=None):
         self.logs = Path(logs)
         self.logs.mkdir(parents=True, exist_ok=True)
         self.delegate = delegate
         self.identities = identities or {}
+        self.online = bool(online)
+        self.feedback = feedback or {}
+        self.candidate_check = candidate_check
+        self.candidate_check_result = None
         self.steps, self.specs, self.roles = definitions(source)
         self.aliases = tool_aliases(source)
         self.active = None
         self.status = 'not_invoked'
         self.completed_steps = 0
+        self.skipped_steps = []
+        self.diagnosis = None
+        self.diagnostic_reports = {}
+        self.diagnostic_role_evidence = {}
+        self.check_plan = None
         self.counter = 0
         # A fresh launch never resumes an interrupted model conversation or invents completions.
         if (self.logs/'workflow_state.json').exists():
             raise ValueError('Refusing to overwrite existing workflow state; interrupted execution is not resumable')
+        if self.online:
+            if not self.feedback:
+                raise ValueError('Online workflow requires a public task feedback package')
+            self._write_feedback_index()
         self.save()
+
+    def _write_feedback_index(self):
+        """Persist the public facts supplied to diagnosis without private grader data."""
+        allowed = ('task_id', 'task_index', 'round_id', 'version', 'executor',
+                   'proposer', 'parent_version', 'task_statement', 'model',
+                   'exit_status', 'score', 'passed', 'tokens_used', 'wall_time',
+                   'evidence_refs', 'summary', 'reports', 'full_source_hash',
+                   'execution_hash', 'check_identity', 'check_plan', 'public')
+        public = {key:self.feedback[key] for key in allowed if key in self.feedback}
+        public.setdefault('evidence_refs', [])
+        if not isinstance(public['evidence_refs'], list):
+            raise ValueError('feedback evidence_refs must be a list')
+        # ``record`` is a host-produced public score/resource summary.  Keep
+        # only stable fields; grader internals and private evidence remain
+        # outside the model-visible package.
+        record = self.feedback.get('record')
+        if isinstance(record, dict):
+            public['record'] = {key:record[key] for key in (
+                'problem_id', 'score', 'passed', 'tokens_used',
+                'num_cached_tokens', 'wall_time', 'timed_out',
+                'cost_threshold_exceeded', 'token_accounting_complete') if key in record}
+        self.feedback = public
+        path = self.logs / 'public_feedback.json'
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(public, ensure_ascii=False, sort_keys=True))
+        temporary.replace(path)
 
     def save(self):
         temporary = self.logs/'workflow_state.json.tmp'
-        temporary.write_text(json.dumps({'active':self.active,'role_calls':self.counter,'status':self.status,'completed_steps':self.completed_steps}))
+        temporary.write_text(json.dumps({'active':self.active,'role_calls':self.counter,'status':self.status,
+                                         'completed_steps':self.completed_steps,
+                                         'skipped_steps':self.skipped_steps,
+                                         'diagnosis':self.diagnosis,
+                                         'diagnostic_reports':self.diagnostic_reports,
+                                         'diagnostic_role_evidence':self.diagnostic_role_evidence,
+                                         'check_plan':self.check_plan,
+                                         'candidate_check':self.candidate_check_result}, ensure_ascii=False))
         temporary.replace(self.logs/'workflow_state.json')
 
     def event(self, **event):
@@ -226,18 +283,35 @@ class Workflow:
             raise ValueError('Unknown role')
         self.counter += 1
         identity = f'{self.counter:03d}_{role}'
+        call_state = self.current()
+        call_index = call_state.get('index') if self.active else None
+        call_step = call_index + 1 if isinstance(call_index, int) else None
         self.event(kind='role_start', role=role, identity=identity)
         try:
             definition = self.roles[mapping[role]]
             values = {'analysis_focus':task, 'programming_instructions':task, 'problem_statement':task,
                       'specialisation':specialisation, 'context':context, 'proposal':task}
             if role == 'archive_explorer':
-                values['analysis'] = archive_overview()
+                values['analysis'] = self.online_overview() if self.online else archive_overview()
             prompt = core_prompt(mapping[role], values) + identity_context(self.identities, self.current())
             result = self.delegate(identity, prompt, role in ('archive_explorer','reviewer'))
-            self.event(kind='role_end', identity=identity, result=result)
+            self.event(kind='role_end', identity=identity, role=role,
+                       step_index=call_index, result=result)
             if result.get('exit_status') != 'Submitted':
                 raise ValueError(f'Role {identity} failed: {result.get("exit_status")}')
+            if self.online and call_index in (0, 1) and role == 'archive_explorer':
+                submission = result.get('submission')
+                if not isinstance(submission, str) or not submission.strip():
+                    raise ValueError(f'Online diagnostic role {identity} returned an empty submission')
+                self.diagnostic_role_evidence[str(call_index + 1)] = {
+                    'identity': identity,
+                    'role': role,
+                    'step': call_step,
+                    'index': call_index,
+                    'invocation_id': self.current()['invocation_id'],
+                    'submission_nonempty': True,
+                }
+                self.save()
             return result.get('submission','')
         except Exception as exc:
             self.event(kind='role_error', identity=identity, error=str(exc))
@@ -253,9 +327,18 @@ class Workflow:
             op = 'complete'
             request = {**request, 'tool':current_completion}
         caps = role_capabilities(role)
+        if self.online and role == 'orchestrator':
+            caps = {**caps, 'operations': set(caps['operations']) | {'diagnosis_decision', 'decision', 'candidate_check'}}
+        if self.online and op in ('diagnosis_decision', 'decision', 'candidate_check') and role != 'orchestrator':
+            raise ValueError(f'{op} is available only to an online coordinator')
         self.event(kind='operation_request', requested_op=requested_op, op=op, role=role)
         if op not in caps['operations']:
             raise ValueError(f'Operation {requested_op} is unavailable to {role}; permitted: {sorted(caps["operations"])}')
+        if self.online and self.status == 'diagnosis_pending' and op in ('committee', 'delegate'):
+            raise ValueError('Online diagnosis decision is required before committee or implementation roles')
+        if self.online and self.status == 'active' and self.active and self.active['index'] < 2:
+            if op == 'committee' or (op == 'delegate' and request.get('role') != 'archive_explorer'):
+                raise ValueError('Online steps 1 and 2 permit diagnosis-only roles')
         if op == 'invoke':
             if self.active:
                 raise ValueError('Structure already active')
@@ -269,10 +352,37 @@ class Workflow:
         if op == 'complete':
             if not self.active or request.get('invocation_id', self.active['invocation_id']) != self.active['invocation_id'] or request.get('tool') != self.current()['completion_tool']:
                 raise ValueError('Only the active invocation/current completion tool is available: ' + str(current_completion))
+            if self.online and self.active['index'] == 2 and self.completed_steps == 2 and self.status == 'diagnosis_pending':
+                raise ValueError('Online diagnosis decision is required before step 3')
             success = request.get('success', True)
             if type(success) is not bool:
                 raise ValueError('success must be boolean')
             previous = self.current()
+            diagnostic_evidence = None
+            if self.online and success and previous['index'] in (0, 1):
+                diagnostic_evidence = self._require_diagnostic_role_evidence(previous)
+            if self.online and success and previous['index'] == 2:
+                self.check_plan = self._freeze_check_plan(request.get('check_plan'))
+                self.event(kind='check_plan_frozen', check_plan=self.check_plan)
+            if (self.online and success and previous['index'] == 4
+                    and self.candidate_check_result is None):
+                raise ValueError('Online step 5 requires a completed host candidate_check')
+            if self.online and success and previous['index'] in (0, 1):
+                report = request.get('report')
+                refs = request.get('evidence_refs', [])
+                if not isinstance(report, str) or not report.strip() or not isinstance(refs, list) or not refs:
+                    self.status, self.active = 'diagnosis_failed', None
+                    self.event(kind='diagnosis_failed', reason='step report/evidence_refs missing',
+                               step=previous['index'] + 1)
+                    raise ValueError('Online diagnostic steps require a report and evidence_refs')
+                self.validate_evidence_refs(refs)
+                self.diagnostic_reports[str(previous['index'] + 1)] = {
+                    'report': report, 'evidence_refs': refs,
+                    # Bind the persisted report to the host-generated role
+                    # identity; never copy a model-supplied identity field.
+                    'identity': diagnostic_evidence['identity'],
+                    'role': diagnostic_evidence['role'],
+                    'step_index': previous['index']}
             if success:
                 self.completed_steps += 1
             if not success or self.active['index'] == len(self.steps)-1:
@@ -281,9 +391,93 @@ class Workflow:
                 output = 'Reasoning structure complete. Please proceed to complete the rest of the task as appropriate.' if success else f'Reasoning structure exited due to error in step {previous["step_ids"][previous["index"]]}. Please proceed to complete the rest of the task as appropriate.'
             else:
                 self.active['index'] += 1
+                if self.online and self.completed_steps == 2:
+                    self.status = 'diagnosis_pending'
                 output = self.current()
             self.event(kind='complete', previous=previous, declared_success=success, output=output)
             return output
+        if op in ('diagnosis_decision', 'decision'):
+            if not self.online or role != 'orchestrator':
+                raise ValueError('diagnosis_decision is available only to an online coordinator')
+            if not self.active or self.active['index'] != 2 or self.completed_steps != 2 or self.status != 'diagnosis_pending':
+                raise ValueError('diagnosis_decision is available only after successful steps 1 and 2')
+            decision = request.get('decision')
+            if decision not in ('skip', 'improve'):
+                raise ValueError('decision must be skip or improve')
+            reason = request.get('reason')
+            refs = request.get('evidence_refs', [])
+            failures = request.get('failure_modes', [])
+            mechanisms = request.get('effective_mechanisms', [])
+            opportunities = request.get('improvement_opportunities', [])
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError('diagnosis decision requires a reason')
+            if not isinstance(refs, list) or not all(isinstance(item, str) and item for item in refs):
+                raise ValueError('evidence_refs must be a list of non-empty strings')
+            if not isinstance(failures, list) or not isinstance(mechanisms, list) or not isinstance(opportunities, list):
+                raise ValueError('diagnosis fields must be lists')
+            valid_refs = set(self.feedback.get('evidence_refs', []))
+            if not refs or not valid_refs or not set(refs).issubset(valid_refs):
+                raise ValueError('diagnosis evidence_refs must refer to public feedback')
+            self.validate_evidence_refs(refs)
+            if decision == 'skip' and opportunities:
+                raise ValueError('A normal skip must declare no actionable improvement opportunities')
+            if decision == 'improve' and not opportunities:
+                raise ValueError('An improvement decision requires an actionable opportunity')
+            diagnosis = {'task_id':self.feedback.get('task_id'), 'round_id':self.feedback.get('round_id'),
+                         'executor':self.identities.get('version', self.identities.get('executor')),
+                         'proposer':self.identities.get('version', self.identities.get('proposer')),
+                         'parent':self.identities.get('version', self.identities.get('parent')),
+                         'reports':self.diagnostic_reports, 'failure_modes':failures,
+                         'effective_mechanisms':mechanisms, 'improvement_opportunities':opportunities,
+                         'decision':decision, 'reason':reason, 'evidence_refs':refs}
+            diagnosis_path = self.logs / 'diagnosis.json'
+            temporary = diagnosis_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(diagnosis, ensure_ascii=False, indent=2))
+            temporary.replace(diagnosis_path)
+            self.diagnosis = diagnosis
+            if decision == 'skip':
+                self.active = None
+                self.status = 'skipped_no_actionable_improvement'
+                self.skipped_steps = [3,4,5,6,7]
+                output = 'Diagnosis recorded: no actionable Harness improvement. Continue with the next task.'
+                self.event(kind='diagnosis_decision', decision=decision, diagnosis=diagnosis,
+                           skipped_steps=[3,4,5,6,7])
+                return output
+            self.status = 'improving'
+            self.event(kind='diagnosis_decision', decision=decision, diagnosis=diagnosis,
+                       opened_steps=[3,4,5,6,7])
+            return self.current()
+        if op == 'candidate_check':
+            if not self.online or role != 'orchestrator':
+                raise ValueError('candidate_check is available only to an online coordinator')
+            if not self.active or self.active['index'] != 4 or self.completed_steps != 4 or self.status != 'improving':
+                raise ValueError('candidate_check is available only at step 5 after steps 1-4')
+            if self.candidate_check is None:
+                raise ValueError('No authenticated host candidate check is registered')
+            required = ('job_id', 'task_id', 'round_id', 'candidate', 'parent_version',
+                        'check_revision')
+            if any(not isinstance(request.get(key), str) or not request[key] for key in required):
+                raise ValueError('candidate_check requires a complete frozen identity')
+            check_request = {key:request[key] for key in required}
+            if self.check_plan is None:
+                raise ValueError('Candidate check requires the step-3 frozen plan')
+            if 'mechanism_plan' in request:
+                if request['mechanism_plan'] != self.check_plan.get('mechanism_plan'):
+                    raise ValueError('Candidate check cannot change the step-3 mechanism plan')
+            result = self.candidate_check(check_request)
+            if not isinstance(result, dict):
+                raise ValueError('Host candidate check returned an invalid result')
+            if result.get('status') == 'running':
+                raise ValueError('Host candidate check is still running; retry the same frozen request')
+            self.candidate_check_result = {'request':check_request,
+                                           'result':result}
+            path = self.logs / 'candidate_check_result.json'
+            temporary = path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(self.candidate_check_result, ensure_ascii=False, indent=2))
+            temporary.replace(path)
+            self.event(kind='candidate_check', request=self.candidate_check_result['request'],
+                       result=result)
+            return {'status':'candidate_checked', 'result':result}
         if op == 'delegate':
             if request.get('role') not in caps['delegates']:
                 raise ValueError('Delegate is unavailable to this original role')
@@ -294,6 +488,10 @@ class Workflow:
                 reviews += f"\n\nReviewer {i}'s review:\n"+self.call_role('reviewer',request['proposal'],spec,request['context'])
             return reviews
         if op == 'archive':
+            if self.online:
+                if request.get('kind', 'overview') != 'overview':
+                    raise ValueError('Online versions have different task coverage; use chronological overview and public reads')
+                return self.online_overview()
             analyzer = archive_analyzer()
             kind = request.get('kind','overview')
             if kind == 'overview':
@@ -311,8 +509,79 @@ class Workflow:
             return self.inspect(request)
         raise ValueError('Unknown workflow operation')
 
+    def _require_diagnostic_role_evidence(self, step):
+        """Require host-recorded archive evidence before online diagnosis advances."""
+        index = step['index']
+        evidence = self.diagnostic_role_evidence.get(str(index + 1))
+        if (not isinstance(evidence, dict)
+                or not isinstance(evidence.get('identity'), str)
+                or not evidence.get('identity')
+                or evidence.get('role') != 'archive_explorer'
+                or evidence.get('step') != index + 1
+                or evidence.get('index') != index
+                or evidence.get('invocation_id') != step.get('invocation_id')
+                or evidence.get('submission_nonempty') is not True):
+            raise ValueError(
+                f'Online step {index + 1} requires a successful archive_explorer submission')
+        return evidence
+
+    def validate_evidence_refs(self, refs):
+        allowed = set(self.feedback.get('evidence_refs', []))
+        if (not isinstance(refs, list) or not refs or any(
+                not isinstance(ref, str) or ref not in allowed or Path(ref).is_absolute()
+                or '..' in Path(ref).parts or not ref.startswith('tasks/') for ref in refs)):
+            raise ValueError('Evidence references must belong to the host-provided public task feedback')
+
+    def online_overview(self):
+        archive = Path(self.identities.get('public_archive', '/home/agent/archive'))
+        items = []
+        for path in sorted((archive/'tasks').glob('*/public_feedback.json')):
+            data = json.loads(path.read_text())
+            items.append({key: data.get(key) for key in ('task_id', 'version', 'record', 'evidence_refs')})
+        return ('Online chronological task evidence; different versions have different task coverage. '
+                'Do not rank versions by unpaired average scores.\n' + json.dumps(items, ensure_ascii=False))
+
+    def _freeze_check_plan(self, requested):
+        """Freeze the model's declared criterion before implementation starts."""
+        if not isinstance(requested, dict):
+            raise ValueError('Online step 3 requires an explicit check_plan object')
+        if set(requested) - {'criterion', 'mechanism_plan'}:
+            raise ValueError('Unknown check_plan field')
+        plan = copy.deepcopy(requested)
+        options = {'current_task_failure_fixed', 'mechanism_parent_failed_candidate_passed'}
+        if plan.get('criterion') not in options:
+            raise ValueError('Online check_plan criterion is not supported')
+        mechanism = plan.get('mechanism_plan')
+        if plan['criterion'] == 'mechanism_parent_failed_candidate_passed' and mechanism is None:
+            raise ValueError('Mechanism acceptance requires mechanism_plan in step 3 check_plan')
+        if mechanism is not None:
+            if not isinstance(mechanism, dict):
+                raise ValueError('check_plan mechanism_plan must be an object')
+            relative = mechanism.get('test_path', mechanism.get('entrypoint'))
+            if (not isinstance(relative, str) or not relative or Path(relative).is_absolute()
+                    or '..' in Path(relative).parts or Path(relative).suffix != '.py'):
+                raise ValueError('check_plan mechanism_plan requires a relative Python test_path')
+            args = mechanism.get('args', [])
+            if (not isinstance(args, list) or len(args) > 32
+                    or any(not isinstance(arg, str) for arg in args)):
+                raise ValueError('check_plan mechanism_plan args must be a short string list')
+            timeout = mechanism.get('timeout_seconds', 60)
+            if type(timeout) is not int or not 1 <= timeout <= 600:
+                raise ValueError('check_plan mechanism_plan timeout must be 1..600 seconds')
+            plan['mechanism_plan'] = {'test_path':relative, 'args':args,
+                                      'timeout_seconds':timeout}
+        plan['revision'] = '1'
+        path = self.logs / 'check_plan_declared.json'
+        if path.exists() and json.loads(path.read_text()) != plan:
+            raise ValueError('The step-3 declared plan is immutable')
+        encoded = json.dumps(plan, ensure_ascii=False, sort_keys=True, indent=2)
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(encoded)
+        temporary.replace(path)
+        return plan
+
     def finish(self, result):
-        if self.status not in ('completed','failed'):
+        if self.status not in ('completed','failed','skipped_no_actionable_improvement','diagnosis_failed'):
             self.status = 'incomplete'
         self.event(kind='task_exit', exit_status=result.get('exit_status'), status=self.status, completed_steps=self.completed_steps)
 
@@ -346,20 +615,61 @@ class Workflow:
                     pass
         return hits
 
+    def _structured_submission(self, request):
+        """Adapt SICA's result tools to mini's existing submission sentinel.
+
+        This is intentionally handled at the transport boundary instead of
+        ``dispatch``: submission is an agent exit, while the seven-step
+        completion tools remain owned by the orchestrator and their original
+        role capability set stays unchanged.
+        """
+        if set(request) != {'op', 'report'}:
+            raise ValueError('submit requires exactly op and report')
+        report = request['report']
+        prefix = FINAL_OUTPUT_SENTINEL + '\n'
+        if type(report) is not str or not report.strip():
+            raise ValueError('report must be a non-empty string')
+        if report == FINAL_OUTPUT_SENTINEL:
+            raise ValueError('report must contain a non-empty submission')
+        if report.startswith(prefix):
+            body = report[len(prefix):]
+            if not body.strip():
+                raise ValueError('report must contain a non-empty submission')
+            output = report
+        else:
+            output = prefix + report
+        return {'output':output + '\n','returncode':0}
+
     def execute(self, action, readonly=False, role=None):
         command = action.get('command','')
         requested_op = None
         try:
-            parts = shlex.split(command)
-            if parts and parts[0] == 'sica-workflow':
-                if len(parts) != 2:
+            if command.startswith('sica-workflow'):
+                prefix = 'sica-workflow'
+                if len(command) == len(prefix) or not command[len(prefix)].isspace():
                     raise ValueError('Expected one JSON argument')
-                request = json.loads(parts[1])
+                raw_argument = command[len(prefix):].lstrip()
+                if raw_argument.startswith('{'):
+                    # Raw JSON is preferred. Parsing starts after the transport
+                    # prefix, so JSON string contents never pass through a shell
+                    # tokenizer or execute shell syntax.
+                    request = json.loads(raw_argument)
+                else:
+                    # Preserve compatibility with the original quoted-JSON form.
+                    parts = shlex.split(command)
+                    if len(parts) != 2 or parts[0] != prefix:
+                        raise ValueError('Expected one JSON argument')
+                    request = json.loads(parts[1])
+                if type(request) is not dict:
+                    raise ValueError('Expected one JSON object')
                 requested_op = request.get('op')
+                if requested_op == 'submit':
+                    return self._structured_submission(request)
                 op = self.aliases.get(requested_op, requested_op)
                 # Role comes from the actual executing environment, never JSON.
                 trusted_role = role or ('reviewer' if readonly is True else 'software_developer' if readonly == 'editor' else 'orchestrator')
                 return {'output':json.dumps(self.dispatch(request, trusted_role)), 'returncode':0}
+            parts = shlex.split(command)
             if readonly and readonly != 'editor':
                 if len(parts) >= 2 and parts[0] == 'echo' and parts[1] == 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT' and not any(p in (';', '&&', '||', '|', '>', '<') for p in parts[2:]):
                     return {'output':' '.join(parts[1:])+'\n','returncode':0}

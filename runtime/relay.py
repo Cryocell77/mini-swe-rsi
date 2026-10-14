@@ -12,7 +12,7 @@ class Relay(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path not in ('/v1/chat/completions', '/tool', '/status'):
+        if self.path not in ('/v1/chat/completions', '/tool', '/status', '/candidate_check'):
             self.send_error(404)
             return
         length = int(self.headers.get('Content-Length', 0))

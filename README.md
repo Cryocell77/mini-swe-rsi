@@ -32,6 +32,27 @@ uv run mini-swe-rsi evolve --run runs/experiment
 uv run mini-swe-rsi report --run runs/experiment
 ```
 
+在线逐题模式使用独立运行目录，不启动原生 baseline、双轨搜索或 held-out 评测：
+
+```bash
+uv run mini-swe-rsi online --run runs/online --data /absolute/path/to/data --task-limit 20
+uv run mini-swe-rsi report --run runs/online
+# 当前本地代理是订阅/免费额度时，显式冻结该计费合同
+uv run mini-swe-rsi online --run runs/online --data /absolute/path/to/data --task-limit 20 --billing-mode subscription
+```
+
+它冻结开发题顺序；每题由当前 `H_v` 首次作答并保存公开反馈，随后复用原 SICA 七步。步骤 1、2 后由协调者写入结构化 `diagnosis_decision`：`skip` 以两步正常终态推进游标，`improve` 才开放步骤 3～7。候选的父版本、任务执行者和改进者始终是同一活动版本；宿主通过独立新进程重做当前题，核对源码/执行摘要和预先声明的修复判据后原子接任 `H_(v+1)`。候选检查结果失败时保留父版本。`--resume` 可显式表达恢复意图，状态和不可变决策保存在 `online_state.json`、`versions/`、`tasks/`、`rounds/`、`proposals/` 与 `decisions/`。
+
+在线归档只公开已发生任务的反馈、诊断、检查快照和活动版本源码；评分器私有文件、未来任务和凭据不进入角色上下文。在线报告使用 `online_report.json` / `online_report.md`，不套用原生 champion、gate 或完整覆盖选择。
+
+`--task-limit` 冻结原开发集顺序的前 N 题；省略则使用开发集全部题目。三题检查使用 `--task-limit 3`，不先启动完整基线。订阅服务的美元成本记录未知，token 和耗时照常计量；恢复时沿用已冻结的题目、模型、计费合同和检查规则。
+
+在线模式不增加全局或阶段总时限，保留原生单题、角色迭代和服务容量限制。步骤 3 必须声明并冻结验收计划；步骤 5 通过宿主启动候选真实新进程。机制检查将同一测试分别用于父版本和候选，并要求当前题成绩不退化。正常两步跳过不生成版本；没有可接任修改时继续使用父版本。中途模型对话退出不伪装成可无缝恢复的会话。
+
+步骤 1、2 各须有该步骤成功且非空的归档分析角色报告，不能把失败角色或评审记为已完成诊断。元改进的结构化命令使用 `sica-workflow {"op":"submit","report":"完整报告"}` 等 raw JSON 形式，由适配层直接解析，避免额外 shell 引号；旧语法仍兼容。
+
+设计与验收记录见 [在线修改方案](docs/online-evolution-plan.md) 和 [实现验收记录](docs/online-evolution-review.md)。在线模式属于对 SICA 的显式扩展，固定上游源码保留原文。
+
 `baseline` 自动完成预检并补齐 dev30；预检前三题作为真实 H0 尝试复用。`evolve` 自动补齐基线，在原生选择逻辑外调度两轨道，各最多四次搜索提案；如果剩余提案数已不可能达到两代行为变化，则提前停止并保存源码摘要证明。只有机制证据成立才运行两对同起点探针与验证门槛。`report` 完全离线。
 
 `evaluate --run runs/experiment` 执行冻结候选验证。**不会自动精简**：失败或预算不足时交付失败报告，test100 保持封存。若门槛通过，需完成工程精简与固定轨迹差分验证，将其证明保存为该运行的 `simplification_replay.json`（`passed`、`minimal_hash`）；随后：
@@ -108,8 +129,8 @@ SenseNova `token.sensenova.cn` 的认证模型目录使用 `context_length/max_o
 
 最新[GLM单次检查](docs/new-model-single-smoke.md)：工程127项通过；真实提案完成1/7后连接/API失败，无源码变化、开发题跳过，不能判定模型自改进能力不足。
 
-本地CLIProxyAPI/Qoder的标准目录缺容量时，读取认证`/models?client_version=pi`的同名容量声明；仅作为代理声明冻结，不证明实际后端权重，不使用目录附带的通用指令或猜测价格。未知价格仍拒绝基准推理。HTTP失败记录状态码，正文不保存。扩展目录来源参考[官方客户端](https://github.com/router-for-me/pi-cliproxyapi-provider)。
+本地CLIProxyAPI、Qoder或 WorkBuddy 的标准目录缺容量时，读取认证`/models?client_version=pi`的同名容量声明；仅作为代理声明冻结，不证明实际后端权重，不使用目录附带的通用指令或猜测价格。未知价格仍拒绝基准推理。HTTP失败记录状态码，正文不保存。扩展目录来源参考[官方客户端](https://github.com/router-for-me/pi-cliproxyapi-provider)。
 
-用户确认本地Qoder代理为订阅／免费额度时，可在.env显式设置`RSI_BILLING_MODE=subscription`。此合同只对已核验的本地Qoder目录生效；美元费用保持未知，原SICA的$3阈值不可复现，token/时间预算仍执行。不能把订阅成本记为零美元。
+用户确认本地Qoder或 WorkBuddy 代理为订阅／免费额度时，可通过在线 CLI 的`--billing-mode subscription`显式冻结合同，也可在专用 `.env` 中设置`RSI_BILLING_MODE=subscription`。此合同只对已核验的本地代理目录生效；美元费用保持未知，原SICA的$3阈值不可复现，token/时间预算仍执行。不能把订阅成本记为零美元。
 
 按用户要求，单次诊断使用`uv run python scripts/smoke_once.py --output <新目录> --unbounded-diagnostic`，没有额外全局或阶段墙钟截止。原SICA角色500/1000轮、单题600秒和工具限制仍生效。历史有期限结果保持原样，不用新模式恢复过期实验；诊断费用与token照常记录。

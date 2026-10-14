@@ -107,3 +107,9 @@ Completion success is the model's declaration, as upstream; no source-change, co
 此前30/500共享调用、2048输出、32768 context、60秒命令及600秒improve是历史诊断合同。当前改为每角色500/coder1000独立迭代、每迭代最多5 provider请求、总结1请求、benchmark600秒/$3、improve无独立时间/费用阈值；模型输出和context取认证元数据，DeepSeek通过beta prefix续写。原文件视图重建未移植；公开读取和工具输出取消人为截断，安全隔离仍保留。费用为官方峰值保守上界而非账单，未知价格拒绝benchmark。完整来源、差异、验收和单次测试状态见[sica-budget-alignment-review.md](sica-budget-alignment-review.md)。
 
 Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型digest、参数和模板摘要，context取明确num_ctx且不得超过架构容量；模型未设置独立num_predict时用context-1推导单次上下文内输出边界，明确不冒称服务声明的独立输出cap。对已核验的非cloud原生Ollama允许用户授权的本地测试，$3费用守卫不可复现、实际费用未知；metrics记录cost_accounting_available=false，逐题cost_estimate为null，不记为免费。DeepSeek和其他未定价远端的原守卫不变。只增加传输/身份兼容，不修改SICA控制器、原mini源码、模型配置或解题策略。
+
+## 2026-10-14 独立在线模式与完成接口
+
+新增 `mini-swe-rsi-online-v2`，与 native SICA 归档选择/循环分开。在线活动版本同时做当前任务与本轮改进；原步骤和角色原文不变，第二步后的显式 improve/skip、第三步冻结检查计划、第五步实际候选检查和宿主接任均属于在线扩展，不称为原版 SICA 已有机制。公开归档按时间呈现，不对不同题目覆盖的版本直接平均排名。完整协议见 [online-evolution-plan.md](online-evolution-plan.md)，验收记录见 [online-evolution-review.md](online-evolution-review.md)。
+
+原 SICA 的叶角色自动获得 ReturnResult，主协调者另有 SubmitAnswer。此前将结束工具映射为裸 printf，而适配提示开头又要求整条命令使用 sica-workflow JSON，真实模型因此错误包装提交命令。现在增加受控 `sica-workflow {"op":"submit","report":"完整非空文本"}` 结束适配，宿主添加 mini 完成信号。raw JSON 直接解析，不需要第二层 shell 引号；保留旧 quoted JSON 和裸 printf 兼容，尾随命令仍拒绝。这个入口只结束当前角色，不改变原 AST 派生的角色工具权限，也不推进、补全或绕过父七步。在线诊断另要求每步成功且非空的 archive_explorer 报告，并由宿主绑定角色与步骤身份；native 无此新增门槛。提前结束仍会留下 incomplete/diagnosis_failed；候选接任仍须完整在线检查证据。固定 vendor 和锁文件保持不变。

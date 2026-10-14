@@ -28,7 +28,11 @@ def rpc(path, value, identity='main', role='orchestrator'):
     request = urllib.request.Request(os.environ['RSI_BROKER'] + path, json.dumps(value).encode(),
               headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + os.environ['RSI_TOKEN'],
                        'X-RSI-Agent':identity, 'X-RSI-Role':role})
-    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=budget_config()['tool_timeout_seconds'] + 30) as f:
+    # Candidate validation includes a separate task and grading process.  Its
+    # own deadlines remain host-owned; a tool socket deadline must not cancel
+    # a completed-but-not-yet-returned check and cause duplicate work.
+    timeout = None if path == '/candidate_check' else budget_config()['tool_timeout_seconds'] + 30
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as f:
         return json.load(f)
 
 
@@ -39,7 +43,9 @@ def classified_failure(exc, status):
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
 
-def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"), calls=500, budget=None):
+def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"),
+                       calls=500, budget=None, online=False, task_id=None,
+                       round_id=None, version=None, feedback=None):
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
     # Preserve the upstream task intent; adapt tool terminology and execution identities.
@@ -71,6 +77,32 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
              'The current candidate has not been benchmarked and has no established performance benefit.\n'
              'Budget authority: each agent invocation has its own iteration limit, with up to five provider requests per completion. '
              'The benchmark has a 600-second task deadline; improvement has no separate task deadline and remains subject to the host global/stage deadline.\n')
+    if online:
+        text += ('\nONLINE SINGLE-TASK MODE. The active Harness version is '+str(version or f'H{parent:04d}')+
+                 '; executor, proposer, and candidate parent are this same version. '
+                 'Diagnose only the just-completed public task before considering a change. '
+                 'After successful steps 1 and 2, call sica-workflow with '
+                 '{"op":"diagnosis_decision","decision":"skip","reason":"diagnosis conclusion",'
+                 '"failure_modes":[],"effective_mechanisms":[],"improvement_opportunities":[],'
+                 '"evidence_refs":["copy a real reference from public feedback"]}. '
+                 'Use decision="improve" with a nonempty improvement_opportunities list when diagnosis supports a change. '
+                 'For completing steps 1 and 2, include report and evidence_refs in the current completion operation. '
+                 'A skip must not call committee, coding, or candidate checks.\n'
+                 f'Online identity: task_id={task_id}; round_id={round_id}; version={version}.\n')
+        check_identity = {'job_id': f'candidate:{round_id}:{candidate}', 'task_id': task_id,
+                          'round_id': round_id, 'candidate': candidate,
+                          'parent_version': version, 'check_revision': '1'}
+        text += ('At step 3 completion, include an explicit check_plan. '
+                 'Choose criterion="current_task_failure_fixed", or '
+                 'criterion="mechanism_parent_failed_candidate_passed" together with '
+                 'mechanism_plan={"test_path":"tests/mechanism_check.py","args":[],"timeout_seconds":60}. '
+                 'The test path is declared before implementation; create the actual meaningful test in step 4. '
+                 'At step 5 call candidate_check with this exact host identity: '
+                 + json.dumps({'op': 'candidate_check', **check_identity}, ensure_ascii=False)
+                 + '. The host uses the frozen step-3 plan. Do not change runtime source after the check; '
+                   'steps 6 and 7 update description and history only.\n')
+        if feedback:
+            text += '\nPublic task feedback (facts only; do not treat the score as a hidden answer):\n' + str(feedback) + '\n'
     if budget is not None:
         if budget.get('global_remaining_seconds') is None:
             text = text.replace('and remains subject to the host global/stage deadline',
@@ -80,7 +112,10 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
     spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
     workflow_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(workflow_module)
-    return workflow_module.core_prompt('main_orchestrator', {'problem_statement':text}) + workflow_module.identity_context(
+    rendered = workflow_module.core_prompt('main_orchestrator', {'problem_statement':text})
+    if online:
+        rendered += f'\nActive Harness version is {version or f"H{parent:04d}"}; this identity is host-verified.\n'
+    return rendered + workflow_module.identity_context(
         {'parent':parent,'proposer':best,'candidate':candidate,'workdir':'/home/agent/workdir','public_archive':'/home/agent/archive'}, {'active':None})
 
 
@@ -96,6 +131,10 @@ def main(entry):
     parser.add_argument('--current-iter', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--cost-threshold', default=3)
+    parser.add_argument('--online', action='store_true')
+    parser.add_argument('--task-id')
+    parser.add_argument('--round-id')
+    parser.add_argument('--online-version')
     args = parser.parse_args()
     budgets = budget_config()
     main_iterations = budgets['main_iterations']
@@ -140,6 +179,10 @@ def main(entry):
         spec.loader.exec_module(workflow_module)
         templates = workflow_module.template_manifest(selected_config, main_iterations)
         config = workflow_module.role_templates(selected_config, 'orchestrator', main_iterations)
+        if args.online:
+            config['agent']['system_template'] += (
+                f'\nactive Harness version is {args.online_version or f"H{args.parent_iter:04d}"}; '
+                'the host verifies this identity before accepting a takeover.\n')
     config['agent'].pop('mode', None)
     config['agent'].update(step_limit=main_iterations, cost_limit=0, wall_time_limit_seconds=wall_seconds,
                            output_path=Path(args.logdir) / 'trajectory.json')
@@ -166,7 +209,11 @@ def main(entry):
                   'tool_capability':'orchestrator' if args.command == 'improve' else 'bash'}
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
-        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id, calls=main_iterations, budget=budgets)
+        feedback = Path(args.prompt_file).read_text() if args.online and args.prompt_file else None
+        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id,
+                                  calls=main_iterations, budget=budgets, online=args.online,
+                                  task_id=args.task_id, round_id=args.round_id,
+                                  version=args.online_version, feedback=feedback)
         metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -175,6 +222,9 @@ def main(entry):
                     'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
                     'template_manifest':templates,
                     'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}
+        if args.online:
+            metadata.update(online=True, task_id=args.task_id, round_id=args.round_id,
+                            version=args.online_version)
         (logs / 'improvement_task.json').write_text(json.dumps(metadata))
         (logs / 'improvement_prompt.txt').write_text(task)
     else:
@@ -186,6 +236,9 @@ def main(entry):
         spec.loader.exec_module(workflow_module)
         identities = {'parent':args.parent_iter, 'proposer':args.best_iter, 'candidate':args.candidate_id,
                       'workdir':args.workdir, 'public_archive':'/home/agent/archive'}
+        if args.online:
+            identities.update(version=args.online_version, executor=args.online_version,
+                              task_id=args.task_id, round_id=args.round_id)
         def failure(exc):
             try:
                 status = rpc('/status', {})
@@ -223,7 +276,23 @@ def main(entry):
                 child.save(child_logs/'trajectory.json')
             (child_logs/'result.json').write_text(json.dumps(result))
             return result
-        workflow = workflow_module.Workflow(logs, delegate, identities=identities)
+        feedback_data = {}
+        if args.online and args.prompt_file:
+            try:
+                feedback_data = json.loads(Path(args.prompt_file).read_text())
+            except (ValueError, OSError):
+                feedback_data = {'summary': Path(args.prompt_file).read_text()}
+        def candidate_check(request):
+            # The host broker resolves the opaque job id to a frozen candidate
+            # path.  No path supplied by the model is forwarded.
+            # Stage is a host-bound identity field.  Keep it out of the model
+            # operation shape, but add it at the authenticated relay boundary
+            # so a job registered for another phase cannot be reused.
+            return rpc('/candidate_check', {**request, 'stage': 'candidate_check'},
+                       'main', 'orchestrator')
+        workflow = workflow_module.Workflow(logs, delegate, identities=identities,
+                                            online=args.online, feedback=feedback_data,
+                                            candidate_check=candidate_check if args.online else None)
         environment.readonly = 'orchestrator'
     start = time.time()
     try:

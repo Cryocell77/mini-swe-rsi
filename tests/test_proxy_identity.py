@@ -98,6 +98,22 @@ def test_user_subscription_allows_task_with_tokens_but_unknown_dollars(proxy):
     assert metrics['cost_accounting_available'] is False
 
 
+def test_workbuddy_subscription_uses_the_same_authenticated_capacity_contract(proxy):
+    broker, selected, catalog = proxy
+    selected['owned_by'] = 'workbuddy'
+    broker.config['RSI_BILLING_MODE'] = 'subscription'
+    identity = broker.identity()
+    assert identity['model'] == 'qfmodel'
+    assert broker.service_identity['owned_by'] == 'workbuddy'
+    assert broker.service_identity['billing_contract'] == {
+        'mode': 'subscription',
+        'source': 'explicit subscription billing mode',
+        'usd_token_tariff_available': False,
+        'benchmark_usd_threshold_reproduced': False,
+    }
+    assert broker.pricing is None
+
+
 def test_subscription_requires_supported_proxy_verification(proxy):
     broker, selected, _ = proxy
     broker.config['RSI_BILLING_MODE'] = 'subscription'

@@ -5,6 +5,7 @@ import json
 import math
 import copy
 import hashlib
+import inspect
 import re
 import secrets as random_secrets
 import subprocess
@@ -18,7 +19,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .core import append_event, secrets, BudgetExceeded
+from .core import append_event, secrets, read, write, BudgetExceeded
 from .context_budget import ContextBudget
 
 
@@ -103,14 +104,23 @@ def adapt_response(response):
 
 
 class Broker:
-    def __init__(self, root, budget, context=None):
+    def __init__(self, root, budget, context=None, billing_mode=None):
         self.root, self.budget = root, budget
         self.context = context if context is not None else None
         self.config = secrets()
+        if billing_mode is not None:
+            if billing_mode != 'subscription':
+                raise ValueError('Only the explicit subscription billing mode is supported')
+            self.config['RSI_BILLING_MODE'] = billing_mode
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.lock = threading.Lock()
+        self.candidate_lock = threading.RLock()
         self.sessions = {}
         self.events = []
+        # Candidate checks are registered by the host before a container can
+        # request them.  A remote client supplies only the opaque job id and
+        # frozen check parameters; it can never choose a host path or task.
+        self.candidate_jobs = {}
         broker = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -134,6 +144,10 @@ class Broker:
                         out = broker.status(token)
                     elif self.path == '/tool':
                         out = broker.tool(token, payload)
+                    elif self.path == '/candidate_check':
+                        out = broker.candidate_check(token, payload,
+                                                     self.headers.get('X-RSI-Agent','main'),
+                                                     self.headers.get('X-RSI-Role','orchestrator'))
                     else:
                         self.send_error(404)
                         return
@@ -164,6 +178,109 @@ class Broker:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+    def register_candidate_job(self, job_id, callback, metadata=None):
+        """Register one authenticated, idempotent candidate check.
+
+        ``callback`` runs in the host process and owns all path resolution.
+        Re-registering an id is allowed only for the exact same metadata, so a
+        restarted relay cannot silently point a job at another candidate.
+        """
+        if not isinstance(job_id, str) or not job_id or len(job_id) > 160:
+            raise ValueError('Invalid candidate job id')
+        if not callable(callback):
+            raise TypeError('Candidate callback must be callable')
+        metadata = metadata or {}
+        with self.candidate_lock:
+            prior = self.candidate_jobs.get(job_id)
+            if prior is not None:
+                if prior['metadata'] != metadata:
+                    raise ValueError('Candidate job identity changed')
+                return
+            record = self.root / 'candidate_checks' / (job_id.replace('/', '_') + '.json')
+            prior_state = read(record) if record.exists() else {}
+            if prior_state and prior_state.get('metadata') not in (None, metadata):
+                raise ValueError('Candidate job identity changed in persisted state')
+            prior_status = prior_state.get('status')
+            prior_error = prior_state.get('error')
+            if prior_status == 'running':
+                prior_status = 'interrupted'
+                prior_error = {'type':'OnlineInterrupted',
+                               'message':'Candidate check was interrupted before completion; use a new revision'}
+            self.candidate_jobs[job_id] = {'callback': callback, 'metadata': metadata,
+                                           'result': prior_state.get('result'),
+                                           'error': prior_error, 'running': False,
+                                           'record': record}
+            write(record, {'job_id': job_id, 'metadata': metadata,
+                           'status': ('completed' if prior_state.get('result') is not None else
+                                      prior_status or 'registered'),
+                           'result': prior_state.get('result'), 'error': prior_error})
+
+    def candidate_check(self, token, payload, agent='main', role='orchestrator'):
+        """Execute or return a frozen candidate check through the broker."""
+        if not isinstance(payload, dict):
+            raise ModelError('Candidate check payload must be an object')
+        job_id = payload.get('job_id')
+        with self.candidate_lock:
+            job = self.candidate_jobs.get(job_id)
+        if job is None:
+            raise ModelError('Unknown candidate check job')
+        self.check_session(self.sessions[token], model_request=False)
+        identity_keys = ('job_id', 'task_id', 'check_revision', 'round_id', 'candidate',
+                         'parent_version', 'stage')
+        bound = {k: job['metadata'][k] for k in identity_keys if k in job['metadata']}
+        requested = {k: payload[k] for k in identity_keys if k in payload}
+        # Every identity field registered by the host must be echoed by the
+        # caller.  A caller cannot omit a bound stage/round/candidate field or
+        # add an unregistered identity field and still reuse the job.
+        if set(requested) != set(bound) or requested != bound:
+            raise ModelError('Candidate check identity differs from host registration')
+        for key, actual in (('agent', agent), ('role', role)):
+            expected_identity = job['metadata'].get(key)
+            if expected_identity is not None and expected_identity != actual:
+                raise ModelError('Candidate check execution identity differs from host registration')
+        expected_session_hash = job['metadata'].get('session_token_sha256')
+        if expected_session_hash is not None and hashlib.sha256(token.encode()).hexdigest() != expected_session_hash:
+            raise ModelError('Candidate check session differs from host registration')
+        with self.candidate_lock:
+            if job['result'] is not None:
+                return job['result']
+            if job.get('error') is not None:
+                raise ModelError('Candidate check previously failed; use a new check revision')
+            if job['running']:
+                return {'job_id': job_id, 'status': 'running',
+                        'check_revision': job['metadata'].get('check_revision')}
+            job['running'] = True
+            write(job['record'], {'job_id':job_id, 'metadata':job['metadata'], 'status':'running'})
+        try:
+            callback = job['callback']
+            # Existing host callbacks are zero-argument closures.  Online
+            # step 3 may additionally freeze a mechanism plan in the request;
+            # pass the authenticated payload only to callbacks that opt into
+            # that argument, keeping the legacy callback contract intact.
+            accepts_payload = bool(inspect.signature(callback).parameters)
+            result = callback(payload) if accepts_payload else callback()
+            if not isinstance(result, dict):
+                raise ModelError('Candidate check returned an invalid result')
+            with self.candidate_lock:
+                job['result'] = result
+                write(job['record'], {'job_id':job_id, 'metadata':job['metadata'],
+                                      'status':'completed', 'result':result})
+            event = {'kind':'candidate_check_complete', 'job_id':job_id,
+                     'task_id':job['metadata'].get('task_id'),
+                     'check_revision':job['metadata'].get('check_revision')}
+            self.events.append(event)
+            append_event(self.root, event)
+            return result
+        except Exception as exc:
+            with self.candidate_lock:
+                job['error'] = {'type':type(exc).__name__, 'message':str(exc)}
+                write(job['record'], {'job_id':job_id, 'metadata':job['metadata'],
+                                      'status':'failed', 'error':job['error']})
+            raise
+        finally:
+            with self.candidate_lock:
+                job['running'] = False
 
     def remote(self, path):
         url = self.config['OPENAI_BASE_URL'].rstrip('/')
@@ -225,7 +342,7 @@ class Broker:
             raise ModelError('Configured model is not advertised by the endpoint')
         proxy_catalog = None
         if (urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname in ('127.0.0.1', 'localhost', '::1')
-                and selected.get('owned_by') == 'qoder'
+                and selected.get('owned_by') in ('qoder', 'workbuddy')
                 and ('context_window' not in selected or 'max_output_tokens' not in selected)):
             matches = [m for m in self.remote('/models?client_version=pi').get('models', [])
                        if m.get('slug') == selected['id']]
@@ -327,13 +444,13 @@ class Broker:
             self.service_identity.update(capacity_source='authenticated SenseNova /models field mapping',
                                          sensenova_catalog=catalog)
         if proxy_catalog is not None:
-            self.service_identity.update(capacity_source='authenticated loopback Qoder proxy /models?client_version=pi',
+            self.service_identity.update(capacity_source='authenticated loopback proxy /models?client_version=pi',
                 proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
         if self.config.get('RSI_BILLING_MODE'):
             if self.config['RSI_BILLING_MODE'] != 'subscription' or proxy_catalog is None:
-                raise ModelError('Subscription contract requires the verified local Qoder proxy catalog')
+                raise ModelError('Subscription contract requires the verified local proxy catalog')
             self.service_identity['billing_contract'] = {'mode': 'subscription',
-                'source': 'user-declared .env RSI_BILLING_MODE',
+                'source': 'explicit subscription billing mode',
                 'usd_token_tariff_available': False, 'benchmark_usd_threshold_reproduced': False}
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
