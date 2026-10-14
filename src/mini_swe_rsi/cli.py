@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--minimal', type=Path)
     parser.add_argument('--resume', action='store_true',
                         help='Resume the persisted online task/round cursor')
+    parser.add_argument('--resume-checkpoint', type=Path,
+                        help='Explicit host-private authorization for pre-check online workflow restoration')
     parser.add_argument('--billing-mode', choices=['subscription'],
                         help='Freeze the authenticated subscription billing contract for online mode')
     parser.add_argument('--task-limit', type=int,
@@ -53,7 +55,8 @@ def main():
             if args.command == 'online':
                 from .online import OnlineLoop
                 online_kwargs = {key:value for key, value in (
-                    ('billing_mode', args.billing_mode), ('task_limit', args.task_limit))
+                    ('billing_mode', args.billing_mode), ('task_limit', args.task_limit),
+                    ('resume_checkpoint', args.resume_checkpoint))
                     if value is not None}
                 loop = OnlineLoop.from_environment(root, args.data, **online_kwargs)
                 try:

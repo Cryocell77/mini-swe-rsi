@@ -18,7 +18,7 @@ from pathlib import Path
 from .core import (Budget, Data, ROOT, append_event, digest, read, tree_hash,
                    write, improvement_contract, execution_hash)
 from .driver import Driver, InfrastructureError, initial_code, validate_code
-from .broker import Broker
+from .broker import Broker, ModelError
 
 
 class OnlineError(RuntimeError):
@@ -51,7 +51,7 @@ class OnlineLoop:
     protocol = 'mini-swe-rsi-online-v2'
 
     def __init__(self, root, tasks, driver=None, broker=None, active_code=None,
-                 model_identity=None, service_identity=None, contract=None):
+                 model_identity=None, service_identity=None, contract=None, resume_checkpoint=None):
         self.root = Path(root).resolve()
         self.tasks = tuple(tasks)
         if not self.tasks or len(set(self.tasks)) != len(self.tasks):
@@ -60,6 +60,7 @@ class OnlineLoop:
         self.broker = broker
         self.model_identity = model_identity
         self.service_identity = service_identity
+        self.resume_checkpoint = Path(resume_checkpoint) if resume_checkpoint is not None else None
         self.contract = contract or {
             'protocol': self.protocol,
             'tasks': list(self.tasks),
@@ -74,7 +75,8 @@ class OnlineLoop:
         self._load_or_initialize(active_code)
 
     @classmethod
-    def from_environment(cls, root, data_path=None, billing_mode=None, task_limit=None):
+    def from_environment(cls, root, data_path=None, billing_mode=None, task_limit=None,
+                         resume_checkpoint=None):
         root = Path(root).resolve()
         existing_config = root/'configuration.json'
         if existing_config.exists() and read(existing_config).get('protocol') != cls.protocol:
@@ -138,13 +140,16 @@ class OnlineLoop:
                     'criterion': 'current_task_failure_fixed_or_mechanism_parent_failed_candidate_passed',
                 },
             }
+            if (root/'transport_policy.json').exists():
+                contract['transport_policy'] = read(root/'transport_policy.json')
             code = root / 'versions/H0000/agent_code'
             if code.exists() and not existing_config.exists():
                 raise OnlineError('Unidentified H0000 source cannot start online recovery')
             initial_code(code)
             loop = cls(root, selected_tasks, driver=driver, broker=broker,
                        active_code=code, model_identity=model_identity,
-                       service_identity=service_identity, contract=contract)
+                       service_identity=service_identity, contract=contract,
+                       resume_checkpoint=resume_checkpoint)
             return loop
         except Exception:
             if 'driver' in locals():
@@ -167,7 +172,7 @@ class OnlineLoop:
         files = [ROOT/'runtime/bridge.py', ROOT/'runtime/workflow.py',
                  ROOT/'runtime/relay.py', ROOT/'vendor/sica/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
-                  ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py')]
+                  ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py','recovery.py')]
         files += [ROOT/'upstream.lock.json']
         files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
         return {'improvement': improvement_contract(),
@@ -188,6 +193,7 @@ class OnlineLoop:
                                ('data', self.contract.get('data')),
                                ('runtime_image', self.contract.get('runtime_image')),
                                ('billing_mode', self.contract.get('billing_mode')),
+                               ('transport_policy', self.contract.get('transport_policy')),
                                ('task_limit', self.contract.get('task_limit'))):
                 if saved.get(key) != value:
                     raise OnlineError(f'Frozen online contract changed: {key}')
@@ -604,16 +610,26 @@ class OnlineLoop:
 
     def _improve_with_driver(self, feedback, round_dir, proposal_id):
         existing_workflow = Path(round_dir)/'workflow_state.json'
-        if existing_workflow.exists() or existing_workflow.is_symlink():
+        resume_path = self.resume_checkpoint
+        resume = None
+        if resume_path is not None:
+            from .recovery import load_workflow_authorization
+            resume = load_workflow_authorization(
+                resume_path, self.root, round_dir, Path(round_dir)/'candidate_work',
+                {'task_id':feedback['task_id'], 'round_id':feedback['round_id'],
+                 'version':self.active_version, 'parent':int(self.active_version[1:]),
+                 'proposer':int(self.active_version[1:]), 'candidate':proposal_id})
+        if (existing_workflow.exists() or existing_workflow.is_symlink()) and resume is None:
             raise OnlineInterrupted('Existing workflow state cannot be reopened for a new model process')
         if self.driver is None or self.broker is None:
             raise OnlineError('Online driver and broker are required for improvement')
         parent = self.active_version
         parent_full, parent_exec = tree_hash(self.active_code), execution_hash(self.active_code)
         candidate_work = round_dir/'candidate_work'
-        if candidate_work.exists():
-            shutil.rmtree(candidate_work)
-        shutil.copytree(self.active_code, candidate_work)
+        if resume is None:
+            if candidate_work.exists():
+                shutil.rmtree(candidate_work)
+            shutil.copytree(self.active_code, candidate_work)
         task_id, round_id = feedback['task_id'], feedback['round_id']
         job_id = f'candidate:{round_id}:{proposal_id}'
         proposal_dir = self._proposal_dir(int(proposal_id[1:]))
@@ -707,6 +723,12 @@ class OnlineLoop:
 
         token = self.broker.session('online:' + round_id, seconds=None, calls=None)
         self._improvement_token = token
+        if resume is not None:
+            from .recovery import restore_session_accounting
+            restore_session_accounting(self.broker, token, resume['accounting'])
+            self._event('workflow_restore_started', round_id=round_id,
+                        completed_steps=resume['state']['completed_steps'],
+                        authorization_sha256=digest(resume_path), new_model_conversation=True)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         identity['session_token_sha256'] = token_hash
         # Registration must use the exact authenticated improvement session.
@@ -722,9 +744,11 @@ class OnlineLoop:
             # container; passing the host path would make bridge.py read a
             # nonexistent container path and change the rendered identity.
             args += ['--prompt-file', '/task.txt']
+            restore_kwargs = {'resume_checkpoint':resume_path} if resume is not None else {}
+            self.resume_checkpoint = None
             status, _ = self.driver.controller(self.active_code, round_dir, args, token,
                                                 archive=self.root, target=candidate_work,
-                                                prompt=prompt_path)
+                                                prompt=prompt_path, **restore_kwargs)
             workflow = read(round_dir/'workflow_state.json') if (round_dir/'workflow_state.json').exists() else {'status': 'incomplete'}
             workflow['process_status'] = status
             workflow['metrics'] = None
@@ -1217,6 +1241,17 @@ class OnlineLoop:
                                             version=feedback.get('version'))
                     self._apply_existing_decision(feedback, decision)
                     return
+            if self.resume_checkpoint is not None:
+                from .recovery import load_workflow_authorization
+                proposal_id = f"P{state['next_proposal']:04d}"
+                round_dir = self._round_dir(int(current_round[1:]))
+                load_workflow_authorization(
+                    self.resume_checkpoint, self.root, round_dir, round_dir/'candidate_work',
+                    {'task_id':state['current_task'], 'round_id':current_round,
+                     'version':self.active_version, 'parent':int(self.active_version[1:]),
+                     'proposer':int(self.active_version[1:]), 'candidate':proposal_id})
+                self._save_state(status='feedback_ready')
+                return
             if state['status'] == 'interrupted':
                 workflow_path = self._round_dir(int(current_round[1:]))/'workflow_state.json'
                 if workflow_path.exists() or workflow_path.is_symlink():
@@ -1584,6 +1619,12 @@ class OnlineLoop:
         try:
             feedback = self.execute_task()
             return self.run_round(feedback)
+        except ModelError:
+            pause = getattr(self.broker, 'pause_event', None)
+            if pause is not None and pause.is_set():
+                self._save_state(status='interrupted')
+                raise OnlineInterrupted('Proxy transport fault paused the online workflow') from None
+            raise
         finally:
             self._finish_improvement_session()
 

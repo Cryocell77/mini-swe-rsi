@@ -131,7 +131,13 @@ class Driver:
             raise InfrastructureError('Task image differs from frozen eligibility image')
         return image
 
-    def controller(self, code, logs, command_args, token, archive=None, target=None, prompt=None):
+    def controller(self, code, logs, command_args, token, archive=None, target=None, prompt=None,
+                   resume_checkpoint=None):
+        pause_guard = getattr(getattr(self, 'broker', None), '_raise_if_paused', None)
+        if pause_guard is not None:
+            pause_guard()
+        if resume_checkpoint is not None and command_args[0] != 'improve':
+            raise RuntimeError('Workflow restoration cannot change a benchmark launch')
         validate_code(code)
         selected_hash = tree_hash(code)
         logs = Path(logs).resolve()
@@ -142,7 +148,7 @@ class Driver:
         task_identity = None
         execution_budget = None
         if command_args[0] == 'improve':
-            if (logs/'workflow_state.json').exists():
+            if (logs/'workflow_state.json').exists() and resume_checkpoint is None:
                 raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
             mounts[str(ROOT/'vendor/sica_workflow')] = {'bind':'/workflow_sources','mode':'ro'}
             def argument(name):
@@ -150,6 +156,18 @@ class Driver:
             parent, proposer = int(argument('--parent-iter')), int(argument('--best-iter'))
             candidate = argument('--candidate-id')
             online = '--online' in command_args
+            resume = None
+            if resume_checkpoint is not None:
+                if not online or target is None:
+                    raise RuntimeError('Explicit workflow restoration is online only')
+                from .recovery import load_workflow_authorization
+                resume = load_workflow_authorization(
+                    resume_checkpoint, self.root, logs, target,
+                    {'task_id':argument('--task-id'), 'round_id':argument('--round-id'),
+                     'version':argument('--online-version'), 'parent':parent,
+                     'proposer':proposer, 'candidate':candidate})
+                mounts[str(Path(resume_checkpoint).resolve())] = {'bind':'/resume_authorization.json','mode':'ro'}
+                command_args = [*command_args, '--resume-workflow', '/resume_authorization.json']
             contract = improvement_contract()
             configuration = self.root/'configuration.json'
             if configuration.exists():
@@ -171,6 +189,8 @@ class Driver:
                     render_kwargs['feedback'] = Path(prompt).read_text()
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
                               ROOT/'vendor/sica/agent_main.py', **render_kwargs)
+            if resume is not None:
+                rendered = runpy.run_path(str(ROOT/'runtime/bridge.py'))['resume_prompt'](rendered, resume)
             template_manifest = runpy.run_path(str(ROOT/'runtime/workflow.py'))['template_manifest']
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
             task_identity = {'template_manifest':template_manifest(selected_config, shared_calls), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
@@ -183,6 +203,8 @@ class Driver:
             if online:
                 task_identity.update(task_id=argument('--task-id'), round_id=argument('--round-id'),
                                      version=argument('--online-version'), online=True)
+            if resume is not None:
+                task_identity['resume_authorization_sha256'] = digest(resume_checkpoint)
             write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
         module = 'agent_code'
         if archive is not None:
@@ -199,7 +221,7 @@ class Driver:
                 relative = Path(code).resolve().relative_to(Path(archive).resolve())
                 if tree_hash(view / relative) != tree_hash(code):
                     raise RuntimeError('Online archive view source differs from selected active version')
-                if target and tree_hash(target) != selected_hash:
+                if target and resume_checkpoint is None and tree_hash(target) != selected_hash:
                     raise RuntimeError('Online candidate differs from selected active parent')
             else:
                 relative = Path(code).resolve().relative_to(Path(archive).resolve())
@@ -218,7 +240,7 @@ class Driver:
         else:
             mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
             if task_identity and task_identity.get('online') and target:
-                if tree_hash(target) != selected_hash:
+                if resume_checkpoint is None and tree_hash(target) != selected_hash:
                     raise RuntimeError('Online candidate does not start from the active parent version')
         if target:
             mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir', 'mode': 'rw'}
@@ -268,6 +290,8 @@ class Driver:
                 c.kill()
                 result = {'StatusCode': 137}
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
+            if pause_guard is not None:
+                pause_guard()
             if expired and not (logs/'result.json').exists():
                 write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
             if task_identity and (logs/'workflow_state.json').exists():

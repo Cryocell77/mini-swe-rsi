@@ -30,6 +30,49 @@ class ModelError(RuntimeError):
 TEXT_PROTOCOL = 'mini-text-bash-v4'
 
 
+DEFAULT_TRANSPORT_POLICY = {
+    'version': 1,
+    # ``None`` preserves the native broker's historical deadline behavior;
+    # online runs opt in through transport_policy.json or the constructor.
+    'request_timeout_seconds': None,
+    'pause_on_http_status': [],
+    'pause_on_invalid_completion': False,
+    'pause_on_missing_usage': False,
+    'pause_on_transport_error': False,
+}
+
+
+def _transport_policy(root, supplied):
+    """Load and validate the host-frozen transport fault policy."""
+    path = root / 'transport_policy.json'
+    if supplied is None and path.exists():
+        supplied = read(path)
+    if supplied is None:
+        return dict(DEFAULT_TRANSPORT_POLICY)
+    if not isinstance(supplied, dict):
+        raise ValueError('transport_policy must be an object')
+    allowed = set(DEFAULT_TRANSPORT_POLICY)
+    if set(supplied) - allowed:
+        raise ValueError('transport_policy has unknown fields')
+    policy = {**DEFAULT_TRANSPORT_POLICY, **supplied}
+    if type(policy.get('version')) is not int or policy['version'] != 1:
+        raise ValueError('transport_policy version must be 1')
+    timeout = policy.get('request_timeout_seconds')
+    if timeout is not None and (not isinstance(timeout, (int, float))
+                                or isinstance(timeout, bool) or not math.isfinite(timeout)
+                                or timeout <= 0):
+        raise ValueError('request_timeout_seconds must be a positive finite number or null')
+    statuses = policy.get('pause_on_http_status')
+    if (not isinstance(statuses, list)
+            or any(type(status) is not int or not 100 <= status <= 599 for status in statuses)
+            or len(set(statuses)) != len(statuses)):
+        raise ValueError('pause_on_http_status must be a list of unique HTTP status integers')
+    for key in ('pause_on_invalid_completion', 'pause_on_missing_usage', 'pause_on_transport_error'):
+        if type(policy.get(key)) is not bool:
+            raise ValueError(f'{key} must be boolean')
+    return policy
+
+
 def canonical_parameters(parameters):
     """Ollama may reorder map entries; preserve values while freezing content."""
     lines = []
@@ -104,9 +147,29 @@ def adapt_response(response):
 
 
 class Broker:
-    def __init__(self, root, budget, context=None, billing_mode=None):
+    def __init__(self, root, budget, context=None, billing_mode=None,
+                 transport_policy=None):
         self.root, self.budget = root, budget
         self.context = context if context is not None else None
+        self.transport_policy = _transport_policy(root, transport_policy)
+        self.transport_pause_path = root / 'transport_pause.json'
+        self.transport_pause = None
+        if self.transport_pause_path.exists():
+            try:
+                marker = read(self.transport_pause_path)
+            except Exception:
+                marker = None
+            if not isinstance(marker, dict) or marker.get('status') != 'paused':
+                # A file in the pause-marker location is host state.  A
+                # corrupt marker fails closed instead of silently reopening
+                # model/tool traffic after an interrupted fault.
+                marker = {'version': 1, 'status': 'paused',
+                          'reason': 'invalid_pause_marker'}
+                write(self.transport_pause_path, marker)
+            self.transport_pause = marker
+        self.pause_event = threading.Event()
+        if self.transport_pause is not None:
+            self.pause_event.set()
         self.config = secrets()
         if billing_mode is not None:
             if billing_mode != 'subscription':
@@ -114,6 +177,11 @@ class Broker:
             self.config['RSI_BILLING_MODE'] = billing_mode
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.lock = threading.Lock()
+        # The host still serializes model/tool work, while this separate
+        # condition lets finish() wait without holding up the transport.
+        self._state_condition = threading.Condition(self.lock)
+        self.request_lock = threading.Lock()
+        self._active_request_meta = None
         self.candidate_lock = threading.RLock()
         self.sessions = {}
         self.events = []
@@ -179,6 +247,137 @@ class Broker:
         self.server.shutdown()
         self.server.server_close()
 
+    def _raise_if_paused(self):
+        if self.pause_event.is_set():
+            raise ModelError('TransportPaused')
+
+    @staticmethod
+    def _valid_usage(usage):
+        keys = ('total_tokens', 'prompt_tokens', 'completion_tokens')
+        return (isinstance(usage, dict)
+                and all(type(usage.get(key)) is int and usage[key] >= 0 for key in keys))
+
+    def _pause_enabled(self, category, status=None):
+        policy = self.transport_policy
+        if category == 'http_status':
+            return status in policy['pause_on_http_status']
+        if category == 'missing_usage':
+            return policy['pause_on_missing_usage']
+        if category in ('invalid_completion', 'upstream_error', 'finish_reason_error', 'invalid_response'):
+            return policy['pause_on_invalid_completion']
+        if category in ('transport_timeout', 'transport_error'):
+            return policy['pause_on_transport_error']
+        return False
+
+    @staticmethod
+    def _safe_metrics(s):
+        return {key: s.get(key, 0) for key in (
+            'calls', 'tokens', 'prompt_tokens', 'completion_tokens',
+            'cached_tokens', 'unmetered_calls')}
+
+    def _pause_transport(self, s, category, event, status=None):
+        """Persist a secret-free sticky transport pause exactly once."""
+        if self.pause_event.is_set():
+            return
+        marker = {
+            'version': 1,
+            'status': 'paused',
+            'reason': category,
+            'event_id': event.get('event_id'),
+            'label': s.get('label'),
+            'call': event.get('call'),
+            'metrics': self._safe_metrics(s),
+        }
+        if status is not None:
+            marker['http_status'] = status
+        write(self.transport_pause_path, marker)
+        self.transport_pause = marker
+        self.pause_event.set()
+        pause_event = {'kind': 'transport_pause', **marker}
+        self.events.append(pause_event)
+        append_event(self.root, pause_event)
+
+    @staticmethod
+    def _response_fault(result):
+        if not isinstance(result, dict):
+            return 'invalid_response'
+        if result.get('error') is not None:
+            return 'upstream_error'
+        choices = result.get('choices')
+        if not isinstance(choices, list):
+            return 'invalid_response'
+        for choice in choices:
+            if isinstance(choice, dict):
+                if choice.get('finish_reason') == 'error':
+                    return 'finish_reason_error'
+                message = choice.get('message')
+                if isinstance(message, dict) and message.get('error') is not None:
+                    return 'upstream_error'
+        return None
+
+    @staticmethod
+    def _safe_response(result):
+        """Keep provider errors out of host ledgers while retaining normal output."""
+        if not isinstance(result, dict):
+            return {'error': {'type': 'invalid_response'}}
+        fault = Broker._response_fault(result)
+        if fault == 'invalid_response':
+            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
+            safe['error'] = {'type': fault}
+            return safe
+        if fault == 'finish_reason_error':
+            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
+            safe['error'] = {'type': fault}
+            return safe
+        if fault == 'upstream_error' and result.get('error') is None:
+            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
+            safe['error'] = {'type': fault}
+            return safe
+        if result.get('error') is None:
+            return result
+        safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
+        error = result.get('error')
+        if isinstance(error, dict):
+            safe_error = {key: error[key] for key in ('type', 'code') if key in error}
+        else:
+            safe_error = {'type': 'upstream_error'}
+        safe['error'] = safe_error
+        return safe
+
+    def _record_late_response(self, token, label, call, event_id, result):
+        usage = result.get('usage') if isinstance(result, dict) else None
+        valid = self._valid_usage(usage)
+        metrics = None
+        with self.lock:
+            s = self.sessions.get(token) if token is not None else None
+            if s is not None and valid:
+                s['prompt_tokens'] += usage['prompt_tokens']
+                s['completion_tokens'] += usage['completion_tokens']
+                s['tokens'] += usage['total_tokens']
+                cached = usage.get('prompt_cache_hit_tokens',
+                                   (usage.get('prompt_tokens_details') or {}).get('cached_tokens', 0))
+                if type(cached) is int and 0 <= cached <= usage['prompt_tokens']:
+                    s['cached_tokens'] += cached
+                if s.get('unmetered_calls', 0):
+                    s['unmetered_calls'] -= 1
+                metrics = self._safe_metrics(s)
+        late = {'kind': 'late_model_response', 'label': label, 'call': call,
+                'event_id': event_id, 'usage': usage if valid else None,
+                'usage_valid': valid, 'returned_to_agent': False}
+        if not valid:
+            late['usage_error'] = 'missing_or_invalid'
+        if metrics is not None:
+            late['metrics'] = metrics
+        self.events.append(late)
+        append_event(self.root, late)
+
+    def _finish_inflight(self, token):
+        with self._state_condition:
+            s = self.sessions.get(token)
+            if s is not None:
+                s['inflight'] = False
+            self._state_condition.notify_all()
+
     def register_candidate_job(self, job_id, callback, metadata=None):
         """Register one authenticated, idempotent candidate check.
 
@@ -186,6 +385,7 @@ class Broker:
         Re-registering an id is allowed only for the exact same metadata, so a
         restarted relay cannot silently point a job at another candidate.
         """
+        self._raise_if_paused()
         if not isinstance(job_id, str) or not job_id or len(job_id) > 160:
             raise ValueError('Invalid candidate job id')
         if not callable(callback):
@@ -218,6 +418,7 @@ class Broker:
 
     def candidate_check(self, token, payload, agent='main', role='orchestrator'):
         """Execute or return a frozen candidate check through the broker."""
+        self._raise_if_paused()
         if not isinstance(payload, dict):
             raise ModelError('Candidate check payload must be an object')
         job_id = payload.get('job_id')
@@ -487,13 +688,17 @@ class Broker:
                                     cost_accounting_available=bool(getattr(self, 'pricing', None)),
                                     unmetered_calls=0,
                                     deadline=time.time() + (remaining if seconds is None else min(seconds, remaining)),
-                                    max_calls=calls, tool_calls=0, errors=[], terminal_reason=None, rejected_calls=[])
+                                    max_calls=calls, tool_calls=0, errors=[], terminal_reason=None,
+                                    rejected_calls=[], inflight=False)
         return token
 
     def finish(self, token):
         # A killed controller may leave its last HTTP request finishing on the
         # broker thread. Snapshot usage only after that request is accounted for.
-        with self.lock:
+        with self._state_condition:
+            s = self.sessions[token]
+            while s.get('inflight'):
+                self._state_condition.wait()
             data = self.sessions.pop(token)
             return {k: (None if k == 'deadline' and not math.isfinite(v) else v)
                     for k, v in data.items() if k != 'solver'}
@@ -518,6 +723,7 @@ class Broker:
         raise ModelError(reason)
 
     def check_session(self, s, model_request=True):
+        self._raise_if_paused()
         kind = 'model_rejection' if model_request else 'tool_rejection'
         try:
             self.budget.check()
@@ -535,12 +741,18 @@ class Broker:
             if s['cost_upper_bound_usd'] >= s['cost_limit_usd']:
                 self.reject(s, 'CostExceeded', 'published_peak_cost_upper_bound',kind=kind)
 
-    def request_json(self, request, deadline, label, call):
-        """Bound total wall time even if an endpoint sends whitespace keepalives."""
+    def request_json(self, request, deadline, label, call, session_token=None, event_id=None):
+        """Bound one request's wall time and quarantine late transport replies."""
+        if session_token is None and event_id is None:
+            active = self._active_request_meta
+            if active is not None:
+                session_token, event_id = active
         seconds = min(deadline-time.time(), self.budget.remaining())
         if seconds <= 0:
             raise ModelError('TimeExceeded')
-        wait_seconds = seconds if math.isfinite(seconds) else None
+        watchdog = self.transport_policy.get('request_timeout_seconds')
+        watchdog_limited = watchdog is not None and (not math.isfinite(seconds) or watchdog < seconds)
+        wait_seconds = min(seconds, watchdog) if watchdog is not None else (seconds if math.isfinite(seconds) else None)
         replies = queue.Queue(maxsize=1)
         expired = threading.Event()
         responses = []
@@ -550,12 +762,20 @@ class Broker:
                 with self.opener.open(request, timeout=wait_seconds) as response:
                     responses.append(response)
                     result = json.load(response)
-                replies.put((True,result))
                 if expired.is_set():
-                    append_event(self.root, {'kind':'late_model_response','label':label,'call':call,
-                        'usage':result.get('usage'), 'returned_to_agent':False})
+                    self._record_late_response(session_token, label, call, event_id, result)
+                    return
+                try:
+                    replies.put_nowait((True, result))
+                except queue.Full:
+                    # A timed-out caller owns the decision; a late reply is
+                    # accounted by the branch above and never reaches it.
+                    self._record_late_response(session_token, label, call, event_id, result)
             except Exception as exc:
-                replies.put((False,exc))
+                try:
+                    replies.put_nowait((False,exc))
+                except queue.Full:
+                    pass
 
         threading.Thread(target=fetch,daemon=True).start()
         try:
@@ -570,14 +790,23 @@ class Broker:
                         connection.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
-            raise ModelError('TimeExceeded') from None
+            raise ModelError('TransportTimeout' if watchdog_limited else 'TimeExceeded') from None
         if not success:
             raise result
         return result
 
     def complete(self, token, payload, agent='main', role='orchestrator'):
+        with self.request_lock:
+            try:
+                return self._complete_impl(token, payload, agent, role)
+            finally:
+                self._finish_inflight(token)
+
+    def _complete_impl(self, token, payload, agent='main', role='orchestrator'):
         with self.lock:
             s = self.sessions[token]
+            self._raise_if_paused()
+            s['inflight'] = True
             limits = self.budget_limits()
             self.check_session(s)
             if role not in ('orchestrator', *limits['role_iterations']) or not isinstance(agent,str) or len(agent)>128:
@@ -624,12 +853,52 @@ class Broker:
                     protocol=TEXT_PROTOCOL, agent=agent, role=role, iteration=iteration+1,
                     continuation_index=attempt, logical_completion_final=False, original_messages=messages,
                     original_characters=original_chars, normalized_characters=len(json.dumps(current,ensure_ascii=False)), **measurement)
+                event['event_id'] = f"{s['label']}:call:{s['calls']}:attempt:{attempt}"
                 event['wire_messages_sha256'] = hashlib.sha256(json.dumps(wire,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
                 try:
-                    result = self.request_json(request,s['deadline'],s['label'],s['calls'])
-                    event.update(messages=wire, response=result)
+                    # Do not hold the state lock across provider I/O.  finish()
+                    # waits on ``inflight`` and can therefore account usage
+                    # without queueing behind a slow transport.
+                    self.lock.release()
+                    try:
+                        self._active_request_meta = (token, event['event_id'])
+                        result = self.request_json(request, s['deadline'], s['label'], s['calls'])
+                    finally:
+                        self._active_request_meta = None
+                        self.lock.acquire()
+                    event.update(messages=wire, response=self._safe_response(result))
+                    response_fault = self._response_fault(result)
                     usage = result.get('usage', {})
+                    if response_fault is not None:
+                        event['transport_fault'] = response_fault
+                        if not isinstance(usage,dict) or any(type(usage.get(k)) is not int or usage[k]<0 for k in aggregate_usage):
+                            event['missing_usage'] = True
+                        else:
+                            # A provider can attach billable usage to an
+                            # error completion.  Record valid counts without
+                            # ever handing the failed response to the agent.
+                            cached = usage.get('prompt_cache_hit_tokens',
+                                               (usage.get('prompt_tokens_details') or {}).get('cached_tokens', 0))
+                            if not (type(cached) is int and 0 <= cached <= usage['prompt_tokens']):
+                                cached = 0
+                                event['cache_usage_invalid'] = True
+                            for key in aggregate_usage:
+                                aggregate_usage[key] += usage[key]
+                            for key in ('prompt_tokens', 'completion_tokens'):
+                                s[key] += usage[key]
+                            s['tokens'] += usage['total_tokens']
+                            s['cached_tokens'] += cached
+                            event['usage'] = usage
+                            if getattr(self, 'pricing', None):
+                                price = self.pricing
+                                cost = ((usage['prompt_tokens'] - cached) * price['input_per_million']
+                                        + cached * price['cached_input_per_million']
+                                        + usage['completion_tokens'] * price['output_per_million']) / 1e6
+                                s['cost_upper_bound_usd'] += cost
+                                event['cost_upper_bound_usd'] = cost
+                        raise ModelError('Upstream completion error')
                     if not isinstance(usage,dict) or any(type(usage.get(k)) is not int or usage[k]<0 for k in aggregate_usage):
+                        event['transport_fault'] = 'missing_usage'
                         raise ModelError('Endpoint omitted usage; token accounting unavailable')
                     cached = usage.get('prompt_cache_hit_tokens', (usage.get('prompt_tokens_details') or {}).get('cached_tokens',0))
                     cache_valid = type(cached) is int and 0 <= cached <= usage['prompt_tokens']
@@ -708,6 +977,7 @@ class Broker:
                     reason = str(exc) if isinstance(exc,ModelError) else type(exc).__name__
                     if isinstance(exc, urllib.error.HTTPError):
                         event['http_status'] = exc.code
+                        event['transport_fault'] = 'http_status'
                     if reason == 'TimeExceeded':
                         s['terminal_reason'] = reason
                     if isinstance(exc,urllib.error.HTTPError) and exc.code == 400:
@@ -723,6 +993,22 @@ class Broker:
                     if 'usage' not in event:
                         s['unmetered_calls'] += 1
                     event['error'] = reason
+                    category = event.get('transport_fault')
+                    status = event.get('http_status')
+                    if category is None:
+                        if reason == 'TransportTimeout' or 'timeout' in type(exc).__name__.lower():
+                            category = 'transport_timeout'
+                        elif (isinstance(exc, (urllib.error.URLError, TimeoutError, socket.timeout))
+                              or not isinstance(exc, ModelError)):
+                            category = 'transport_error'
+                    if category is not None and not self._pause_enabled(category, status):
+                        if event.get('missing_usage') and self._pause_enabled('missing_usage'):
+                            category = 'missing_usage'
+                        else:
+                            category = None
+                    if category is not None and self._pause_enabled(category, status):
+                        self._pause_transport(s, category, event, status=status)
+                    event['metrics'] = self._safe_metrics(s)
                     raise ModelError(reason) from None
                 finally:
                     event['seconds'] = time.time()-start
@@ -730,8 +1016,18 @@ class Broker:
                     append_event(self.root,event)
 
     def tool(self, token, action):
-        s = self.sessions[token]
-        self.check_session(s, model_request=False)
+        with self.request_lock:
+            try:
+                return self._tool_impl(token, action)
+            finally:
+                self._finish_inflight(token)
+
+    def _tool_impl(self, token, action):
+        with self.lock:
+            s = self.sessions[token]
+            self._raise_if_paused()
+            self.check_session(s, model_request=False)
+            s['inflight'] = True
         if not s['solver']:
             raise ModelError('Tool session unavailable')
         command = action.get('command', '')

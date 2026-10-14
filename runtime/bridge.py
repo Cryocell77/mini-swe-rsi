@@ -1,6 +1,7 @@
 """Immutable entrypoint; all editable agent/model modules load from the selected archive."""
 import argparse
 import ast
+import functools
 import json
 import hashlib
 import os
@@ -10,6 +11,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+import httpx
 import yaml
 
 
@@ -22,6 +24,128 @@ def unbounded_observation(template):
 
 def budget_config():
     return json.loads(os.environ['RSI_BUDGET_CONFIG'])
+
+
+def model_request_timeout(budget):
+    """Resolve the SDK timeout without turning an unbounded host budget into 600s."""
+    remaining = budget.get('global_remaining_seconds')
+    return httpx.Timeout(None) if remaining is None else remaining
+
+
+def apply_model_request_timeout(model, budget):
+    """Inject an unbounded timeout only at the SDK call boundary.
+
+    The model config remains JSON/Pydantic serializable for trajectory saves;
+    the ``httpx.Timeout`` object lives only in the bound request method.
+    """
+    if budget.get('global_remaining_seconds') is None:
+        model._query = functools.partial(model._query, timeout=model_request_timeout(budget))
+    return model
+
+
+def is_model_request_exception(exc):
+    """Identify provider/socket failures that must stop role fan-out."""
+    cls = type(exc)
+    module = cls.__module__
+    name = cls.__name__
+    return (module.startswith(('litellm', 'openai', 'httpx', 'requests'))
+            or name in {'APIError', 'APITimeoutError', 'Timeout', 'TimeoutException',
+                        'ConnectError', 'ConnectTimeout', 'ReadTimeout', 'RemoteProtocolError'})
+
+
+def load_resume_authorization(path, logs, expected_identity, workdir, workflow_module):
+    """Validate the host-only online workflow continuation authorization."""
+    path = Path(path)
+    logs = Path(logs)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('Resume authorization must be a regular file')
+    try:
+        authorization_bytes = path.read_bytes()
+        authorization = json.loads(authorization_bytes)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError('Resume authorization is unreadable') from exc
+    required = {'schema', 'state_sha256', 'state', 'identities', 'candidate_source_sha256'}
+    if (not isinstance(authorization, dict) or not required.issubset(authorization)
+            or authorization.get('schema') != workflow_module.RESUME_SCHEMA):
+        raise ValueError('Invalid online workflow resume authorization schema')
+    if (not isinstance(authorization['state_sha256'], str)
+            or not isinstance(authorization['candidate_source_sha256'], str)):
+        raise ValueError('Resume authorization hashes are invalid')
+    state_path = logs/'workflow_state.json'
+    if state_path.is_symlink() or not state_path.is_file():
+        raise ValueError('Resume authorization has no original workflow state')
+    state_bytes = state_path.read_bytes()
+    state_sha256 = hashlib.sha256(state_bytes).hexdigest()
+    if authorization['state_sha256'] != state_sha256:
+        raise ValueError('Resume workflow state hash mismatch')
+    try:
+        state = json.loads(state_bytes)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Original workflow state is unreadable') from exc
+    if authorization['state'] != state:
+        raise ValueError('Resume authorization state differs from original state')
+    active = state.get('active') if isinstance(state, dict) else None
+    if (not isinstance(active, dict) or type(active.get('index')) is not int
+            or not 0 <= active['index'] <= 3
+            or state.get('completed_steps') != active['index']
+            or state.get('status') not in ('active', 'diagnosis_pending', 'improving')
+            or state.get('candidate_check') is not None):
+        raise ValueError('Resume authorization does not identify an active pre-check workflow')
+    identities = authorization['identities']
+    if not isinstance(identities, dict) or set(identities) != set(expected_identity):
+        raise ValueError('Resume authorization identities are invalid')
+    for key, expected in expected_identity.items():
+        if identities.get(key) != expected:
+            raise ValueError(f'Resume authorization identity mismatch: {key}')
+    source_hash = workflow_module.candidate_source_hash(workdir)
+    if authorization['candidate_source_sha256'] != source_hash:
+        raise ValueError('Resume candidate source hash mismatch')
+    cache_seed = authorization.get('committee_cache_seed', [])
+    if not isinstance(cache_seed, list):
+        raise ValueError('Resume committee cache seed is invalid')
+    return {'state':state, 'committee_cache_seed':cache_seed, 'identities':identities,
+            'candidate_source_sha256':authorization['candidate_source_sha256'],
+            'authorization_sha256':hashlib.sha256(authorization_bytes).hexdigest()}
+
+
+def _resume_context(state, source_exists=True):
+    """Render the fixed continuation context shared by host and container."""
+    if not isinstance(state, dict):
+        raise ValueError('Resume authorization state is invalid')
+    active = state.get('active') or {}
+    diagnosis = state.get('diagnosis')
+    reports = diagnosis.get('reports', {}) if isinstance(diagnosis, dict) else {}
+    summaries = []
+    for key in ('1', '2'):
+        report = reports.get(key, {}) if isinstance(reports, dict) else {}
+        if isinstance(report, dict):
+            summaries.append(f'step {key}: {str(report.get("report", ""))[:1200]}')
+    source_text = 'present' if source_exists else 'missing'
+    return ('\nEXPLICIT HOST-AUTHORIZED WORKFLOW RESUME. This is a new model context; '
+            'the prior model conversation is not resumed. The candidate source is '
+            + source_text + '. The saved workflow is already at stage '
+            + str(active.get('index')) + ' with '
+            + str(state.get('completed_steps')) + ' completed steps and status '
+            + str(state.get('status')) + '. Completed diagnostic summary:\n'
+            + ('\n'.join(summaries) if summaries else '(none)')
+            + '\nDo not invoke a new reasoning structure and do not repeat completed steps. '
+              'First call the current state operation, then continue from its returned stage.\n')
+
+
+def resume_prompt(base_task, authorization):
+    """Add the host-authorized continuation context to a rendered task.
+
+    The helper is deliberately importable through ``runpy`` so the host can
+    render the same bytes before starting the container.  It is idempotent to
+    support callers that already passed ``resume_state`` to ``improvement_prompt``.
+    """
+    if not isinstance(base_task, str):
+        raise ValueError('Resume prompt base task must be text')
+    if not isinstance(authorization, dict) or not isinstance(authorization.get('state'), dict):
+        raise ValueError('Resume authorization is invalid')
+    marker = '\nEXPLICIT HOST-AUTHORIZED WORKFLOW RESUME.'
+    return base_task if marker in base_task else base_task + _resume_context(
+        authorization['state'], authorization.get('candidate_source_sha256') is not None)
 
 
 def rpc(path, value, identity='main', role='orchestrator'):
@@ -45,7 +169,8 @@ def classified_failure(exc, status):
 
 def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"),
                        calls=500, budget=None, online=False, task_id=None,
-                       round_id=None, version=None, feedback=None):
+                       round_id=None, version=None, feedback=None,
+                       resume_state=None, resume_source_exists=None):
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
     # Preserve the upstream task intent; adapt tool terminology and execution identities.
@@ -115,8 +240,14 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
     rendered = workflow_module.core_prompt('main_orchestrator', {'problem_statement':text})
     if online:
         rendered += f'\nActive Harness version is {version or f"H{parent:04d}"}; this identity is host-verified.\n'
-    return rendered + workflow_module.identity_context(
+    rendered += workflow_module.identity_context(
         {'parent':parent,'proposer':best,'candidate':candidate,'workdir':'/home/agent/workdir','public_archive':'/home/agent/archive'}, {'active':None})
+    if online and resume_state is not None:
+        rendered = resume_prompt(rendered, {
+            'state':resume_state,
+            'candidate_source_sha256': 'present' if resume_source_exists else None,
+        })
+    return rendered
 
 
 def main(entry):
@@ -135,6 +266,8 @@ def main(entry):
     parser.add_argument('--task-id')
     parser.add_argument('--round-id')
     parser.add_argument('--online-version')
+    parser.add_argument('--resume-workflow', type=Path,
+                        help='Host-authorized online workflow continuation file')
     args = parser.parse_args()
     budgets = budget_config()
     main_iterations = budgets['main_iterations']
@@ -177,6 +310,20 @@ def main(entry):
         spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
         workflow_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(workflow_module)
+        resume_authorization = None
+        if args.resume_workflow is not None:
+            if not args.online:
+                raise ValueError('Workflow resume is available only for online improvement')
+            expected_identity = {
+                'task_id': args.task_id,
+                'round_id': args.round_id,
+                'version': args.online_version,
+                'parent': args.parent_iter,
+                'proposer': args.best_iter,
+                'candidate': args.candidate_id,
+            }
+            resume_authorization = load_resume_authorization(
+                args.resume_workflow, args.logdir, expected_identity, args.workdir, workflow_module)
         templates = workflow_module.template_manifest(selected_config, main_iterations)
         config = workflow_module.role_templates(selected_config, 'orchestrator', main_iterations)
         if args.online:
@@ -195,12 +342,19 @@ def main(entry):
     environment = TaskEnvironment(
         cwd='/testbed' if args.command == 'benchmark' else args.workdir, timeout=budgets['command_default_seconds'],
         env=config['environment'].get('env', {}))
-    agent = DefaultAgent(LitellmTextbasedModel(**model_config), environment, **config['agent'])
+    agent_model = apply_model_request_timeout(LitellmTextbasedModel(**model_config), budgets)
+    agent = DefaultAgent(agent_model, environment, **config['agent'])
     logs = Path(args.logdir)
     logs.mkdir(parents=True, exist_ok=True)
     # This evidence is supplementary; host independently records the mounted source digest and model calls.
     activation = {'agent_file': str(Path(sys.modules[DefaultAgent.__module__].__file__).resolve()),
                   'budget':budgets, 'step_limit':main_iterations, 'wall_time_limit_seconds':wall_seconds,
+                  'model_timeout_contract': {
+                      'config_timeout': budgets['global_remaining_seconds'],
+                      'request_timeout': ('httpx.Timeout(None)' if budgets['global_remaining_seconds'] is None
+                                          else budgets['global_remaining_seconds']),
+                      'injected_at_query_boundary': budgets['global_remaining_seconds'] is None,
+                  },
                   'model_file': str(Path(sys.modules[LitellmTextbasedModel.__module__].__file__).resolve()),
                   'config_file': str(code / 'minisweagent/config/mini_textbased.yaml'),
                   'platform': platform.uname()._asdict(),
@@ -214,6 +368,8 @@ def main(entry):
                                   calls=main_iterations, budget=budgets, online=args.online,
                                   task_id=args.task_id, round_id=args.round_id,
                                   version=args.online_version, feedback=feedback)
+        if resume_authorization:
+            task = resume_prompt(task, resume_authorization)
         metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -225,6 +381,8 @@ def main(entry):
         if args.online:
             metadata.update(online=True, task_id=args.task_id, round_id=args.round_id,
                             version=args.online_version)
+        if resume_authorization:
+            metadata['resume_authorization_sha256'] = resume_authorization['authorization_sha256']
         (logs / 'improvement_task.json').write_text(json.dumps(metadata))
         (logs / 'improvement_prompt.txt').write_text(task)
     else:
@@ -235,9 +393,12 @@ def main(entry):
         workflow_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(workflow_module)
         identities = {'parent':args.parent_iter, 'proposer':args.best_iter, 'candidate':args.candidate_id,
-                      'workdir':args.workdir, 'public_archive':'/home/agent/archive'}
+                      'workdir':args.workdir, 'public_archive':'/home/agent/archive',
+                      'model':os.environ.get('RSI_MODEL'),
+                      'source_execution_hash':workflow_module.execution_hash(args.workdir)}
         if args.online:
-            identities.update(version=args.online_version, executor=args.online_version,
+            identities.update(version=args.online_version, parent_version=args.online_version,
+                              executor=args.online_version,
                               task_id=args.task_id, round_id=args.round_id)
         def failure(exc):
             try:
@@ -263,7 +424,9 @@ def main(entry):
             child_model_config['model_kwargs'] = {**model_config['model_kwargs'], 'extra_headers':{'X-RSI-Agent':identity,'X-RSI-Role':role}}
             child_environment.identity, child_environment.role = identity, role
             child_environment.readonly = True if readonly else 'editor'
-            child = DefaultAgent(LitellmTextbasedModel(**child_model_config), child_environment, **child_config)
+            child_model = apply_model_request_timeout(
+                LitellmTextbasedModel(**child_model_config), budgets)
+            child = DefaultAgent(child_model, child_environment, **child_config)
             (child_logs/'activation.json').write_text(json.dumps({**activation, 'role':identity,
                           'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True,
                           'template_sha256':templates['roles'][role], 'identities':identities,
@@ -272,6 +435,13 @@ def main(entry):
                 result = child.run(prompt, session_status=rpc('/status', {}, identity, role))
             except Exception as exc:
                 result = failure(exc)
+                budget_exit = result.get('exit_status') in (
+                    'LimitsExceeded', 'TimeExceeded', 'ContextLimitExceeded',
+                    'InputIntegrityError', 'CostExceeded')
+                if workflow_module.is_model_request_exception(exc) and not budget_exit:
+                    (child_logs/'result.json').write_text(json.dumps(result))
+                    raise workflow_module.WorkflowTransportError(
+                        f'{type(exc).__name__}: {exc}') from exc
             finally:
                 child.save(child_logs/'trajectory.json')
             (child_logs/'result.json').write_text(json.dumps(result))
@@ -292,7 +462,10 @@ def main(entry):
                        'main', 'orchestrator')
         workflow = workflow_module.Workflow(logs, delegate, identities=identities,
                                             online=args.online, feedback=feedback_data,
-                                            candidate_check=candidate_check if args.online else None)
+                                            candidate_check=candidate_check if args.online else None,
+                                            resume_state=resume_authorization['state'] if resume_authorization else None,
+                                            resume_committee_cache=(resume_authorization['committee_cache_seed']
+                                                                    if resume_authorization else None))
         environment.readonly = 'orchestrator'
     start = time.time()
     try:

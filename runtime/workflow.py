@@ -16,6 +16,52 @@ if not SOURCE.exists():
     SOURCE = Path('/workflow_sources')
 
 FINAL_OUTPUT_SENTINEL = 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'
+RESUME_SCHEMA = 'online-workflow-resume-v1'
+
+
+class WorkflowTransportError(RuntimeError):
+    """A model transport failure that must stop the parent agent immediately."""
+
+
+def is_model_request_exception(exc):
+    """Recognize provider and HTTP transport failures as process-fatal."""
+    cls = type(exc)
+    return (cls.__module__.startswith(('litellm', 'openai', 'httpx', 'requests'))
+            or cls.__name__ in {'APIError', 'APITimeoutError', 'Timeout', 'TimeoutException',
+                                'ConnectError', 'ConnectTimeout', 'ReadTimeout',
+                                'RemoteProtocolError'})
+
+
+def execution_hash(path):
+    """Hash the selected runtime files using the host's execution identity rules."""
+    root = Path(path)
+    if not root.exists() or not root.is_dir():
+        return None
+    excluded_root = {'README.md', 'LICENSE.mini', 'description.txt', 'agent_change_log.md'}
+    digest = hashlib.sha256()
+    for item in sorted(root.rglob('*')):
+        if (not item.is_file() or item.is_symlink() or '__pycache__' in item.parts):
+            continue
+        relative = item.relative_to(root)
+        if relative.parts and relative.parts[0] != 'minisweagent' and item.name not in ('__init__.py', '__main__.py'):
+            continue
+        if len(relative.parts) == 1 and item.name in excluded_root:
+            continue
+        digest.update(str(relative).encode() + b'\0' + item.read_bytes())
+    return digest.hexdigest()
+
+
+def candidate_source_hash(path):
+    """Hash every regular file in a candidate tree for resume authorization."""
+    root = Path(path)
+    if not root.exists() or not root.is_dir():
+        return None
+    digest = hashlib.sha256()
+    for item in sorted(root.rglob('*')):
+        if not item.is_file() or item.is_symlink() or '__pycache__' in item.parts:
+            continue
+        digest.update(str(item.relative_to(root)).encode() + b'\0' + item.read_bytes())
+    return digest.hexdigest()
 
 
 def definitions(source=SOURCE):
@@ -192,7 +238,8 @@ def identity_context(identities, active_stage):
 
 class Workflow:
     def __init__(self, logs, delegate, source=SOURCE, identities=None, online=False,
-                 feedback=None, candidate_check=None):
+                 feedback=None, candidate_check=None, resume_state=None,
+                 resume_committee_cache=None):
         self.logs = Path(logs)
         self.logs.mkdir(parents=True, exist_ok=True)
         self.delegate = delegate
@@ -210,16 +257,121 @@ class Workflow:
         self.diagnosis = None
         self.diagnostic_reports = {}
         self.diagnostic_role_evidence = {}
+        self.committee_cache = {}
         self.check_plan = None
         self.counter = 0
-        # A fresh launch never resumes an interrupted model conversation or invents completions.
-        if (self.logs/'workflow_state.json').exists():
+        state_path = self.logs/'workflow_state.json'
+        if resume_state is not None:
+            if not self.online:
+                raise ValueError('Workflow resume is available only for an online workflow')
+            self._restore_state(resume_state, state_path)
+            self._restore_committee_cache(resume_committee_cache)
+        elif state_path.exists():
+            # A fresh launch never resumes an interrupted model conversation or
+            # invents completions.  The bridge must supply explicit host-bound
+            # resume_state to cross this boundary.
             raise ValueError('Refusing to overwrite existing workflow state; interrupted execution is not resumable')
         if self.online:
             if not self.feedback:
                 raise ValueError('Online workflow requires a public task feedback package')
             self._write_feedback_index()
         self.save()
+
+    @staticmethod
+    def _resume_state_fields():
+        return ('active', 'role_calls', 'status', 'completed_steps',
+                'skipped_steps', 'diagnosis', 'diagnostic_reports',
+                'diagnostic_role_evidence', 'committee_cache', 'check_plan',
+                'candidate_check')
+
+    def _restore_state(self, state, state_path):
+        if not isinstance(state, dict):
+            raise ValueError('Invalid online workflow resume state schema')
+        fields = set(self._resume_state_fields())
+        legacy_fields = fields - {'committee_cache'}
+        if set(state) not in (fields, legacy_fields):
+            raise ValueError('Invalid online workflow resume state schema')
+        if state_path.exists():
+            try:
+                on_disk = json.loads(state_path.read_text())
+            except (OSError, ValueError, TypeError) as exc:
+                raise ValueError('Existing workflow state is unreadable') from exc
+            if on_disk != state:
+                raise ValueError('Resume state differs from the existing workflow state')
+        active = state['active']
+        if active is not None:
+            if not isinstance(active, dict) or set(active) != {'invocation_id', 'index', 'step_ids'}:
+                raise ValueError('Resume active state is malformed')
+            if (not isinstance(active['invocation_id'], str) or not active['invocation_id']
+                    or type(active['index']) is not int or not 0 <= active['index'] < len(self.steps)
+                    or not isinstance(active['step_ids'], list)
+                    or len(active['step_ids']) != len(self.steps)
+                    or any(not isinstance(item, str) or not item for item in active['step_ids'])):
+                raise ValueError('Resume active state is invalid')
+        if type(state['role_calls']) is not int or state['role_calls'] < 0:
+            raise ValueError('Resume role_calls must be a non-negative integer')
+        if type(state['completed_steps']) is not int or not 0 <= state['completed_steps'] <= len(self.steps):
+            raise ValueError('Resume completed_steps is invalid')
+        if not isinstance(state['skipped_steps'], list) or any(
+                type(item) is not int or not 1 <= item <= len(self.steps)
+                for item in state['skipped_steps']):
+            raise ValueError('Resume skipped_steps is invalid')
+        if (not isinstance(state['diagnostic_reports'], dict)
+                or not isinstance(state['diagnostic_role_evidence'], dict)):
+            raise ValueError('Resume diagnostic state is invalid')
+        if 'committee_cache' in state and not isinstance(state['committee_cache'], list):
+            raise ValueError('Resume committee cache is invalid')
+        if state['check_plan'] is not None and not isinstance(state['check_plan'], dict):
+            raise ValueError('Resume check_plan is invalid')
+        if state['candidate_check'] is not None and not isinstance(state['candidate_check'], dict):
+            raise ValueError('Resume candidate_check is invalid')
+        valid_statuses = {'not_invoked', 'active', 'diagnosis_pending', 'diagnosis_failed',
+                          'improving', 'completed', 'failed', 'incomplete',
+                          'skipped_no_actionable_improvement'}
+        if state['status'] not in valid_statuses:
+            raise ValueError('Resume status is invalid')
+        if active is None or state['status'] not in ('active', 'diagnosis_pending', 'improving'):
+            raise ValueError('Resume requires an active online workflow')
+        if state['completed_steps'] != active['index']:
+            raise ValueError('Resume completed_steps must match the active stage index')
+        self.active = copy.deepcopy(active)
+        self.counter = state['role_calls']
+        self.status = state['status']
+        self.completed_steps = state['completed_steps']
+        self.skipped_steps = copy.deepcopy(state['skipped_steps'])
+        self.diagnosis = copy.deepcopy(state['diagnosis'])
+        self.diagnostic_reports = copy.deepcopy(state['diagnostic_reports'])
+        self.diagnostic_role_evidence = copy.deepcopy(state['diagnostic_role_evidence'])
+        self.check_plan = copy.deepcopy(state['check_plan'])
+        self.candidate_check_result = copy.deepcopy(state['candidate_check'])
+        self._restore_committee_cache(state.get('committee_cache', []))
+
+    def _restore_committee_cache(self, seeds):
+        if seeds is None:
+            return
+        if not isinstance(seeds, list):
+            raise ValueError('Resume committee cache seed must be a list')
+        for seed in seeds:
+            if not isinstance(seed, dict):
+                raise ValueError('Resume committee cache seed is malformed')
+            required = {'context', 'proposal', 'reviewer_specialisation_name',
+                        'submission', 'role_identity', 'source_execution_hash'}
+            if not required.issubset(seed):
+                raise ValueError('Resume committee cache seed is incomplete')
+            if (not isinstance(seed['context'], str) or not isinstance(seed['proposal'], str)
+                    or not isinstance(seed['reviewer_specialisation_name'], str)
+                    or not isinstance(seed['submission'], str)
+                    or not isinstance(seed['role_identity'], str) or not seed['role_identity']
+                    or not isinstance(seed['source_execution_hash'], str)):
+                raise ValueError('Resume committee cache seed has invalid types')
+            entry = self._committee_cache_entry(seed['proposal'], seed['context'],
+                                                seed['reviewer_specialisation_name'],
+                                                seed['submission'], seed['role_identity'],
+                                                seed['source_execution_hash'],
+                                                seed.get('parent_version'), seed.get('model'),
+                                                require_current=False)
+            if entry is not None:
+                self.committee_cache[entry['cache_key']] = entry
 
     def _write_feedback_index(self):
         """Persist the public facts supplied to diagnosis without private grader data."""
@@ -255,6 +407,7 @@ class Workflow:
                                          'diagnosis':self.diagnosis,
                                          'diagnostic_reports':self.diagnostic_reports,
                                          'diagnostic_role_evidence':self.diagnostic_role_evidence,
+                                         'committee_cache':list(self.committee_cache.values()),
                                          'check_plan':self.check_plan,
                                          'candidate_check':self.candidate_check_result}, ensure_ascii=False))
         temporary.replace(self.logs/'workflow_state.json')
@@ -315,6 +468,8 @@ class Workflow:
             return result.get('submission','')
         except Exception as exc:
             self.event(kind='role_error', identity=identity, error=str(exc))
+            if is_model_request_exception(exc):
+                raise WorkflowTransportError(f'{type(exc).__name__}: {exc}') from exc
             raise
 
     def dispatch(self, request, role='orchestrator'):
@@ -485,7 +640,9 @@ class Workflow:
         if op == 'committee':
             reviews = ''
             for i,(name,spec) in enumerate(self.specs.items()):
-                reviews += f"\n\nReviewer {i}'s review:\n"+self.call_role('reviewer',request['proposal'],spec,request['context'])
+                submission, role_identity = self._committee_review(
+                    request['proposal'], request['context'], name, spec)
+                reviews += f"\n\nReviewer {i}'s review:\n" + submission
             return reviews
         if op == 'archive':
             if self.online:
@@ -508,6 +665,68 @@ class Workflow:
         if op in ('read','list','search'):
             return self.inspect(request)
         raise ValueError('Unknown workflow operation')
+
+    def _source_execution_hash(self):
+        workdir = self.identities.get('workdir')
+        if workdir and Path(workdir).is_dir():
+            return execution_hash(workdir)
+        supplied = self.identities.get('source_execution_hash')
+        if isinstance(supplied, str) and supplied:
+            return supplied
+        return None
+
+    def _committee_cache_context(self, proposal, context):
+        return {
+            'proposal': proposal,
+            'context': context,
+            'parent_version': self.identities.get('parent_version', self.identities.get('version')),
+            'model': self.identities.get('model'),
+            'source_execution_hash': self._source_execution_hash(),
+        }
+
+    @staticmethod
+    def _committee_cache_key(context, specialisation):
+        return json.dumps({**context, 'reviewer_specialisation_name':specialisation},
+                          ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+    def _committee_cache_entry(self, proposal, context, specialisation, submission,
+                               role_identity, source_execution_hash,
+                               parent_version=None, model=None, require_current=True):
+        current = self._committee_cache_context(proposal, context)
+        stored_parent = current['parent_version'] if parent_version is None else parent_version
+        stored_model = current['model'] if model is None else model
+        if (require_current and (source_execution_hash != current['source_execution_hash']
+                or stored_parent != current['parent_version']
+                or stored_model != current['model'])):
+            return None
+        cache_context = {'proposal': proposal, 'context': context,
+                         'parent_version': stored_parent, 'model': stored_model,
+                         'source_execution_hash': source_execution_hash}
+        return {'cache_key': self._committee_cache_key(cache_context, specialisation),
+                'proposal': proposal, 'context': context,
+                'reviewer_specialisation_name': specialisation,
+                'submission': submission, 'role_identity': role_identity,
+                'source_execution_hash': source_execution_hash,
+                'parent_version': stored_parent, 'model': stored_model}
+
+    def _committee_review(self, proposal, context, specialisation, task):
+        cache_context = self._committee_cache_context(proposal, context)
+        if all(value is not None for value in cache_context.values()):
+            key = self._committee_cache_key(cache_context, specialisation)
+            cached = self.committee_cache.get(key)
+            if isinstance(cached, dict):
+                return cached['submission'], cached['role_identity']
+        before = self.counter
+        submission = self.call_role('reviewer', proposal, task, context)
+        role_identity = f'{before + 1:03d}_reviewer'
+        entry = self._committee_cache_entry(
+            proposal, context, specialisation, submission, role_identity,
+            cache_context['source_execution_hash'], cache_context['parent_version'],
+            cache_context['model'])
+        if entry is not None:
+            self.committee_cache[entry['cache_key']] = entry
+            self.save()
+        return submission, role_identity
 
     def _require_diagnostic_role_evidence(self, step):
         """Require host-recorded archive evidence before online diagnosis advances."""
@@ -678,6 +897,11 @@ class Workflow:
                     return {'output':parts[2]+'\n','returncode':0}
                 raise ValueError('Role permits only structured workflow operations or exact submission')
             return None
+        except WorkflowTransportError:
+            # A provider request failure is terminal for this model process;
+            # returning a normal tool error would invite the coordinator to
+            # spend more calls on unrelated roles.
+            raise
         except Exception as exc:
             self.event(kind='operation_error', requested_op=requested_op, error=str(exc))
             return {'output':str(exc),'returncode':1}
