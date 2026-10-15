@@ -677,9 +677,14 @@ class Driver:
         execution_after = execution_hash(candidate)
         if before != after or execution_before != execution_after:
             raise InfrastructureError('Candidate source changed during independent check')
-        host = output / 'attempt_0' / 'host_result.json'
-        if not host.exists():
-            host = output / 'host_result.json'
+        # task_retry may return the second infrastructure attempt. Use its
+        # matching durable record rather than attributing an absent first result.
+        host = output / 'host_result.json'
+        for attempt in range(2):
+            path = output / f'attempt_{attempt}' / 'host_result.json'
+            if path.exists() and read(path).get('record') == result:
+                host = path
+                break
         evidence = read(host) if host.exists() else {}
         private = {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
                    'candidate_hash':after, 'execution_hash':execution_after,

@@ -140,3 +140,57 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
     finally:
         if driver:driver.close()
         broker.close();endpoint.close()
+
+
+def test_explicit_step5_resume_binds_frozen_candidate(tmp_path):
+    import shutil
+    root,logs,candidate,identities,path=authorization_fixture(tmp_path)
+    state=read(logs/'workflow_state.json')
+    state['active']['index']=4
+    state['completed_steps']=4
+    state['check_plan']={'criterion':'current_task_failure_fixed'}
+    write(logs/'workflow_state.json',state)
+    auth=read(path)
+    auth.update(state=state,state_sha256=digest(logs/'workflow_state.json'))
+    write(path,auth)
+    with pytest.raises(ValueError,match='explicit incomplete-check'):
+        load_workflow_authorization(path,root,logs,candidate,identities)
+    auth['resume_incomplete_check']=True
+    write(path,auth)
+    with pytest.raises(ValueError,match='frozen candidate'):
+        load_workflow_authorization(path,root,logs,candidate,identities)
+    shutil.copytree(candidate,logs/'candidate_check_source')
+    assert load_workflow_authorization(path,root,logs,candidate,identities)['state']['completed_steps']==4
+    (logs/'candidate_check_source/partial.py').write_text('tampered')
+    with pytest.raises(ValueError,match='frozen candidate'):
+        load_workflow_authorization(path,root,logs,candidate,identities)
+
+
+def test_restore_still_rejects_completed_candidate_check(tmp_path):
+    root,logs,candidate,identities,path=authorization_fixture(tmp_path)
+    state=read(logs/'workflow_state.json');state['candidate_check']={'result':{'passed':True}}
+    write(logs/'workflow_state.json',state)
+    auth=read(path);auth.update(state=state,state_sha256=digest(logs/'workflow_state.json'))
+    write(path,auth)
+    with pytest.raises(ValueError,match='unfinished workflow'):
+        load_workflow_authorization(path,root,logs,candidate,identities)
+
+
+def test_candidate_check_uses_second_attempt_evidence(tmp_path, monkeypatch):
+    from mini_swe_rsi.driver import Driver
+    import mini_swe_rsi.driver as module
+    code=tmp_path/'code';code.mkdir();(code/'agent.py').write_text('pass\n')
+    output=tmp_path/'check'
+    record={'score':1.0,'problem_id':'t1'}
+    write(output/'attempt_1/host_result.json', {
+        'record':record,'result':{'exit_status':'Submitted'},
+        'grade':{'resolved':True},'metrics':{'calls':7}})
+    monkeypatch.setattr(module,'validate_code',lambda _:None)
+    driver=object.__new__(Driver);driver.root=tmp_path
+    monkeypatch.setattr(driver,'task_retry',lambda *a,**k:record)
+    result=driver.candidate_check(code,'t1',output,job_id='retry-job')
+    assert result['execution_status']=='Submitted'
+    assert result['metrics']['calls']==7
+    private=read(tmp_path/'private/candidate_checks/retry-job.json')
+    assert private['grade']['resolved'] is True
+    assert private['evidence_path']==str(output/'attempt_1/host_result.json')

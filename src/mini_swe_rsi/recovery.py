@@ -29,11 +29,17 @@ def load_workflow_authorization(path, root, logs, candidate, identities):
         raise ValueError('Workflow resume state changed after authorization')
     active = state.get('active') or {}
     index = active.get('index')
-    if (type(index) is not int or not 0 <= index <= 3
+    if (type(index) is not int or not 0 <= index <= 4
             or state.get('completed_steps') != index
             or state.get('status') not in ('active', 'diagnosis_pending', 'improving')
             or state.get('candidate_check') is not None):
-        raise ValueError('Only an active pre-check workflow can be explicitly restored')
+        raise ValueError('Only an active unfinished workflow through step 5 can be explicitly restored')
+    if index == 4:
+        if data.get('resume_incomplete_check') is not True or not isinstance(state.get('check_plan'), dict):
+            raise ValueError('Step-5 restore requires explicit incomplete-check authorization')
+        frozen = logs/'candidate_check_source'
+        if not frozen.is_dir() or tree_hash(frozen) != data.get('candidate_source_sha256'):
+            raise ValueError('Step-5 frozen candidate changed before restoration')
     if tree_hash(candidate) != data.get('candidate_source_sha256'):
         raise ValueError('Workflow resume candidate changed after authorization')
     return data

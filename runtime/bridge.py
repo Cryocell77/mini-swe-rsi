@@ -86,11 +86,15 @@ def load_resume_authorization(path, logs, expected_identity, workdir, workflow_m
         raise ValueError('Resume authorization state differs from original state')
     active = state.get('active') if isinstance(state, dict) else None
     if (not isinstance(active, dict) or type(active.get('index')) is not int
-            or not 0 <= active['index'] <= 3
+            or not 0 <= active['index'] <= 4
             or state.get('completed_steps') != active['index']
             or state.get('status') not in ('active', 'diagnosis_pending', 'improving')
             or state.get('candidate_check') is not None):
         raise ValueError('Resume authorization does not identify an active pre-check workflow')
+    if active['index'] == 4 and (
+            authorization.get('resume_incomplete_check') is not True
+            or not isinstance(state.get('check_plan'), dict)):
+        raise ValueError('Step-5 restore requires explicit incomplete-check authorization')
     identities = authorization['identities']
     if not isinstance(identities, dict) or set(identities) != set(expected_identity):
         raise ValueError('Resume authorization identities are invalid')
