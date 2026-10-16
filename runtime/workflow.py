@@ -104,9 +104,9 @@ Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":".
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
 Use sica-workflow only for structured operations. For final submission, prefer the structured submit operation with the complete non-empty report text; the host adds the mini completion sentinel. Do not wrap printf or another shell command inside sica-workflow. Arbitrary bash is unavailable to restricted roles. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and remain subject to the host global/stage deadline.
-Read-only inspection operations: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":5} maps to original ArchiveAnalyzer.\n {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
+Read-only inspection operations: {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
 Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
-Compatibility: original file views/archive analysis use these public read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The legacy printf submission remains accepted for compatibility, but do not put printf inside sica-workflow. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
+Compatibility: online public file views use these read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The legacy printf submission remains accepted for compatibility, but do not put printf inside sica-workflow. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
     if role != 'orchestrator':
         start = text.index('Operations:')
         stop = text.index('Read-only inspection operations:')
@@ -129,12 +129,8 @@ Compatibility: original file views/archive analysis use these public read/list/s
     # AST-derived policy is enforced at dispatch, not merely described here.
     text = text.replace('{"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true}',
                         '{"op":"<current step_..._complete tool>","success":true}')
-    text = text.replace('Read-only inspection operations: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":5} maps to original ArchiveAnalyzer.',
-                        'Read-only inspection operations:')
-    text = text.replace('original file views/archive analysis use these public read/list/search operations',
-                        'original file views use the permitted inspection operations')
     if role == 'archive_explorer':
-        text += '\nArchive analysis: {"op":"archive","kind":"overview|best|worst|compare","iteration":0,"iterations":[0,1],"n":3}. Best/worst count defaults to 3 and must be below 10, as in the original tool.'
+        text += '\nOnline archive analysis: {"op":"archive","kind":"overview"}. Historical task evidence is chronological and must not be ranked or compared across versions.'
     if 'search' not in role_capabilities(role)['operations']:
         text = text.replace(', {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}', '')
     permitted = ('invoke','committee') if role == 'orchestrator' else ('committee',) if role in ('software_developer','general_problem_solver') else ()
@@ -149,7 +145,7 @@ Compatibility: original file views/archive analysis use these public read/list/s
     if caps['delegates']:
         text += '\nDelegation syntax: {"op":"delegate","role":"<permitted role>","task":"complete self-contained instructions"}.'
     if role == 'orchestrator':
-        text += '\nArchive statistics and best/worst traces belong to archive_explorer; delegate archive analysis to that agent. The current step completion tool takes success only; its invocation is bound by the host. Call the exact current step name, not the structure name. Unsupported upstream ReasoningAgent is not registered.'
+        text += '\nChronological online archive overview belongs to archive_explorer; delegate archive analysis to that agent. The current step completion tool takes success only; its invocation is bound by the host. Call the exact current step name, not the structure name. Unsupported upstream ReasoningAgent is not registered.'
     return text
 
 
@@ -489,7 +485,8 @@ class Workflow:
             values = {'analysis_focus':task, 'programming_instructions':task, 'problem_statement':task,
                       'specialisation':specialisation, 'context':context, 'proposal':task}
             if role == 'archive_explorer':
-                values['analysis'] = self.online_overview() if self.online else archive_overview()
+                values['analysis'] = (self.online_overview() if self.online
+                                      else 'Online archive overview is unavailable outside an online workflow.')
             prompt = core_prompt(mapping[role], values) + identity_context(self.identities, self.current())
             result = self.delegate(identity, prompt, role in ('archive_explorer','reviewer'))
             self.event(kind='role_end', identity=identity, role=role,
@@ -694,23 +691,11 @@ class Workflow:
                 reviews += f"\n\nReviewer {i}'s review:\n" + submission
             return reviews
         if op == 'archive':
-            if self.online:
-                if request.get('kind', 'overview') != 'overview':
-                    raise ValueError('Online versions have different task coverage; use chronological overview and public reads')
-                return self.online_overview()
-            analyzer = archive_analyzer()
-            kind = request.get('kind','overview')
-            if kind == 'overview':
-                return analyzer.analyze_run_formatted()
-            if kind == 'compare':
-                return analyzer.compare_iterations_formatted(request['iterations'])
-            if kind in ('best','worst'):
-                count = request.get('n',3)
-                if type(count) is not int or count >= 10:
-                    raise ValueError('Archive count must be an integer below 10')
-                method = analyzer.get_best_performing_problems_formatted if kind == 'best' else analyzer.get_worst_performing_problems_formatted
-                return method(request['iteration'], count, request.get('benchmark'))
-            raise ValueError('Unknown archive analysis operation')
+            if not self.online:
+                raise ValueError('Archive analysis is available only in an online workflow')
+            if request.get('kind', 'overview') != 'overview':
+                raise ValueError('Online archive supports only chronological overview; ranking and comparison are unsupported')
+            return self.online_overview()
         if op in ('read','list','search'):
             return self.inspect(request)
         raise ValueError('Unknown workflow operation')
@@ -989,21 +974,3 @@ def core_prompt(role, values, source=SOURCE):
         elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == 'prompt':
             prompt += render(n.value)
     return prompt
-
-
-def archive_analyzer():
-    import importlib.util
-    import sys
-    source = Path('/upstream/archive_analysis.py')
-    if not source.exists():
-        source = Path(__file__).resolve().parents[1]/'vendor/sica/archive_analysis.py'
-    spec = importlib.util.spec_from_file_location('rsi_original_archive_analysis', source)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module.ArchiveAnalyzer('/home/agent/archive')
-
-def archive_overview():
-    return archive_analyzer().analyze_run_formatted()
-
-    # terminal recording lives outside transport dispatch and cannot mark stages done.

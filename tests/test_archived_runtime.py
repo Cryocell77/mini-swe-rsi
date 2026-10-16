@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from mini_swe_rsi.broker import Broker
-from mini_swe_rsi.core import Budget, ROOT, read
+from mini_swe_rsi.core import Budget, ROOT, read, write
 from mini_swe_rsi.driver import Driver, initial_code
 
 
@@ -32,8 +32,11 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
     driver = Driver(tmp_path, None, broker, budget)
     try:
         archive = tmp_path/'archive'
+        write(archive/'online_state.json', {'active_version':'H0001'})
+        write(archive/'configuration.json', {'tasks':['fixture']})
         for i in range(2):
-            code = archive/f'agent_{i}/agent_code'
+            version = f'H{i:04d}'
+            code = archive/f'versions/{version}/agent_code'
             initial_code(code)
             if i:
                 config = code/'minisweagent/config/mini_textbased.yaml'
@@ -51,11 +54,11 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
                 "except OSError:\n    pass\n"
                 "else:\n    raise AssertionError('archive source writable')\n"
                 "from bridge import main\nmain(__file__)\n")
-            hidden = archive/f'agent_{i}/benchmarks/swe_lite_dev/traces/fixture'
-            hidden.mkdir(parents=True)
+            hidden = archive/f'tasks/0001-fixture/private'
+            hidden.mkdir(parents=True, exist_ok=True)
             (hidden/'host_result.json').write_text('private')
             (hidden/'trajectory.json').write_text('credential')
-            (hidden.parent.parent/'results.pre_patch_fix.jsonl').write_text('obsolete')
+            (hidden/'results.pre_patch_fix.jsonl').write_text('obsolete')
             prompt = tmp_path/'prompt.txt'
             prompt.write_text('Finish the fixture task.')
             token = broker.session('fixture')
@@ -65,7 +68,7 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
             assert not (tmp_path/f'logs_{i}/workflow_state.json').exists()
             assert status == 0, output
             assert read(tmp_path/f'logs_{i}/result.json')['exit_status'] == 'Submitted', output
-            assert f'agent_{i}/agent_code/minisweagent/agents/default.py' in read(tmp_path/f'logs_{i}/activation.json')['agent_file']
+            assert '/home/agent/agent_code/minisweagent/agents/default.py' in read(tmp_path/f'logs_{i}/activation.json')['agent_file']
         assert 'ARCHIVED_VERSION_ONE' not in seen[0][0]['content']
         assert 'ARCHIVED_VERSION_ONE' in seen[1][0]['content']
         events = [json.loads(x) for x in (tmp_path/'events.jsonl').read_text().splitlines()]
@@ -89,13 +92,16 @@ def test_controller_deadline_stops_unresponsive_archived_process(tmp_path, monke
     broker.model = 'fixture'
     driver = Driver(tmp_path, None, broker, budget)
     try:
-        code = tmp_path/'agent_code'
+        archive = tmp_path/'archive'
+        write(archive/'online_state.json', {'active_version':'H0000'})
+        write(archive/'configuration.json', {'tasks':['fixture']})
+        code = archive/'versions/H0000/agent_code'
         initial_code(code)
         # A changed archived entrypoint cannot bypass the host's independent deadline.
         (code/'__main__.py').write_text('import time\ntime.sleep(100)\n')
         token = broker.session('unresponsive-fixture', seconds=1)
         start = time.monotonic()
-        status, _ = driver.controller(code, tmp_path/'logs', ['improve', '--parent-iter', '0', '--best-iter', '0', '--current-iter', '0', '--candidate-id', 'fixture'], token, target=tmp_path/'target')
+        status, _ = driver.controller(code, tmp_path/'logs', ['benchmark', '--prompt-file', '/task.txt'], token, archive=archive)
         broker.finish(token)
         assert status == 137
         assert time.monotonic()-start < 5
@@ -120,14 +126,19 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
     broker.complete = fail
     driver = Driver(tmp_path, None, broker, budget)
     try:
-        code = tmp_path/'archive/agent_0/agent_code'
+        archive = tmp_path/'archive'
+        write(archive/'online_state.json', {'active_version':'H0000'})
+        write(archive/'configuration.json', {'tasks':['fixture']})
+        code = archive/'versions/H0000/agent_code'
         target = tmp_path/'target'
         initial_code(code)
         initial_code(target)
+        prompt = tmp_path/'prompt.txt'
+        prompt.write_text('Finish the fixture task.')
         frozen = tree_hash(target)
         token = broker.session('bridge-failure')
-        status, output = driver.controller(code, tmp_path/'logs', ['improve', '--parent-iter', '0', '--best-iter', '0', '--current-iter', '0', '--candidate-id', 'fixture'], token,
-                                          archive=tmp_path/'archive', target=target)
+        status, output = driver.controller(code, tmp_path/'logs', ['benchmark', '--prompt-file', '/task.txt'], token,
+                                          archive=archive, prompt=prompt)
         broker.finish(token)
         assert status != 0, output
         assert read(tmp_path/'logs/result.json')['exit_status'] == 'ContextWindowExceededError'

@@ -46,16 +46,6 @@ def test_actual_qwen_tokenizer_budget_boundary_and_multilingual():
     assert not context.fits(context.measure([{'role':'user', 'content':'x ' * 32768}]))
 
 
-def test_frozen_context_rejected_before_budget_or_runtime(tmp_path):
-    from mini_swe_rsi.broker import TEXT_PROTOCOL
-    from mini_swe_rsi.core import write, improvement_contract
-    from mini_swe_rsi.experiment import Experiment
-    write(tmp_path/'configuration.json', {'message_protocol':TEXT_PROTOCOL, 'improvement_task': improvement_contract(), 'context_budget':{}})
-    with pytest.raises(RuntimeError, match='Frozen context budget changed'):
-        Experiment(tmp_path)
-    assert not (tmp_path/'budget.json').exists()
-
-
 def test_missing_or_corrupt_tokenizer_never_falls_back(tmp_path, monkeypatch):
     import mini_swe_rsi.context_budget as module
     from mini_swe_rsi.core import write, improvement_contract
@@ -152,20 +142,6 @@ def test_service_context_identity_is_separate_and_must_support_budget(num_ctx, f
     else:
         with pytest.raises(ModelError):
             broker.service_configuration('fixed')
-
-
-def test_service_identity_checked_after_model_refresh(tmp_path):
-    from types import SimpleNamespace
-    from mini_swe_rsi.core import write, improvement_contract
-    from mini_swe_rsi.experiment import Experiment
-    experiment = Experiment.__new__(Experiment)
-    experiment.root = tmp_path
-    write(tmp_path/'model_identity.json', {'model':'same'})
-    write(tmp_path/'service_identity.json', {'template_sha256':'original'})
-    experiment.broker = SimpleNamespace(identity=lambda:{'model':'same'},
-        service_identity={'template_sha256':'changed'})
-    with pytest.raises(RuntimeError, match='Service context configuration changed'):
-        experiment.assert_model()
 
 
 @pytest.mark.parametrize('prose', [

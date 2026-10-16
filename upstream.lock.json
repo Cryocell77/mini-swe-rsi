@@ -4,9 +4,6 @@
     "commit": "ed8275dca4d3c5dbf77229964351fe9b424797dc",
     "archive_sha256": "01bbd8619d06694f6ce26708f8059b947cce595d2e5b88bfa2961cbdc35d7a17",
     "files": {
-      "runner.py": "bc1dcc8fe3d73268e33eac9684ac549a70b88a1264387d6d98ab0ba2b2d6176e",
-      "archive_analysis.py": "aadaae821e728705fd1c424ae80b79d054fc3522186f3c1ec6328ab822dd8940",
-      "benchmark_base.py": "f3fc93daa6eed83957dc4e98c92e210f35d83cc5e327c7f2851f64d21d80550f",
       "agent_main.py": "1f5abd87a173e68db330227ead7581121b13ebeb607a8209231b13bab01a6fc9",
       "LICENSE": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
     },

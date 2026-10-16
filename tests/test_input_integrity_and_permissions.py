@@ -20,7 +20,7 @@ def command(req):
     return {'command':'sica-workflow '+shlex.quote(json.dumps(req))}
 
 
-def test_original_role_boundaries_and_archive_count(tmp_path, monkeypatch):
+def test_online_role_boundaries_and_archive_overview_permissions(tmp_path):
     expected = {
         'orchestrator':{'invoke','state','complete','read','list','delegate','committee'},
         'archive_explorer':{'read','list','archive'},
@@ -29,27 +29,20 @@ def test_original_role_boundaries_and_archive_count(tmp_path, monkeypatch):
         'general_problem_solver':{'read','list','search','committee','delegate'}}
     for role, operations in expected.items():
         assert w.role_capabilities(role)['operations'] == operations
-        assert ('"op":"archive"' in w.instructions(role)) == (role=='archive_explorer')
+        assert ('Online archive analysis:' in w.instructions(role)) == (role=='archive_explorer')
     assert w.role_capabilities('general_problem_solver')['delegates']=={'software_developer'}
-    flow=w.Workflow(tmp_path,lambda *a:pytest.fail('Unauthorized delegate'))
-    calls=[]
-    class Analyzer:
-        def get_best_performing_problems_formatted(self,*args):
-            calls.append(args);return 'historical report'
-    monkeypatch.setattr(w,'archive_analyzer',Analyzer)
-    req={'op':'archive','kind':'best','iteration':0,'role':'archive_explorer'}
+    flow=w.Workflow(tmp_path,lambda *a:pytest.fail('Unauthorized delegate'), online=True,
+                    feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
+    req={'op':'archive','kind':'overview','role':'archive_explorer'}
     for role in ('orchestrator','reviewer','software_developer','general_problem_solver'):
         assert flow.execute(command(req),True,role)['returncode']==1
-    assert calls==[]
     assert flow.execute(command(req),True,'archive_explorer')['returncode']==0
-    assert calls==[(0,3,None)]
-    for n in (10,True,'3'):
-        assert flow.execute(command({**req,'n':n}),True,'archive_explorer')['returncode']==1
     assert flow.execute(command({'op':'delegate','role':'archive_explorer','task':'x'}),'editor','general_problem_solver')['returncode']==1
 
 
 def test_bound_completion_rejects_wrong_stale_names_and_ids(tmp_path):
-    flow=w.Workflow(tmp_path,lambda *a:None)
+    flow=w.Workflow(tmp_path,lambda *a:None, online=True,
+                    feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
     current=flow.dispatch({'op':'invoke'})
     tool=current['completion_tool']
     assert len(tool.split('_')[1])==4  # Original _make_id uses four hex digits.
@@ -58,12 +51,8 @@ def test_bound_completion_rejects_wrong_stale_names_and_ids(tmp_path):
         assert flow.execute(command(req),'orchestrator','orchestrator')['returncode']==1
     assert flow.completed_steps==0
     assert flow.execute(command({'op':tool,'success':True}),True,'reviewer')['returncode']==1
-    assert flow.execute(command({'op':tool,'success':True}),'orchestrator','orchestrator')['returncode']==0
-    assert flow.completed_steps==1
-    assert flow.execute(command({'op':tool}),'orchestrator','orchestrator')['returncode']==1
-    next_tool=flow.current()['completion_tool']
-    flow.dispatch({'op':next_tool,'success':False})
-    assert flow.status=='failed' and flow.completed_steps==1
+    assert flow.execute(command({'op':tool,'success':True}),'orchestrator','orchestrator')['returncode']==1
+    assert flow.completed_steps==0
 
 
 @pytest.fixture

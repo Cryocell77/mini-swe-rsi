@@ -185,12 +185,6 @@ def test_no_fake_continuation_on_unsupported_provider(broker):
     assert len(requests)==1
 
 
-def test_summary_matches_upstream_single_request_default(broker):
-    requests=endpoint(broker,iter([reply('partial summary','length'),reply('must not be requested')]))
-    assert broker.summary([{'role':'user','content':'summarize'}],'summary')=='partial summary'
-    assert len(requests)==1 and broker.events[-1]['logical_completion_final']
-
-
 def test_no_old_context_cap_and_usage_is_authoritative(broker):
     token=broker.session('proposal')
     requests=endpoint(broker,iter([reply(usage={'total_tokens':40002,'prompt_tokens':40000,'completion_tokens':2})]))
@@ -232,46 +226,26 @@ def test_expired_original_budget_is_not_reset(tmp_path):
     assert read(tmp_path/'budget.json')['started']==started
 
 
-def test_one_proposal_entrypoint_refuses_expired_budget_before_setup(tmp_path, monkeypatch):
-    import importlib.util
-    from mini_swe_rsi.core import ROOT, write
-    spec=importlib.util.spec_from_file_location('single_smoke',ROOT/'scripts/smoke_once.py')
-    module=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setattr(module,'ROOT',tmp_path)
-    output=tmp_path/'new-run'
-    write(tmp_path/'runs/sica-qwen-20261011/budget.json',{'started':time.time()-86401})
-    monkeypatch.setattr('sys.argv',['smoke_once','--output',str(output)])
-    monkeypatch.setattr(module,'Experiment',lambda *a,**k:pytest.fail('Expired budget reached experiment setup'))
-    with pytest.raises(SystemExit) as exc:
-        module.main()
-    assert exc.value.code==2 and not output.exists()
-
-
 def test_pinned_upstream_budget_scopes_match_policy():
     import ast
     from mini_swe_rsi.core import ROOT, read, digest
     from mini_swe_rsi.budget_policy import sica_budget
-    policy=sica_budget(393216,1048576)
-    sources=ROOT/'.upstream/sica'
-    for path,expected in read(ROOT/'upstream.lock.json')['sica']['budget_files'].items():
-        assert digest(sources/path)==expected
-    base=ast.parse((sources/'base_agent/src/agents/base_agent.py').read_text())
-    iterations=next(n.value.value for n in ast.walk(base) if isinstance(n,ast.AnnAssign)
-                    and isinstance(n.target,ast.Name) and n.target.id=='MAX_ITERATIONS')
-    assert iterations==policy['main_iterations']==500
-    calls=[n for n in ast.walk(base) if isinstance(n,ast.Call)]
-    continuation=next(k.value.value for n in calls for k in n.keywords if k.arg=='max_continuations')
-    assert continuation==policy['completion_max_requests']==5
-    api=ast.parse((sources/'base_agent/src/llm/api.py').read_text())
-    create=next(n for n in api.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='create_completion')
-    defaults=dict(zip([a.arg for a in create.args.args][-len(create.args.defaults):],create.args.defaults))
-    assert ast.literal_eval(defaults['max_continuations']) is None
-    assert policy['summary_max_requests']==1
-    coder=ast.parse((ROOT/'vendor/sica_workflow/coder.py').read_text())
-    iterations=next(n.value.value for n in ast.walk(coder) if isinstance(n,ast.Assign)
-                    and any(isinstance(t,ast.Name) and t.id=='MAX_ITERATIONS' for t in n.targets))
-    assert iterations==policy['role_iterations']['software_developer']==1000
+
+    policy = sica_budget(393216, 1048576)
+    sources = ROOT/'.upstream/sica'
+    for path, expected in read(ROOT/'upstream.lock.json')['sica']['budget_files'].items():
+        assert digest(sources/path) == expected
+    base = ast.parse((sources/'base_agent/src/agents/base_agent.py').read_text())
+    iterations = next(n.value.value for n in ast.walk(base) if isinstance(n, ast.AnnAssign)
+                      and isinstance(n.target, ast.Name) and n.target.id == 'MAX_ITERATIONS')
+    assert iterations == policy['main_iterations'] == 500
+    calls = [n for n in ast.walk(base) if isinstance(n, ast.Call)]
+    continuation = next(k.value.value for n in calls for k in n.keywords if k.arg == 'max_continuations')
+    assert continuation == policy['completion_max_requests'] == 5
+    coder = ast.parse((ROOT/'vendor/sica_workflow/coder.py').read_text())
+    iterations = next(n.value.value for n in ast.walk(coder) if isinstance(n, ast.Assign)
+                      and any(isinstance(t, ast.Name) and t.id == 'MAX_ITERATIONS' for t in n.targets))
+    assert iterations == policy['role_iterations']['software_developer'] == 1000
 
 
 def test_unbounded_observation_keeps_archived_harness_customization():
@@ -279,12 +253,11 @@ def test_unbounded_observation_keeps_archived_harness_customization():
     import yaml
     from jinja2 import Template
     from mini_swe_rsi.core import ROOT
-    from mini_swe_rsi.replay import unbounded_observation
-    config=yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
-    template=config['model']['observation_template']+'\nCANDIDATE_CUSTOMIZATION'
-    adapted=unbounded_observation(template)
-    assert adapted==runpy.run_path(str(ROOT/'runtime/bridge.py'))['unbounded_observation'](template)
-    value=Template(adapted).render(output={'output':'x'*12000,'returncode':0,'exception_info':''})
+
+    config = yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
+    template = config['model']['observation_template'] + '\nCANDIDATE_CUSTOMIZATION'
+    adapted = runpy.run_path(str(ROOT/'runtime/bridge.py'))['unbounded_observation'](template)
+    value = Template(adapted).render(output={'output':'x'*12000, 'returncode':0, 'exception_info':''})
     assert 'x'*12000 in value and 'CANDIDATE_CUSTOMIZATION' in value
     assert 'elided_chars' not in value
 

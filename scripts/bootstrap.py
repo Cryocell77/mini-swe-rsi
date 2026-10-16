@@ -23,6 +23,27 @@ for name, entry in lock.items():
                 archive.extract(item, target, filter='data')
     print(name, entry['commit'])
 
+    # Verify every source file retained in the lock.  The mini package is
+    # stored below src/, while the SICA task prompt and license come from
+    # their historical upstream locations rather than archive-root names.
+    for filename, expected in entry.get('files', {}).items():
+        if name == 'mini':
+            source = target/'src/minisweagent'/filename
+        elif name == 'sica' and filename == 'agent_main.py':
+            source = target/'base_agent/__main__.py'
+        else:
+            source = target/filename
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+            raise ValueError(f'{name}: source file differs from the lock: {filename}')
+
+        # Keep the small retained SICA source bundle in sync with the fetched
+        # archive.  The removed runner and batch-analysis files have no entry
+        # here and therefore cannot be recreated by bootstrap.
+        if name == 'sica':
+            destination = root/'vendor/sica'/filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+
     for filename, source in entry.get('workflow_files', {}).items():
         raw = (target/source['path']).read_bytes()
         if hashlib.sha256(raw).hexdigest() != source['sha256']:

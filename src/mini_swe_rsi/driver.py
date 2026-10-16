@@ -18,7 +18,7 @@ import docker
 import requests
 import yaml
 
-from .archive_view import archive_view, online_archive_view
+from .archive_view import online_archive_view
 from .core import ROOT, append_event, command, digest, read, tree_hash, execution_hash, write, improvement_contract
 
 
@@ -171,23 +171,40 @@ class Driver:
         task_identity = None
         execution_budget = None
         if command_args[0] == 'improve':
+            if '--online' not in command_args:
+                raise RuntimeError('Improvement is available only for online workflows')
             if (logs/'workflow_state.json').exists() and resume_checkpoint is None:
                 raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
             mounts[str(ROOT/'vendor/sica_workflow')] = {'bind':'/workflow_sources','mode':'ro'}
             def argument(name):
-                return command_args[command_args.index(name)+1]
-            parent, proposer = int(argument('--parent-iter')), int(argument('--best-iter'))
+                try:
+                    index = command_args.index(name)
+                    return command_args[index + 1]
+                except (ValueError, IndexError):
+                    raise RuntimeError(f'Online improvement requires {name}') from None
+            parent = int(argument('--parent-iter'))
+            if parent < 0:
+                raise RuntimeError('Online improvement parent version must be non-negative')
+            proposer = int(argument('--best-iter'))
+            if proposer != parent:
+                raise RuntimeError('Online improvement requires parent and proposer to be the same version')
             candidate = argument('--candidate-id')
-            online = '--online' in command_args
+            task_id = argument('--task-id')
+            round_id = argument('--round-id')
+            version = argument('--online-version')
+            expected_version = f'H{parent:04d}'
+            if version != expected_version:
+                raise RuntimeError('Online improvement version does not match parent version')
+            relative = None
             resume = None
             if resume_checkpoint is not None:
-                if not online or target is None:
+                if target is None:
                     raise RuntimeError('Explicit workflow restoration is online only')
                 from .recovery import load_workflow_authorization
                 resume = load_workflow_authorization(
                     resume_checkpoint, self.root, logs, target,
-                    {'task_id':argument('--task-id'), 'round_id':argument('--round-id'),
-                     'version':argument('--online-version'), 'parent':parent,
+                    {'task_id':task_id, 'round_id':round_id,
+                     'version':version, 'parent':parent,
                      'proposer':proposer, 'candidate':candidate})
                 mounts[str(Path(resume_checkpoint).resolve())] = {'bind':'/resume_authorization.json','mode':'ro'}
                 command_args = [*command_args, '--resume-workflow', '/resume_authorization.json']
@@ -195,21 +212,17 @@ class Driver:
             configuration = self.root/'configuration.json'
             if configuration.exists():
                 saved_configuration = read(configuration)
-                frozen_contract = (saved_configuration.get('control_manifest', {}).get('improvement')
-                                   if online else saved_configuration.get('improvement_task'))
+                frozen_contract = saved_configuration.get('control_manifest', {}).get('improvement')
                 if frozen_contract != contract:
                     raise RuntimeError('Frozen improvement task contract changed before launch')
             execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
             shared_calls = execution_budget['main_iterations']
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
             render_kwargs = {'calls':shared_calls, 'budget':execution_budget}
-            if online:
-                render_kwargs.update(online=True,
-                    task_id=argument('--task-id') if '--task-id' in command_args else None,
-                    round_id=argument('--round-id') if '--round-id' in command_args else None,
-                    version=argument('--online-version') if '--online-version' in command_args else f'H{parent:04d}')
-                if prompt is not None and Path(prompt).exists():
-                    render_kwargs['feedback'] = Path(prompt).read_text()
+            render_kwargs.update(online=True,
+                task_id=task_id, round_id=round_id, version=version)
+            if prompt is not None and Path(prompt).exists():
+                render_kwargs['feedback'] = Path(prompt).read_text()
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
                               ROOT/'vendor/sica/agent_main.py', **render_kwargs)
             if resume is not None:
@@ -223,51 +236,42 @@ class Driver:
                              'workflow_sha256':contract['workflow_sha256'],
                              'relay_sha256':contract['relay_sha256'],
                              'workflow_sources':contract['workflow_sources']}
-            if online:
-                task_identity.update(task_id=argument('--task-id'), round_id=argument('--round-id'),
-                                     version=argument('--online-version'), online=True)
+            task_identity.update(task_id=task_id, round_id=round_id,
+                                 version=version, online=True)
             if resume is not None:
                 task_identity['resume_authorization_sha256'] = digest(resume_checkpoint)
             write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
         module = 'agent_code'
         if archive is not None:
-            online_archive = bool(task_identity and task_identity.get('online'))
-            view = (online_archive_view(archive, logs.parent/(logs.name + '_archive_view'))
-                    if online_archive else archive_view(archive, logs.parent/(logs.name + '_archive_view')))
+            archive_root = Path(archive).resolve()
+            try:
+                relative = Path(code).resolve().relative_to(archive_root)
+            except ValueError:
+                raise RuntimeError('Selected source must belong to the online archive') from None
+            if task_identity:
+                state = read(archive_root/'online_state.json')
+                if state.get('active_version') != version:
+                    raise RuntimeError('Online archive active version differs from selected version')
+                expected_relative = Path('versions') / version / 'agent_code'
+                if relative != expected_relative:
+                    raise RuntimeError('Online improvement must load the active archive version source')
+            view = online_archive_view(archive, logs.parent/(logs.name + '_archive_view'))
             mounts[str(view.resolve())] = {'bind': '/home/agent/archive', 'mode': 'ro'}
-            if online_archive:
-                # Online versions are Hxxxx/agent_code paths rather than the
-                # native agent_N module hierarchy.  Load the selected source
-                # directly while exposing the sanitized historical view.
-                mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
-                module = 'agent_code'
-                relative = Path(code).resolve().relative_to(Path(archive).resolve())
-                if tree_hash(view / relative) != tree_hash(code):
-                    raise RuntimeError('Online archive view source differs from selected active version')
-                if target and resume_checkpoint is None and tree_hash(target) != selected_hash:
-                    raise RuntimeError('Online candidate differs from selected active parent')
-            else:
-                relative = Path(code).resolve().relative_to(Path(archive).resolve())
-                module = 'archive.' + '.'.join(relative.parts)
-            if not online_archive and tree_hash(view/relative) != tree_hash(code):
-                raise RuntimeError('Sanitized view source differs from selected archive')
-            if not online_archive and task_identity and relative != Path(f'agent_{task_identity["proposer"]}/agent_code'):
-                raise RuntimeError('Improvement proposer differs from selected archived module')
-            if not online_archive and task_identity and not (view/f'agent_{task_identity["parent"]}/agent_code').is_dir():
-                raise RuntimeError('Improvement parent is missing from the frozen archive')
-            if not online_archive and task_identity:
-                parent_source = view/f'agent_{task_identity["parent"]}/agent_code/minisweagent'
-                candidate_source = Path(target)/'minisweagent' if target else None
-                if not candidate_source or not candidate_source.is_dir() or tree_hash(parent_source) != tree_hash(candidate_source):
-                    raise RuntimeError('Improvement parent differs from candidate starting source')
+            # Online versions are Hxxxx/agent_code paths. Load the selected
+            # active source directly while exposing the sanitized history.
+            mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
+            if tree_hash(code) != tree_hash(view / relative):
+                raise RuntimeError('Online archive view source differs from selected active version')
+            if target and resume_checkpoint is None and tree_hash(target) != selected_hash:
+                raise RuntimeError('Online candidate differs from selected active parent')
         else:
             mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
-            if task_identity and task_identity.get('online') and target:
+            if task_identity and target:
                 if resume_checkpoint is None and tree_hash(target) != selected_hash:
                     raise RuntimeError('Online candidate does not start from the active parent version')
         if target:
             mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir',
-                'mode': 'ro' if task_identity and task_identity.get('online') else 'rw'}
+                'mode': 'ro' if task_identity else 'rw'}
         if prompt:
             mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
         if execution_budget is None:
@@ -288,7 +292,7 @@ class Driver:
         if command_args[0] == 'improve':
             self.broker.sessions[token]['solver'] = c.id
             self.broker.sessions[token]['cwd'] = '/home/agent/workdir'
-            if task_identity and task_identity.get('online'):
+            if task_identity:
                 from .stage_tools import StageTools
                 self.broker.sessions[token]['stage_tools'] = StageTools(
                     self, logs, target, view if archive is not None else None)
@@ -341,7 +345,7 @@ class Driver:
             (logs / 'process.log').write_text(output.replace(token, '<session-token>'))
             if tree_hash(code) != selected_hash:
                 raise RuntimeError('Selected archived source changed during execution')
-            if archive is not None and tree_hash(view/relative) != selected_hash:
+            if archive is not None and tree_hash(view / relative) != selected_hash:
                 raise RuntimeError('Mounted source changed during execution')
             return result['StatusCode'], output
         finally:
@@ -381,45 +385,6 @@ class Driver:
             for container in self.client.containers.list(all=True):
                 if job['run_id'] in container.name:
                     container.remove(force=True)
-
-    def replay(self, code, job, directory):
-        """Run untrusted archived code without network, credentials, tools or grader."""
-        self.budget.check()
-        validate_code(code)
-        directory = Path(directory).resolve()
-        job = {**job, 'reference_code': '/home/agent/agent_code', 'budget':self.broker.budget_limits()}
-        write(directory/'job.json', job)
-        output = directory/'output'
-        output.mkdir(exist_ok=True)
-        mounts = {str(Path(code).resolve()): {'bind':'/home/agent/agent_code','mode':'ro'},
-                  str(ROOT/'src/mini_swe_rsi/replay.py'): {'bind':'/replay.py','mode':'ro'},
-                  str(directory/'job.json'): {'bind':'/input/job.json','mode':'ro'},
-                  str(output): {'bind':'/logs','mode':'rw'}}
-        c = self.client.containers.run(self.image.id,
-            ['python','/replay.py','/input/job.json','/logs/result.json'], detach=True,
-            volumes=mounts, network_disabled=True, read_only=True, tmpfs={'/tmp':'size=64m'},
-            environment={'LITELLM_LOCAL_MODEL_COST_MAP':'True','DO_NOT_TRACK':'1',
-                         'MSWEA_CONFIG_ROOT':'/tmp/mini-config','XDG_CONFIG_HOME':'/tmp/config',
-                         'XDG_CACHE_HOME':'/tmp/cache'},
-            cap_drop=['ALL'], security_opt=['no-new-privileges'], mem_limit='2g',
-            nano_cpus=1000000000, pids_limit=128,
-            hostname=job.get('platform',{}).get('node'))
-        append_event(self.root, {'kind':'behavior_replay_launch','code_hash':tree_hash(code),
-                     'container_id':c.id,'network_disabled':True,'directory':str(directory),
-                     'image_id':self.image.id})
-        try:
-            try:
-                status = c.wait(timeout=max(1,min(60,self.budget.remaining())))['StatusCode']
-            except requests.exceptions.ReadTimeout:
-                c.kill()
-                status = 137
-            (directory/'process.log').write_bytes(c.logs())
-            if status != 0 or not (output/'result.json').exists():
-                return {'changed':False,'complete_prefix':False,'reason':'Isolated replay incomplete',
-                        'process_status':status}
-            return read(output/'result.json')
-        finally:
-            c.remove(force=True)
 
     def task(self, code, task_id, output, *, grading_namespace='grading'):
         self.budget.check()

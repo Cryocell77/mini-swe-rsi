@@ -1,5 +1,21 @@
 # 上游适配与证据边界
 
+## 当前范围：仅在线 RSI（2026-10-16）
+
+项目按 [P1 精简指南](online-rsi-simplification-guide.md) 移除原批量实验入口、原 SICA runner、ArchiveAnalyzer、BenchmarkTracker、轨迹回放、探针和 held-out 门槛。当前运行入口为 `online`，报告入口为 `report`；旧批量实验报告保留为历史产物，不由新入口重新生成。
+
+保留 `vendor/sica/agent_main.py`、`vendor/sica_workflow/` 与许可证的固定原文，用于提取改进任务、七步定义、角色权限和委员会。`upstream.lock.json` 只保留当前实际使用的 vendored 文件清单及预算来源。官方 mini 和 SWE-bench 评分资产继续固定，在线角色仍从本轮活动版本加载 agent/model。
+
+在线执行者、改进者和候选父版本一致。两步诊断后的 skip/improve、步骤 3 冻结验收计划、步骤 5 候选独立执行，以及验收后接任继续属于显式在线扩展。在线历史按时间呈现，不用不同题目覆盖的平均成绩排名。
+
+原固定轨迹回放已移除；在线父版本与候选使用同一个冻结测试的 `mechanism_check` 保留。单题 `benchmark` 仍用于首次作答与候选复测；评分恢复、阶段写权限、公开归档、预算和真实计量边界继续执行。
+
+控制代码摘要变化会阻止旧运行直接恢复，历史记录不改写。本轮仅完成 P1，不收敛 P2/P3 的预算、数据、上下文兼容或记录结构。
+
+以下章节按产生时间保留，描述历史实现与实验，不应作为当前批量实验功能仍可用的说明。
+
+## 历史适配记录
+
 `vendor/sica/` 的 runner、ArchiveAnalyzer、BenchmarkTracker、原始 agent CLI 和 MIT 许可按固定提交逐字保留，启动时校验摘要。加载 runner 时仅替换 `base_agent.*` 导入；其余函数体保持原样。
 
 ## 必要适配

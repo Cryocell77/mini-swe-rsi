@@ -111,11 +111,12 @@ def test_provider_transport_exception_is_wrapped_as_fatal(tmp_path):
 
 
 def test_default_state_overwrite_remains_rejected(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = online_flow(tmp_path)
     flow.dispatch({'op': 'invoke'})
 
     with pytest.raises(ValueError, match='Refusing to overwrite'):
-        w.Workflow(tmp_path, lambda *args: None)
+        w.Workflow(tmp_path, lambda *args: None, online=True,
+                   feedback={'task_id':'t1','round_id':'R0001','evidence_refs':[REF]})
 
 
 def test_online_resume_restores_live_state_and_continues_counter(tmp_path):

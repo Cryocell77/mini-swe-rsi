@@ -1,176 +1,129 @@
-"""Task adaptation is independent from the unchanged text model protocol."""
-import asyncio
+"""Online prompt identity and host launch boundary regressions."""
 import hashlib
 import runpy
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from mini_swe_rsi.core import ROOT, improvement_contract, write
-from mini_swe_rsi.experiment import Experiment
-from mini_swe_rsi.broker import TEXT_PROTOCOL
 
 
-def test_original_improvement_intent_and_distinct_identities():
+def _prelaunch_driver(tmp_path):
+    from mini_swe_rsi.driver import Driver
+
+    driver = Driver.__new__(Driver)
+    driver.root = tmp_path
+    driver.broker = SimpleNamespace(
+        model='fixture',
+        sessions={'fixture': {'deadline': time.time() + 600}},
+        budget_limits=lambda: {
+            'main_iterations': 500,
+            'role_iterations': {'archive_explorer': 500, 'software_developer': 1000,
+                                'general_problem_solver': 500, 'reviewer': 500},
+            'model_max_output_tokens': 2048,
+            'context_max_tokens': 32768,
+        })
+    return driver
+
+
+def _online_args(version='H0000'):
+    return ['improve', '--online', '--parent-iter', '0', '--best-iter', '0',
+            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+            '--round-id', 'R0001', '--online-version', version]
+
+
+def test_online_improvement_prompt_binds_task_round_and_version():
     render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-    prompt = render(1, 2, 2, 'agent_3', ROOT/'vendor/sica/agent_main.py')
-    assert 'invoke the meta improvement reasoning structure as early as reasonably possible' in prompt
-    assert 'coming up with a good feature or change to implement' in prompt
-    assert 'carefully implementing this making the minimal required changes' in prompt
-    assert 'append a new entry describing the changes made in this iteration (2)' in prompt
-    assert 'parent=agent_2; proposer=agent_1; candidate=agent_3' in prompt
-    assert 'best performing agent in /home/agent/workdir' not in prompt
-    assert 'read-only frozen startup snapshot' in prompt
-    assert 'current candidate has not been benchmarked' in prompt
-    assert 'each agent invocation has its own iteration limit' in prompt
-    assert 'improvement has no separate task deadline' in prompt
-    assert '2048 output tokens' not in prompt and '32768 total context tokens' not in prompt
+    prompt = render(2, 2, 2, 'P0001', ROOT/'vendor/sica/agent_main.py',
+                    online=True, task_id='task-1', round_id='R0001', version='H0002',
+                    feedback='Observed public failure')
+    assert 'task-1' in prompt and 'R0001' in prompt and 'H0002' in prompt
+    assert 'parent=agent_2; proposer=agent_2; candidate=P0001' in prompt
+    assert 'Observed public failure' in prompt
+    assert 'best performing agent' not in prompt
     contract = improvement_contract()
     assert contract['renderer_sha256'] == hashlib.sha256((ROOT/'runtime/bridge.py').read_bytes()).hexdigest()
 
 
-def test_expanded_budget_changes_only_improvement_allowance_text_and_freezes_contract():
-    render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-    args = (0,0,0,'agent_1',ROOT/'vendor/sica/agent_main.py')
-    before,after = render(*args,calls=30),render(*args,calls=500)
-    assert after == before.replace('30 model calls','500 model calls')
-    workflow = runpy.run_path(str(ROOT/'runtime/workflow.py'))
-    import yaml
-    config = yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
-    for role in workflow['ROLE_MAP']:
-        old,new = (workflow['role_templates'](config,role,calls) for calls in (30,500))
-        expected = old['agent']['system_template'].replace('SAME 30 actual calls','SAME 500 actual calls').replace('same 30 actual model calls','same 500 actual model calls')
-        assert new['agent']['system_template'] == expected
-        new['agent']['system_template'] = old['agent']['system_template']
-        assert new == old
-    contract = improvement_contract()
-    assert contract['limits'] == {'calls':None,'seconds':None}
-    assert contract['version'] == 'sica-mini-improvement-v6'
-    # Runtime roles enforce independent iterations; there is no shared actual-request quota.
-    from inspect import signature
-    from mini_swe_rsi.broker import Broker
-    assert signature(Broker.session).parameters['calls'].default is None
-
-
-@pytest.mark.parametrize('contract', [None, {'version': 'old'}, {**improvement_contract(), 'renderer_sha256': 'changed'}])
-def test_old_or_changed_task_rejected_before_budget_runtime_or_model(tmp_path, monkeypatch, contract):
-    config = {'message_protocol': TEXT_PROTOCOL}
-    if contract is not None:
-        config['improvement_task'] = contract
-    write(tmp_path/'configuration.json', config)
-    def forbidden(*a, **kw):
-        pytest.fail('Task contract must be rejected before context/runtime/model setup')
-    monkeypatch.setattr('mini_swe_rsi.experiment.context_contract', forbidden)
-    monkeypatch.setattr('mini_swe_rsi.experiment.Budget', forbidden)
-    monkeypatch.setattr('mini_swe_rsi.experiment.Driver', forbidden)
-    monkeypatch.setattr('mini_swe_rsi.experiment.Broker', forbidden)
-    with pytest.raises(RuntimeError, match='Improvement task contract changed'):
-        Experiment(tmp_path)
-    assert not (tmp_path/'budget.json').exists()
-
-
-def test_probes_keep_h0_parent_separate_from_evolved_proposer(tmp_path):
-    exp = Experiment.__new__(Experiment)
-    exp.root = tmp_path
-    write(tmp_path/'champions.json', {'native': 4})
-    evidence = tmp_path/'probe_evidence'
-    evidence.mkdir()
-    for iteration in (0, 4):
-        code = evidence/f'agent_{iteration}/agent_code'
-        code.mkdir(parents=True)
-        (code/'source.py').write_text(f'x={iteration}\n')
-    h0 = tmp_path/'h0'
-    h0.mkdir()
-    (h0/'source.py').write_text('x=0\n')
-    exp.code = lambda: h0
-    seen = []
-    def controller(code, logs, args, token, **kw):
-        assert (kw['target']/'source.py').read_text() == 'x=0\n'
-        assert args[args.index('--parent-iter')+1] == '0'
-        proposer = args[args.index('--best-iter')+1]
-        assert code == evidence/f'agent_{proposer}/agent_code'
-        candidate = args[args.index('--candidate-id')+1]
-        assert candidate.startswith('probe_pair_')
-        seen.append((proposer, candidate))
-        write(logs/'result.json', {'exit_status':'Submitted'})
-        return 0, ''
-    exp.driver = SimpleNamespace(controller=controller)
-    exp.broker = SimpleNamespace(session=lambda *a, **kw: 'fixture', finish=lambda *a: {})
-    async def evaluate(*a):
-        pass
-    exp.evaluate_versions = evaluate
-    asyncio.run(exp.probes())
-    assert [p for p, c in seen] == ['4', '0', '0', '4']
-    assert len({c for p, c in seen}) == 4
-
-
 def test_benchmark_uses_exact_prompt_file_without_improvement_additions():
-    # Inspect the actual boundary branch, without substituting mini's own templates.
     import ast
+
     tree = ast.parse((ROOT/'runtime/bridge.py').read_text())
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
-    branch = next(n for n in ast.walk(main) if isinstance(n, ast.If) and n.orelse
-                  and ast.unparse(n.test) == "args.command == 'improve'")
+    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+    branch = next(node for node in ast.walk(main) if isinstance(node, ast.If) and node.orelse
+                  and ast.unparse(node.test) == "args.command == 'improve'")
     assert ast.unparse(branch.orelse[0]) == 'task = Path(args.prompt_file).read_text()'
 
 
-@pytest.mark.parametrize('mismatch', ['proposer', 'parent'])
-def test_declared_identity_is_bound_to_actual_mounted_source_before_launch(tmp_path, monkeypatch, mismatch):
-    import shutil
+def test_existing_online_workflow_evidence_cannot_be_overwritten(tmp_path):
     from mini_swe_rsi.driver import Driver, initial_code
-    archive = tmp_path/'archive'
-    code = archive/'agent_0/agent_code'
-    initial_code(code)
-    parent = archive/'agent_1/agent_code'
-    shutil.copytree(code, parent)
-    (parent/'minisweagent/agents/default.py').write_text(
-        (parent/'minisweagent/agents/default.py').read_text()+'\nPARENT_FIXTURE=1\n')
-    target = tmp_path/'target'
-    shutil.copytree(code, target)
-    driver = Driver.__new__(Driver)
-    driver.root = tmp_path
-    # No client/runtime exists: validation must fail before any container launch.
-    from mini_swe_rsi.budget_policy import sica_budget
-    driver.broker = SimpleNamespace(sessions={'fixture':{'max_calls':None,'deadline':__import__('time').time()+600}},
-                                    budget_limits=lambda:sica_budget(8192,65536))
-    monkeypatch.setattr('mini_swe_rsi.driver.archive_view', lambda *a: archive)
-    args = ['improve', '--best-iter', '1' if mismatch == 'proposer' else '0',
-            '--parent-iter', '1' if mismatch == 'parent' else '0',
-            '--current-iter', '0', '--candidate-id', 'fixture']
-    with pytest.raises(RuntimeError, match='proposer differs|parent differs'):
-        driver.controller(code, tmp_path/'logs', args, 'fixture', archive=archive, target=target)
 
-
-@pytest.mark.parametrize('saved_contract', [improvement_contract(), None])
-def test_runtime_renderer_change_before_launch_is_rejected(tmp_path, monkeypatch, saved_contract):
-    from mini_swe_rsi.driver import Driver, initial_code
     code = tmp_path/'code'
     initial_code(code)
-    config = {} if saved_contract is None else {'improvement_task': saved_contract}
-    write(tmp_path/'configuration.json', config)
+    logs = tmp_path/'logs'
+    write(logs/'workflow_state.json', {'status': 'incomplete'})
+    write(logs/'result.json', {'exit_status': 'TimeExceeded'})
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
-    changed = {**improvement_contract(), 'renderer_sha256': 'changed-after-initialization'}
-    monkeypatch.setattr('mini_swe_rsi.driver.improvement_contract', lambda: changed)
-    def forbidden(*args, **kwargs):
-        pytest.fail('Frozen contract must be checked before loading the renderer')
-    monkeypatch.setattr('mini_swe_rsi.driver.runpy.run_path', forbidden)
-    args = ['improve', '--best-iter', '0', '--parent-iter', '0',
-            '--current-iter', '0', '--candidate-id', 'agent_1']
-    # No client, broker or image exists: no container or model can be started.
-    with pytest.raises(RuntimeError, match='Frozen improvement task contract changed before launch'):
-        driver.controller(code, tmp_path/'logs', args, 'fixture', target=code)
+    with pytest.raises(RuntimeError, match='Existing workflow state'):
+        driver.controller(code, logs, ['improve', '--online'], 'fixture')
+    assert (logs/'result.json').read_text().find('TimeExceeded') >= 0
 
 
-def test_existing_workflow_launch_refused_without_overwriting_evidence(tmp_path):
+def test_online_improvement_rejects_parent_and_proposer_identity_mismatch(tmp_path):
     from mini_swe_rsi.driver import Driver, initial_code
-    from mini_swe_rsi.core import read
-    code=tmp_path/'code';initial_code(code)
-    logs=tmp_path/'logs';write(logs/'workflow_state.json',{'status':'incomplete'})
-    write(logs/'result.json',{'exit_status':'TimeExceeded'})
-    driver=Driver.__new__(Driver);driver.root=tmp_path
-    with pytest.raises(RuntimeError,match='Existing workflow state'):
-        driver.controller(code,logs,['improve'],'fixture')
-    assert read(logs/'result.json')=={'exit_status':'TimeExceeded'}
-    assert read(logs/'workflow_state.json')=={'status':'incomplete'}
+
+    code = tmp_path/'code'
+    initial_code(code)
+    driver = Driver.__new__(Driver)
+    driver.root = tmp_path
+    args = ['improve', '--online', '--parent-iter', '0', '--best-iter', '1',
+            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+            '--round-id', 'R0001', '--online-version', 'H0000']
+    with pytest.raises(RuntimeError, match='parent|proposer|best'):
+        driver.controller(code, tmp_path/'logs', args, 'fixture')
+
+
+@pytest.mark.parametrize('case', ['version_label', 'selected_path', 'inactive_version'])
+def test_online_archive_identity_guards_fail_before_container_setup(tmp_path, case):
+    from mini_swe_rsi.driver import initial_code
+
+    driver = _prelaunch_driver(tmp_path)
+    archive = tmp_path/'archive'
+    write(archive/'online_state.json', {'active_version': 'H0000'})
+    write(archive/'configuration.json', {'control_manifest': {'improvement': improvement_contract()}})
+    if case == 'selected_path':
+        code = archive/'wrong/H0000/agent_code'
+    else:
+        code = archive/'versions/H0000/agent_code'
+    initial_code(code)
+    if case == 'inactive_version':
+        write(archive/'online_state.json', {'active_version': 'H0001'})
+    version = 'H0001' if case == 'version_label' else 'H0000'
+    expected = {
+        'version_label': 'version does not match',
+        'selected_path': 'active archive version source',
+        'inactive_version': 'active version differs',
+    }[case]
+    with pytest.raises(RuntimeError, match=expected):
+        driver.controller(code, tmp_path/'logs', _online_args(version), 'fixture', archive=archive)
+    assert not hasattr(driver, 'client')
+
+
+def test_online_renderer_contract_change_is_rejected_before_runtime_setup(tmp_path, monkeypatch):
+    from mini_swe_rsi.driver import Driver, initial_code
+
+    code = tmp_path/'code'
+    initial_code(code)
+    write(tmp_path/'configuration.json', {'control_manifest': {'improvement': improvement_contract()}})
+    changed = {**improvement_contract(), 'renderer_sha256': 'changed-before-launch'}
+    monkeypatch.setattr('mini_swe_rsi.driver.improvement_contract', lambda: changed)
+    driver = Driver.__new__(Driver)
+    driver.root = tmp_path
+    args = ['improve', '--online', '--parent-iter', '0', '--best-iter', '0',
+            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+            '--round-id', 'R0001', '--online-version', 'H0000']
+    with pytest.raises(RuntimeError, match='Frozen improvement task contract'):
+        driver.controller(code, tmp_path/'logs', args, 'fixture')

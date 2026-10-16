@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-swe-rsi"
 version = "0.1.0"
-description = "Pinned SICA controller with archived mini-swe-agent and fixed-model evaluation"
+description = "Online task-by-task RSI with archived mini-swe-agent and independent candidate checks"
 requires-python = ">=3.12"
-dependencies = ["tokenizers==0.23.3", "numpy", "pandas", "tabulate", "jsonlines", "pyyaml", "jinja2", "pydantic>=2", "litellm>=1.75.5,!=1.82.7,!=1.82.8", "docker", "requests", "rich", "platformdirs", "python-dotenv", "tenacity"]
+dependencies = ["tokenizers==0.23.3", "pyyaml", "jinja2", "pydantic>=2", "litellm>=1.75.5,!=1.82.7,!=1.82.8", "docker", "requests", "rich", "platformdirs", "python-dotenv", "tenacity"]
 
 [project.scripts]
 mini-swe-rsi = "mini_swe_rsi.cli:main"

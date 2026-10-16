@@ -2,7 +2,6 @@
 import io
 import json
 import math
-import subprocess
 
 import pytest
 
@@ -52,11 +51,3 @@ def test_unbounded_persists_and_serializes_without_infinite_socket_timeout(tmp_p
             broker.check_session(broker.sessions[task])
     finally:
         broker.close()
-
-
-def test_diagnostic_modes_cannot_conflict(tmp_path):
-    result = subprocess.run([str(ROOT/'.venv/bin/python'),str(ROOT/'scripts/smoke_once.py'),
-        '--output',str(tmp_path/'out'),'--unbounded-diagnostic','--new-time-budget-seconds','1800'],
-        capture_output=True,text=True)
-    assert result.returncode == 2 and 'not allowed' in result.stderr
-    assert not (tmp_path/'out').exists()

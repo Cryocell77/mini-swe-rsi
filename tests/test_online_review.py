@@ -5,6 +5,7 @@ import json
 import pytest
 
 from mini_swe_rsi.core import ROOT
+from mini_swe_rsi.core import write
 
 
 spec = importlib.util.spec_from_file_location('online_review_workflow', ROOT/'runtime/workflow.py')
@@ -89,7 +90,7 @@ def test_online_archive_does_not_rank_unpaired_versions(tmp_path):
                       identities={'public_archive': str(tmp_path/'archive')},
                       feedback={'task_id': 'task', 'round_id': 'R0001',
                                 'evidence_refs': ['tasks/0001-task/trace.txt']})
-    with pytest.raises(ValueError, match='different task coverage'):
+    with pytest.raises(ValueError, match='chronological overview|different task coverage'):
         flow.dispatch({'op': 'archive', 'kind': 'best', 'iteration': 0}, role='archive_explorer')
     assert 'Do not rank' in flow.dispatch({'op': 'archive', 'kind': 'overview'}, role='archive_explorer')
 
@@ -108,7 +109,111 @@ def test_online_cli_finalizer_uses_online_report(tmp_path, monkeypatch):
 
     monkeypatch.setattr(OnlineLoop, 'from_environment', lambda *a, **k: Loop())
     monkeypatch.setattr(report, 'build_online_report', lambda root: seen.append('online_report'))
-    monkeypatch.setattr(cli, 'build_report', lambda root: pytest.fail('Online mode must not invoke native report'))
     monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run'), '--task-limit', '3'])
     cli.main()
     assert seen == ['closed', 'online_report']
+
+
+def test_successful_online_run_propagates_report_finalizer_value_error(tmp_path, monkeypatch):
+    from mini_swe_rsi import cli, report
+    from mini_swe_rsi.online import OnlineLoop
+    seen = []
+
+    class Loop:
+        def run(self):
+            seen.append('ran')
+            return {'status': 'completed'}
+
+        def close(self):
+            seen.append('closed')
+
+    def report_fail(root):
+        raise ValueError('report finalizer failure')
+
+    monkeypatch.setattr(OnlineLoop, 'from_environment', lambda *a, **k: Loop())
+    monkeypatch.setattr(report, 'build_online_report', report_fail)
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run')])
+    with pytest.raises(ValueError, match='report finalizer failure'):
+        cli.main()
+    assert seen == ['ran', 'closed']
+
+
+@pytest.mark.parametrize('signal', [KeyboardInterrupt, SystemExit])
+def test_cli_preserves_interrupt_setup_signal_when_report_finalizer_fails(tmp_path, monkeypatch, signal):
+    from mini_swe_rsi import cli, report
+    from mini_swe_rsi.online import OnlineLoop
+
+    def start(*args, **kwargs):
+        raise signal('startup signal')
+
+    def report_fail(root):
+        raise ValueError('report finalizer failure')
+
+    run = tmp_path/'run'
+    monkeypatch.setattr(OnlineLoop, 'from_environment', start)
+    monkeypatch.setattr(report, 'build_online_report', report_fail)
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(run)])
+    with pytest.raises(signal):
+        cli.main()
+    assert not (run/'failure.json').exists()
+
+
+@pytest.mark.parametrize('kind', ['malformed_config', 'malformed_state', 'conflicting_protocol', 'native_root'])
+def test_online_report_rejects_malformed_or_native_roots(tmp_path, kind):
+    from mini_swe_rsi.report import build_online_report
+
+    run = tmp_path/'run'
+    run.mkdir()
+    if kind == 'malformed_config':
+        (run/'configuration.json').write_text('{not-json')
+    else:
+        write(run/'configuration.json', {'online_protocol': 'mini-swe-rsi-online-v2'})
+        write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v2', 'active_version': 'H0000'})
+        if kind == 'malformed_state':
+            write(run/'online_state.json', ['invalid'])
+        elif kind == 'conflicting_protocol':
+            write(run/'configuration.json', {
+                'online_protocol': 'mini-swe-rsi-online-v2', 'protocol': 'native-v1'})
+        elif kind == 'native_root':
+            write(run/'baseline.json', {'legacy': True})
+    with pytest.raises((ValueError, json.JSONDecodeError), match='Online|online|legacy|protocol|JSON|Expecting'):
+        build_online_report(run)
+
+
+def test_cli_report_failure_is_not_silently_suppressed(tmp_path, monkeypatch):
+    from mini_swe_rsi import cli, report
+
+    def fail(root):
+        raise ValueError('report contract failure')
+
+    monkeypatch.setattr(report, 'build_online_report', fail)
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'report', '--run', str(tmp_path/'run')])
+    with pytest.raises(ValueError, match='report contract failure'):
+        cli.main()
+
+
+def test_cli_preserves_online_startup_error_when_report_finalizer_fails(tmp_path, monkeypatch):
+    from mini_swe_rsi import cli, report
+    from mini_swe_rsi.online import OnlineLoop
+
+    def start(*args, **kwargs):
+        raise RuntimeError('startup contract failure')
+
+    def report_fail(root):
+        raise ValueError('report finalizer failure')
+
+    monkeypatch.setattr(OnlineLoop, 'from_environment', start)
+    monkeypatch.setattr(report, 'build_online_report', report_fail)
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run')])
+    with pytest.raises(RuntimeError, match='startup contract failure'):
+        cli.main()
+
+
+@pytest.mark.parametrize('command', ['baseline', 'evolve', 'evaluate'])
+def test_cli_rejects_removed_native_commands(command, monkeypatch):
+    from mini_swe_rsi import cli
+
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', command, '--run', '/tmp/native'])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2

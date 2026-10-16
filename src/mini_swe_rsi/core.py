@@ -165,28 +165,6 @@ def freeze_dev_selection(data, root):
     data.dev_ids = tuple(selection['ids'])
 
 
-def apply_failed_search_selection(data, root):
-    """Use one frozen baseline-failure set for every search version."""
-    root = Path(root)
-    marker = root/'search_selection.json'
-    if not marker.exists():
-        return
-    source = root/'private/failure_subset_migration/h0_results_full.jsonl'
-    selection = read(marker)
-    rows = {r['problem_id']:r for r in map(json.loads, source.read_text().splitlines())}
-    selected = data.ids('dev')
-    if set(rows) != set(selected) or any(rows[i].get('score') is None for i in selected):
-        raise ValueError('Failure selection requires complete original baseline coverage')
-    ids = [i for i in selected if rows[i]['score'] == 0]
-    expected = {'policy':'frozen baseline failures', 'ids':ids, 'count':len(ids),
-                'source_results_sha256':digest(source), 'baseline_coverage':len(selected)}
-    if selection != expected or not read(root/'baseline.json').get('complete'):
-        raise ValueError('Frozen failure selection changed or baseline incomplete')
-    if not ids:
-        raise ValueError('No baseline failures available for search')
-    data.dev_ids = tuple(ids)
-
-
 class BudgetExceeded(RuntimeError):
     pass
 

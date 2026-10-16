@@ -1,32 +1,10 @@
 import ast
-import json
-import time
 from pathlib import Path
 
 import pytest
 
 from mini_swe_rsi.core import Budget, BudgetExceeded, ROOT, read, tree_hash, write
 from mini_swe_rsi.driver import validate_code
-from mini_swe_rsi.report import paired
-from mini_swe_rsi.sica import load_original
-
-
-def test_upstream_functions_are_exact_and_archive_selects(tmp_path):
-    r = load_original()
-    for i, scores in enumerate(([0, 0, 1, 0], [1, 1, 1, 1], [0, 0, 0, 0])):
-        b = tmp_path/f'agent_{i}/benchmarks/swe'
-        b.mkdir(parents=True)
-        rows = [dict(problem_id=str(j), score=s, tokens_used=10, num_cached_tokens=0,
-                     cost_estimate=0, wall_time=1) for j,s in enumerate(scores)]
-        (b/'results.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
-        write(b/'perf.json', dict(avg_score=sum(scores)/4, tokens=40, num_cached_tokens=0, cost=0, time=4))
-    a = r.ArchiveAnalyzer(tmp_path)
-    assert a.get_best_agent_iteration() == 1
-    assert r.select_base_agent(a, 2) == 1
-    assert Path(r.run_meta_agent_benchmark.__code__.co_filename) == ROOT/'vendor/sica/runner.py'
-    assert Path(r.select_base_agent.__code__.co_filename) == ROOT/'vendor/sica/runner.py'
-
-
 def test_budget_survives_restart_and_enforces_both_limits(tmp_path):
     b = Budget(tmp_path)
     b.enter('baseline')
@@ -40,14 +18,6 @@ def test_budget_survives_restart_and_enforces_both_limits(tmp_path):
     write(b.path, data)
     with pytest.raises(BudgetExceeded):
         restarted.enter('search')
-
-
-def test_no_partial_coverage_can_pass_statistics():
-    one = {'x': dict(score=1, tokens_used=10)}
-    result = paired(one, one, ['x','y'])
-    assert not result['complete']
-    win = paired({'x': dict(score=1,tokens_used=10)}, {'x': dict(score=0,tokens_used=10)}, ['x'])
-    assert win['ci95'] == [1.,1.]
 
 
 def test_comments_are_not_behavior_and_symlinks_rejected(tmp_path):

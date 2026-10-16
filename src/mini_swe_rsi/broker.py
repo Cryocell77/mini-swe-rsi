@@ -899,7 +899,7 @@ class Broker:
             current = copy.deepcopy(messages)
             accumulated = {'content':'', 'reasoning_content':''}
             aggregate_usage = dict(total_tokens=0, prompt_tokens=0, completion_tokens=0)
-            maximum = limits['summary_max_requests'] if s['label'] == 'summary' else limits['completion_max_requests']
+            maximum = limits['completion_max_requests']
             aggregate_cached = 0
             for attempt in range(maximum):
                 self.check_session(s)
@@ -1021,7 +1021,7 @@ class Broker:
                         if not isinstance(value,str):
                             raise ModelError('Invalid assistant text')
                         accumulated[key] += value
-                    clipped = choice.get('finish_reason') in ('length','insufficient_system_resource') and s['label'] != 'summary'
+                    clipped = choice.get('finish_reason') in ('length','insufficient_system_resource')
                     if clipped:
                         if attempt+1 >= maximum:
                             raise ModelError('ContinuationLimitExceeded')
@@ -1132,10 +1132,3 @@ class Broker:
         append_event(self.root, dict(kind='tool_call', label=s['label'], command=command,
                                     returncode=code, output=text, exception_info=error))
         return {'output': text, 'returncode': code, 'exception_info': error}
-
-    def summary(self, messages, label):
-        token = self.session(label, seconds=None)
-        try:
-            return self.complete(token, {'messages': messages})['choices'][0]['message']['content'] or ''
-        finally:
-            self.finish(token)
