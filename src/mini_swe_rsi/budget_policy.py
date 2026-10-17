@@ -14,6 +14,11 @@ def sica_budget(model_max_output_tokens, context_max_tokens):
             'benchmark_wall_seconds': 600, 'improvement_wall_seconds': 0,
             'tool_timeout_seconds': 600, 'command_min_seconds': 5,
             'command_max_seconds': 1800, 'command_default_seconds': 600,
+            # Byte/resource limits for untrusted improvement shell output;
+            # these are not token estimates or experiment time budgets.
+            'stage_output_inline_bytes': 300000,
+            'stage_output_max_bytes': 8 * 1024 * 1024,
+            'stage_output_preview_bytes': 4096,
             'model_max_output_tokens': model_max_output_tokens,
             'context_max_tokens': context_max_tokens,
             'fileview_regeneration_chars': 300000,

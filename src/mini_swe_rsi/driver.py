@@ -295,7 +295,7 @@ class Driver:
             if task_identity:
                 from .stage_tools import StageTools
                 self.broker.sessions[token]['stage_tools'] = StageTools(
-                    self, logs, target, view if archive is not None else None)
+                    self, logs, target, view if archive is not None else None, self.root/'tool_outputs')
         append_event(self.root, dict(kind='agent_launch', code=str(Path(code).resolve()),
                      code_hash=tree_hash(code), behavioral_hash=tree_hash(code, True),
                      module=module, image_id=self.image.id, container_id=c.id,

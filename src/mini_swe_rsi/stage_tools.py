@@ -39,8 +39,10 @@ class StageTools:
     A fresh sandbox is used on every stage transition, so a background process
     from step 4 cannot retain a writable mount after the candidate is frozen.
     """
-    def __init__(self, driver, logs, candidate, archive):
+    def __init__(self, driver, logs, candidate, archive, output_dir=None):
         self.driver, self.logs, self.candidate, self.archive = driver, Path(logs), candidate, archive
+        self.output_dir = Path(output_dir) if output_dir is not None else self.logs/'tool_outputs'
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.container = None
         self.step = None
 
@@ -49,9 +51,11 @@ class StageTools:
         step = stage_permissions(self.logs)
         if step != self.step:
             self.close()
+            mounts = tool_mounts(self.candidate, self.archive, step)
+            mounts[str(self.output_dir.resolve())] = {'bind': '/home/agent/tool_outputs', 'mode': 'ro'}
             self.container = self.driver.client.containers.run(
                 self.driver.image.id, ['python', '-c', 'import time; time.sleep(10**9)'],
-                detach=True, volumes=tool_mounts(self.candidate, self.archive, step),
+                detach=True, volumes=mounts,
                 network_mode='none', read_only=True, tmpfs={'/tmp': 'size=256m'},
                 working_dir='/home/agent/workdir',
                 environment={'PYTHONPATH': '/home/agent/workdir', 'PYTHONDONTWRITEBYTECODE': '1',

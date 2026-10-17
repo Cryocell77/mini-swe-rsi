@@ -146,6 +146,20 @@ Compatibility: online public file views use these read/list/search operations; e
         text += '\nDelegation syntax: {"op":"delegate","role":"<permitted role>","task":"complete self-contained instructions"}.'
     if role == 'orchestrator':
         text += '\nChronological online archive overview belongs to archive_explorer; delegate archive analysis to that agent. The current step completion tool takes success only; its invocation is bound by the host. Call the exact current step name, not the structure name. Unsupported upstream ReasoningAgent is not registered.'
+    if role in ('orchestrator', 'software_developer', 'general_problem_solver'):
+        text += ('\nOffline agent-loop tests: a successful action does not end DefaultAgent.run(). '
+                 'For a single recovery transition, initialize the messages and invoke step() a finite number of times. '
+                 'For a full run(), the stub must eventually emit an exit message via InterruptAgentFlow; '
+                 'also set a small explicit step_limit as a fallback and assert the intended exit_status '
+                 '(LimitsExceeded is not test success). Zero-cost stubs never hit cost_limit; '
+                 'max_consecutive_format_errors only stops consecutive errors, not successful actions. '
+                 'Include these requirements in delegated testing tasks. Keep test logs finite. '
+                 'Online improvement shell output above 300000 bytes is saved as a read-only artifact '
+                 'with a digest and explicit preview; it is not silently truncated. Above 8388608 bytes, '
+                 'the command sandbox is destroyed, its /tmp state is lost, and ToolOutputLimitExceeded '
+                 'is returned with an explicitly incomplete prefix artifact. Recreate scratch files if needed; '
+                 'use normal shell commands to read bounded artifact excerpts under /home/agent/tool_outputs. '
+                 'These are local tool resource limits, not an experiment time budget.')
     return text
 
 

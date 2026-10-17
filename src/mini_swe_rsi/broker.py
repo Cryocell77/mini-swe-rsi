@@ -1120,7 +1120,12 @@ class Broker:
         args = ['docker', 'exec', '-w', s['cwd'], s['solver'], 'timeout', '-k', '2', str(seconds),
                 'bash', '-lc', command]
         if s.get('stage_tools') is not None:
-            args = s['stage_tools'].command(command, seconds)
+            from .tool_output import capture_stage_output
+            tools = s['stage_tools']
+            args = tools.command(command, seconds)
+            result = capture_stage_output(args, seconds, tools, limits)
+            append_event(self.root, dict(kind='tool_call', label=s['label'], command=command, **result))
+            return result
         with tempfile.TemporaryFile() as output:
             try:
                 p = subprocess.run(args, stdout=output, stderr=subprocess.STDOUT, timeout=seconds+5)
