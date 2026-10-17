@@ -4,16 +4,13 @@ import copy
 import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
-from mini_swe_rsi.core import Budget
 
 
 @pytest.fixture
 def catalog_broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(
         OPENAI_BASE_URL='https://token.sensenova.cn/v1', OPENAI_API_KEY='fixture', LOCAL_LLM_MODEL='glm-5.2'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path)
     model = {'id': 'glm-5.2', 'context_length': 1048576, 'max_output_length': 131072,
              'pricing': dict.fromkeys(('prompt', 'completion', 'input_cache_read', 'image', 'request'), '0'),
              'supported_features': ['reasoning'], 'quantization': 'fp8'}

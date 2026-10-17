@@ -1,23 +1,9 @@
-import ast
 from pathlib import Path
 
 import pytest
 
-from mini_swe_rsi.core import Budget, BudgetExceeded, ROOT, read, tree_hash, write
+from mini_swe_rsi.core import ROOT, tree_hash
 from mini_swe_rsi.driver import validate_code
-def test_budget_survives_restart_and_enforces_both_limits(tmp_path):
-    b = Budget(tmp_path)
-    b.enter('baseline')
-    data = read(b.path)
-    data['phases']['baseline'] -= 7201
-    write(b.path, data)
-    restarted = Budget(tmp_path)
-    with pytest.raises(BudgetExceeded):
-        restarted.enter('baseline')
-    data['started'] -= 24*3600+1
-    write(b.path, data)
-    with pytest.raises(BudgetExceeded):
-        restarted.enter('search')
 
 
 def test_comments_are_not_behavior_and_symlinks_rejected(tmp_path):

@@ -17,6 +17,7 @@ _LEGACY_MARKERS = (
     'baseline.json', 'preflight.json', 'gates.json', 'champions.json',
     'recursive_track_result.json', 'verification.json', 'test_seal.json',
     'results', 'probes', 'private/final',
+    'budget.json', 'execution_scope.json', 'dev_selection.json',
 )
 
 

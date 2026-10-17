@@ -15,7 +15,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .core import (Budget, Data, ROOT, append_event, digest, read, tree_hash,
+from .core import (Data, ROOT, append_event, digest, read, tree_hash,
                    write, improvement_contract, execution_hash)
 from .driver import Driver, InfrastructureError, initial_code, validate_code
 from .broker import Broker, ModelError
@@ -43,6 +43,30 @@ def _atomic_move(source, destination):
 
 def _finite_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def freeze_task_selection(data, root, task_limit=None):
+    """Freeze the unique ordered online task selection.
+
+    The selected ids are always an ordered prefix of the approved development
+    manifest; ``task_limit=None`` selects the complete manifest.  A restart may
+    repeat the same limit but can never reorder, widen, shrink or otherwise
+    replace the frozen sequence.
+    """
+    root = Path(root)
+    if task_limit is not None and (type(task_limit) is not int or task_limit < 1):
+        raise OnlineError('Online task_limit must be a positive integer')
+    source_ids = list(data.ids('dev'))
+    selected = source_ids if task_limit is None else source_ids[:task_limit]
+    selection = {'ids': selected, 'task_limit': task_limit, 'source_ids': source_ids}
+    path = root/'online_task_selection.json'
+    if path.exists():
+        saved = read(path)
+        if saved != selection:
+            raise OnlineError('Frozen online task selection changed')
+        return list(saved['ids'])
+    write(path, selection)
+    return selected
 
 
 class OnlineLoop:
@@ -78,49 +102,31 @@ class OnlineLoop:
     def from_environment(cls, root, data_path=None, billing_mode=None, task_limit=None,
                          resume_checkpoint=None):
         root = Path(root).resolve()
+        # Earlier controls persisted an experiment-wide phase clock or an
+        # execution_scope/dev_selection prefix.  Those artifacts cannot be
+        # converted or silently reused under the online contract.
+        for name in ('budget.json', 'execution_scope.json', 'dev_selection.json'):
+            if (root/name).exists():
+                raise OnlineError(
+                    f'Legacy run artifact {name} is unsupported; start a new online run directory')
         existing_config = root/'configuration.json'
         if existing_config.exists() and read(existing_config).get('protocol') != cls.protocol:
             raise OnlineError('Existing native run cannot be resumed as online')
         existing_contract = read(existing_config) if existing_config.exists() else {}
         if task_limit is None and 'task_limit' in existing_contract:
             task_limit = existing_contract.get('task_limit')
-        if (root/'budget.json').exists() and not existing_config.exists():
-            raise OnlineError('Existing run has no online contract; refusing mixed native budget recovery')
-        if task_limit is not None and (type(task_limit) is not int or task_limit < 1):
-            raise OnlineError('Online task_limit must be a positive integer')
         data = Data(data_path) if data_path else Data()
         data.freeze_images(root)
-        from .core import freeze_dev_selection
-        freeze_dev_selection(data, root)
-        # Online is an independent scheduler.  Per-stage broker accounting is
-        # retained, while the native experiment's global 24-hour phase cap is
-        # not silently inherited.
-        budget = Budget(root)
-        state = read(budget.path)
-        if existing_config.exists() and state.get('unbounded_diagnostic') not in (True, None):
-            raise OnlineError('Frozen online budget policy changed')
-        state['unbounded_diagnostic'] = True
-        write(budget.path, state)
-        budget.enter('search')
+        selected_tasks = freeze_task_selection(data, root, task_limit)
         saved_billing = existing_contract.get('billing_mode')
         if billing_mode is not None and saved_billing not in (None, billing_mode):
             raise OnlineError('Frozen online billing identity changed')
         effective_billing = billing_mode if billing_mode is not None else saved_billing
-        broker = Broker(root, budget, billing_mode=effective_billing)
+        broker = Broker(root, billing_mode=effective_billing)
         try:
             model_identity = broker.identity()
             service_identity = getattr(broker, 'service_identity', None)
-            selected_tasks = list(data.ids('dev'))
-            if task_limit is not None:
-                selected_tasks = selected_tasks[:task_limit]
-            selection_path = root/'online_task_selection.json'
-            selection = {'ids': selected_tasks, 'task_limit': task_limit,
-                         'source_ids': list(data.ids('dev'))}
-            if selection_path.exists() and read(selection_path) != selection:
-                raise OnlineError('Frozen online task selection changed')
-            if not selection_path.exists():
-                write(selection_path, selection)
-            driver = Driver(root, data, broker, budget)
+            driver = Driver(root, data, broker)
             contract = {
                 'protocol': cls.protocol,
                 'tasks': selected_tasks,
@@ -736,7 +742,7 @@ class OnlineLoop:
         # payload.
         self.broker.register_candidate_job(job_id, callback, identity)
         try:
-            args = ['improve', '--online', '--task-id', task_id, '--round-id', round_id,
+            args = ['improve', '--task-id', task_id, '--round-id', round_id,
                     '--candidate-id', proposal_id, '--parent-iter', str(int(parent[1:])),
                     '--best-iter', str(int(parent[1:])), '--current-iter', str(int(parent[1:])),
                     '--online-version', parent]

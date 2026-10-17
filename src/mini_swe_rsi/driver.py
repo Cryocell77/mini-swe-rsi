@@ -93,8 +93,8 @@ def initial_code(destination):
 
 
 class Driver:
-    def __init__(self, root, data, broker, budget):
-        self.root, self.data, self.broker, self.budget = Path(root), data, broker, budget
+    def __init__(self, root, data, broker):
+        self.root, self.data, self.broker = Path(root), data, broker
         self.client = docker.from_env()
         self.running = []
         self.network = None
@@ -107,8 +107,10 @@ class Driver:
             self.relay = self.client.containers.create(self.image.id, ['python', '/runtime/relay.py'],
                 volumes={str(ROOT/'runtime'): {'bind': '/runtime', 'mode': 'ro'}},
                 environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}',
-                             'RSI_RELAY_TIMEOUT':str(max(1,self.budget.remaining())+30)
-                                 if math.isfinite(self.budget.remaining()) else 'none'},
+                             # Every broker request owns its own session/tool
+                             # deadline; the relay itself must not invent an
+                             # additional wall-clock cutoff.
+                             'RSI_RELAY_TIMEOUT': 'none'},
                 network=self.transport.name, cap_drop=['ALL'], security_opt=['no-new-privileges'],
                 mem_limit='128m', pids_limit=64, read_only=True, tmpfs={'/tmp':'size=16m'})
             self.network.connect(self.relay)
@@ -169,10 +171,8 @@ class Driver:
                   str(ROOT / 'vendor/sica'): {'bind': '/upstream', 'mode': 'ro'},
                   str(logs): {'bind': '/logs', 'mode': 'rw'}}
         task_identity = None
-        execution_budget = None
+        execution_limits = None
         if command_args[0] == 'improve':
-            if '--online' not in command_args:
-                raise RuntimeError('Improvement is available only for online workflows')
             if (logs/'workflow_state.json').exists() and resume_checkpoint is None:
                 raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
             mounts[str(ROOT/'vendor/sica_workflow')] = {'bind':'/workflow_sources','mode':'ro'}
@@ -215,12 +215,11 @@ class Driver:
                 frozen_contract = saved_configuration.get('control_manifest', {}).get('improvement')
                 if frozen_contract != contract:
                     raise RuntimeError('Frozen improvement task contract changed before launch')
-            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
-            shared_calls = execution_budget['main_iterations']
+            execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
+            shared_calls = execution_limits['main_iterations']
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-            render_kwargs = {'calls':shared_calls, 'budget':execution_budget}
-            render_kwargs.update(online=True,
-                task_id=task_id, round_id=round_id, version=version)
+            render_kwargs = {'calls':shared_calls, 'budget':execution_limits}
+            render_kwargs.update(task_id=task_id, round_id=round_id, version=version)
             if prompt is not None and Path(prompt).exists():
                 render_kwargs['feedback'] = Path(prompt).read_text()
             rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
@@ -274,9 +273,9 @@ class Driver:
                 'mode': 'ro' if task_identity else 'rw'}
         if prompt:
             mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
-        if execution_budget is None:
-            execution_budget = {**self.broker.budget_limits(), 'global_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
-        env = {'RSI_BUDGET_CONFIG':json.dumps(execution_budget), 'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
+        if execution_limits is None:
+            execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
+        env = {'RSI_BUDGET_CONFIG':json.dumps(execution_limits, allow_nan=False), 'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
                'RSI_BROKER': self.broker_url, 'RSI_TOKEN': token,
                'MSWEA_CONFIG_ROOT': '/tmp/mini-config', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
                'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
@@ -366,7 +365,7 @@ class Driver:
         job = {'operation': 'score', 'directory': str(directory), 'task': self.data.rows[task_id],
                'patch': patch, 'arch': 'x86_64', 'image_namespace': 'swebench',
                'instance_image_tag': 'latest', 'run_id': uuid.uuid4().hex,
-               'result_file': str(directory / 'result.json'), 'timeout': int(min(300, self.budget.remaining())),
+               'result_file': str(directory / 'result.json'), 'timeout': 300,
                'frozen_image': self.data.image(task_id)}
         write(directory / 'job.json', job)
         python = ROOT / '.eval-venv/bin/python'
@@ -374,7 +373,7 @@ class Driver:
             with (directory / 'process.log').open('w') as log:
                 subprocess.run([str(python), str(ROOT / 'src/mini_swe_rsi/grader.py'), str(directory / 'job.json')],
                         stdout=log, stderr=subprocess.STDOUT,
-                        timeout=max(1, min(360, self.budget.remaining())), check=True)
+                        timeout=360, check=True)
             result = read(directory / 'result.json')
             if not result.get('completed'):
                 raise InfrastructureError('Official grader produced no completed result')
@@ -387,7 +386,6 @@ class Driver:
                     container.remove(force=True)
 
     def task(self, code, task_id, output, *, grading_namespace='grading'):
-        self.budget.check()
         output = Path(output).resolve()
         output.mkdir(parents=True, exist_ok=True)
         frozen = self.frozen_image(task_id)
@@ -421,7 +419,7 @@ class Driver:
             if not (output / 'activation.json').exists():
                 write(output / 'activation.json', {'command': 'benchmark', 'agent_activation_unobserved': True})
             patch = command(['docker', 'exec', '-w', '/testbed', solver.id, 'bash', '-lc',
-                    'git add -A && git diff --cached --binary ' + base], timeout=min(30, self.budget.remaining()))
+                    'git add -A && git diff --cached --binary ' + base], timeout=30)
             (output / 'patch.diff').write_text(patch)
         finally:
             metrics = self.broker.finish(token)
@@ -452,7 +450,6 @@ class Driver:
                 grade = read(result_file)
                 break
         while grade is None and len(attempts) < 2:
-            self.budget.check()
             directory = self.root/'private'/grading_namespace/uuid.uuid4().hex
             attempts.append({'directory': str(directory), 'time': time.time()})
             write(ledger, attempts)

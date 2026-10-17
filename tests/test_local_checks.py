@@ -120,7 +120,6 @@ def test_real_loop_stops_before_oom_and_next_tool_can_read_saved_prefix(tmp_path
     import docker
     from mini_swe_rsi.broker import Broker
     from mini_swe_rsi.context_budget import ContextBudget
-    from mini_swe_rsi.core import Budget
     from mini_swe_rsi.stage_tools import StageTools
 
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
@@ -133,8 +132,7 @@ def test_real_loop_stops_before_oom_and_next_tool_can_read_saved_prefix(tmp_path
     source_hash = hashlib.sha256((candidate/'loop.py').read_bytes()).hexdigest()
     logs = tmp_path/'logs'
     write(logs/'workflow_state.json', {'active':{'index':4}, 'completed_steps':4, 'status':'improving'})
-    budget = Budget(tmp_path); budget.enter('preflight')
-    broker = Broker(tmp_path, budget, ContextBudget({'context_window':1000000,'max_output_tokens':128000}))
+    broker = Broker(tmp_path, ContextBudget({'context_window':1000000,'max_output_tokens':128000}))
     tools = StageTools(driver, logs, candidate, None, tmp_path/'tool_outputs')
     token = broker.session('local-check', solver='fixture', seconds=None)
     broker.sessions[token]['cost_limit_usd'] = None  # Improvement tools, not a benchmark task.

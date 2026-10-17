@@ -10,7 +10,7 @@ import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget
-from mini_swe_rsi.core import Budget, read, write
+from mini_swe_rsi.core import read, write
 
 
 def _response(*, usage=None, choices=None, error=None):
@@ -31,9 +31,7 @@ def make_broker(tmp_path, monkeypatch):
     })
 
     def factory(policy):
-        budget = Budget(tmp_path)
-        budget.enter('preflight')
-        broker = Broker(tmp_path, budget, context=ContextBudget(), transport_policy=policy)
+        broker = Broker(tmp_path, context=ContextBudget(), transport_policy=policy)
         broker.model = 'fixed'
         return broker
 

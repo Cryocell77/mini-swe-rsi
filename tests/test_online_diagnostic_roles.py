@@ -18,7 +18,6 @@ def make_flow(tmp_path, delegate):
     flow = w.Workflow(
         tmp_path,
         delegate,
-        online=True,
         identities={'version': 'H0000', 'public_archive': str(tmp_path / 'archive')},
         feedback={'task_id': 't1', 'round_id': 'R0001', 'evidence_refs': [REF]},
     )
@@ -124,11 +123,3 @@ def test_last_successful_archive_retry_binds_current_step_identity(tmp_path):
 
     assert flow.diagnostic_role_evidence['1']['identity'] == '002_archive_explorer'
     assert flow.diagnostic_reports['1']['identity'] == '002_archive_explorer'
-
-
-def test_native_workflow_does_not_require_diagnostic_role_evidence(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: {'exit_status': 'Submitted', 'submission': ''})
-
-    flow.call_role('reviewer', 'native role')
-
-    assert flow.diagnostic_role_evidence == {}

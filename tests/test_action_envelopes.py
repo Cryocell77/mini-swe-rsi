@@ -85,8 +85,7 @@ def test_normalized_action_cannot_bypass_step_three_role_permissions(tmp_path,of
     spec=importlib.util.spec_from_file_location('envelope_stage_workflow',ROOT/'runtime/workflow.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     delegated=[]
-    flow=module.Workflow(tmp_path,lambda *args:delegated.append(args),online=True,
-                         feedback={'task_id':'t','evidence_refs':['tasks/t/trace.txt']})
+    flow=module.Workflow(tmp_path,lambda *args:delegated.append(args),feedback={'task_id':'t','evidence_refs':['tasks/t/trace.txt']})
     flow.dispatch({'op':'invoke'});flow.active['index']=2;flow.completed_steps=2;flow.status='improving';flow.save()
     command='sica-workflow {"op":"delegate","role":"software_developer","task":"edit prematurely"}'
     returned,_=adapt_response(raw(content='<bash_command>'+command+'</bash_command>'))
@@ -183,7 +182,7 @@ def test_real_committee_payload_reaches_original_workflow_without_source_writes(
         calls.append(identity)
         return {'exit_status':'Submitted','submission':'Evidence and proposal reviewed.'}
     ref='tasks/t/trace.txt'
-    flow=module.Workflow(tmp_path/'logs',delegate,online=True,identities={'workdir':str(code)},
+    flow=module.Workflow(tmp_path/'logs',delegate,identities={'workdir':str(code)},
                          feedback={'task_id':'t','evidence_refs':[ref]})
     flow.dispatch({'op':'invoke'})
     for _ in range(2):

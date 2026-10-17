@@ -103,7 +103,7 @@ Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":".
 {"op":"submit","report":"<full non-empty report>"},
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
-Use sica-workflow only for structured operations. For final submission, prefer the structured submit operation with the complete non-empty report text; the host adds the mini completion sentinel. Do not wrap printf or another shell command inside sica-workflow. Arbitrary bash is unavailable to restricted roles. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and remain subject to the host global/stage deadline.
+Use sica-workflow only for structured operations. For final submission, prefer the structured submit operation with the complete non-empty report text; the host adds the mini completion sentinel. Do not wrap printf or another shell command inside sica-workflow. Arbitrary bash is unavailable to restricted roles. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and have no additional global/stage deadline.
 Read-only inspection operations: {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
 Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
 Compatibility: online public file views use these read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The legacy printf submission remains accepted for compatibility, but do not put printf inside sica-workflow. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
@@ -114,7 +114,7 @@ Compatibility: online public file views use these read/list/search operations; e
                         'It may finish its own run with {"op":"submit","report":"<full non-empty report>"}; '
                         'Each role invocation has its independent SICA iteration allowance (software_developer 1000; other roles 500), '
                         'up to five provider requests per completion. Commands have a 600-second tool safety timeout; output and context '
-                        'capacities come from the frozen model declaration. Global/stage time remains shared. ')
+                        'capacities come from the frozen model declaration. No additional global/stage time limit applies. ')
         if role in ('software_developer','general_problem_solver'):
             capabilities += 'Editing and local checks use normal mini bash. Committee is callable as {"op":"committee","context":"...","proposal":"..."}. '
         text = text[:start] + capabilities + '\n' + text[stop:]
@@ -247,7 +247,7 @@ def identity_context(identities, active_stage):
 
 
 class Workflow:
-    def __init__(self, logs, delegate, source=SOURCE, identities=None, online=False,
+    def __init__(self, logs, delegate, source=SOURCE, identities=None,
                  feedback=None, candidate_check=None, resume_state=None,
                  resume_committee_cache=None, stage_boundary=None):
         self.logs = Path(logs)
@@ -255,7 +255,6 @@ class Workflow:
         self.delegate = delegate
         self.stage_boundary = stage_boundary
         self.identities = identities or {}
-        self.online = bool(online)
         self.feedback = feedback or {}
         self.candidate_check = candidate_check
         self.candidate_check_result = None
@@ -273,8 +272,6 @@ class Workflow:
         self.counter = 0
         state_path = self.logs/'workflow_state.json'
         if resume_state is not None:
-            if not self.online:
-                raise ValueError('Workflow resume is available only for an online workflow')
             self._restore_state(resume_state, state_path)
             self._restore_committee_cache(resume_committee_cache)
         elif state_path.exists():
@@ -282,10 +279,9 @@ class Workflow:
             # invents completions.  The bridge must supply explicit host-bound
             # resume_state to cross this boundary.
             raise ValueError('Refusing to overwrite existing workflow state; interrupted execution is not resumable')
-        if self.online:
-            if not self.feedback:
-                raise ValueError('Online workflow requires a public task feedback package')
-            self._write_feedback_index()
+        if not self.feedback:
+            raise ValueError('Improvement workflow requires a public task feedback package')
+        self._write_feedback_index()
         self.assert_stage_source()
         self.save()
 
@@ -443,8 +439,6 @@ class Workflow:
         return {**a, **step, 'completion_tool': identifier+'_complete', 'completion_description':description}
 
     def check_stage_role(self, role):
-        if not self.online:
-            return
         index = self.active['index'] if self.active else None
         if role == 'software_developer' and (index != 3 or self.status != 'improving'):
             raise ValueError('software_developer is available only at step 4; finish proposal review first')
@@ -468,8 +462,6 @@ class Workflow:
         return digest.hexdigest()
 
     def assert_stage_source(self, freeze=False):
-        if not self.online:
-            return
         index = self.active['index'] if self.active else None
         source_hash = self.stage_source_hash()
         if source_hash is None:
@@ -499,15 +491,14 @@ class Workflow:
             values = {'analysis_focus':task, 'programming_instructions':task, 'problem_statement':task,
                       'specialisation':specialisation, 'context':context, 'proposal':task}
             if role == 'archive_explorer':
-                values['analysis'] = (self.online_overview() if self.online
-                                      else 'Online archive overview is unavailable outside an online workflow.')
+                values['analysis'] = self.online_overview()
             prompt = core_prompt(mapping[role], values) + identity_context(self.identities, self.current())
             result = self.delegate(identity, prompt, role in ('archive_explorer','reviewer'))
             self.event(kind='role_end', identity=identity, role=role,
                        step_index=call_index, result=result)
             if result.get('exit_status') != 'Submitted':
                 raise ValueError(f'Role {identity} failed: {result.get("exit_status")}')
-            if self.online and call_index in (0, 1) and role == 'archive_explorer':
+            if call_index in (0, 1) and role == 'archive_explorer':
                 submission = result.get('submission')
                 if not isinstance(submission, str) or not submission.strip():
                     raise ValueError(f'Online diagnostic role {identity} returned an empty submission')
@@ -538,16 +529,16 @@ class Workflow:
             op = 'complete'
             request = {**request, 'tool':current_completion}
         caps = role_capabilities(role)
-        if self.online and role == 'orchestrator':
+        if role == 'orchestrator':
             caps = {**caps, 'operations': set(caps['operations']) | {'diagnosis_decision', 'decision', 'candidate_check'}}
-        if self.online and op in ('diagnosis_decision', 'decision', 'candidate_check') and role != 'orchestrator':
+        if op in ('diagnosis_decision', 'decision', 'candidate_check') and role != 'orchestrator':
             raise ValueError(f'{op} is available only to an online coordinator')
         self.event(kind='operation_request', requested_op=requested_op, op=op, role=role)
         if op not in caps['operations']:
             raise ValueError(f'Operation {requested_op} is unavailable to {role}; permitted: {sorted(caps["operations"])}')
-        if self.online and self.status == 'diagnosis_pending' and op in ('committee', 'delegate'):
+        if self.status == 'diagnosis_pending' and op in ('committee', 'delegate'):
             raise ValueError('Online diagnosis decision is required before committee or implementation roles')
-        if self.online and self.status == 'active' and self.active and self.active['index'] < 2:
+        if self.status == 'active' and self.active and self.active['index'] < 2:
             if op == 'committee' or (op == 'delegate' and request.get('role') != 'archive_explorer'):
                 raise ValueError('Online steps 1 and 2 permit diagnosis-only roles')
         if op == 'invoke':
@@ -563,24 +554,24 @@ class Workflow:
         if op == 'complete':
             if not self.active or request.get('invocation_id', self.active['invocation_id']) != self.active['invocation_id'] or request.get('tool') != self.current()['completion_tool']:
                 raise ValueError('Only the active invocation/current completion tool is available: ' + str(current_completion))
-            if self.online and self.active['index'] == 2 and self.completed_steps == 2 and self.status == 'diagnosis_pending':
+            if self.active['index'] == 2 and self.completed_steps == 2 and self.status == 'diagnosis_pending':
                 raise ValueError('Online diagnosis decision is required before step 3')
             success = request.get('success', True)
             if type(success) is not bool:
                 raise ValueError('success must be boolean')
             previous = self.current()
-            if self.online and self.stage_boundary is not None:
+            if self.stage_boundary is not None:
                 self.stage_boundary()
             diagnostic_evidence = None
-            if self.online and success and previous['index'] in (0, 1):
+            if success and previous['index'] in (0, 1):
                 diagnostic_evidence = self._require_diagnostic_role_evidence(previous)
-            if self.online and success and previous['index'] == 2:
+            if success and previous['index'] == 2:
                 self.check_plan = self._freeze_check_plan(request.get('check_plan'))
                 self.event(kind='check_plan_frozen', check_plan=self.check_plan)
-            if (self.online and success and previous['index'] == 4
+            if (success and previous['index'] == 4
                     and self.candidate_check_result is None):
                 raise ValueError('Online step 5 requires a completed host candidate_check')
-            if self.online and success and previous['index'] in (0, 1):
+            if success and previous['index'] in (0, 1):
                 report = request.get('report')
                 refs = request.get('evidence_refs', [])
                 if not isinstance(report, str) or not report.strip() or not isinstance(refs, list) or not refs:
@@ -596,7 +587,7 @@ class Workflow:
                     'identity': diagnostic_evidence['identity'],
                     'role': diagnostic_evidence['role'],
                     'step_index': previous['index']}
-            if self.online and success and previous['index'] == 3:
+            if success and previous['index'] == 3:
                 self.assert_stage_source(freeze=True)
             if success:
                 self.completed_steps += 1
@@ -606,14 +597,14 @@ class Workflow:
                 output = 'Reasoning structure complete. Please proceed to complete the rest of the task as appropriate.' if success else f'Reasoning structure exited due to error in step {previous["step_ids"][previous["index"]]}. Please proceed to complete the rest of the task as appropriate.'
             else:
                 self.active['index'] += 1
-                if self.online and self.completed_steps == 2:
+                if self.completed_steps == 2:
                     self.status = 'diagnosis_pending'
                 output = self.current()
             self.event(kind='complete', previous=previous, declared_success=success, output=output)
             return output
         if op in ('diagnosis_decision', 'decision'):
-            if not self.online or role != 'orchestrator':
-                raise ValueError('diagnosis_decision is available only to an online coordinator')
+            if role != 'orchestrator':
+                raise ValueError('diagnosis_decision is available only to the coordinator')
             if not self.active or self.active['index'] != 2 or self.completed_steps != 2 or self.status != 'diagnosis_pending':
                 raise ValueError('diagnosis_decision is available only after successful steps 1 and 2')
             decision = request.get('decision')
@@ -663,8 +654,8 @@ class Workflow:
                        opened_steps=[3,4,5,6,7])
             return self.current()
         if op == 'candidate_check':
-            if not self.online or role != 'orchestrator':
-                raise ValueError('candidate_check is available only to an online coordinator')
+            if role != 'orchestrator':
+                raise ValueError('candidate_check is available only to the coordinator')
             if not self.active or self.active['index'] != 4 or self.completed_steps != 4 or self.status != 'improving':
                 raise ValueError('candidate_check is available only at step 5 after steps 1-4')
             if self.candidate_check is None:
@@ -705,8 +696,6 @@ class Workflow:
                 reviews += f"\n\nReviewer {i}'s review:\n" + submission
             return reviews
         if op == 'archive':
-            if not self.online:
-                raise ValueError('Archive analysis is available only in an online workflow')
             if request.get('kind', 'overview') != 'overview':
                 raise ValueError('Online archive supports only chronological overview; ranking and comparison are unsupported')
             return self.online_overview()
@@ -848,7 +837,7 @@ class Workflow:
         return plan
 
     def finish(self, result):
-        if self.online and self.stage_boundary is not None:
+        if self.stage_boundary is not None:
             self.stage_boundary()
         self.assert_stage_source()
         if self.status not in ('completed','failed','skipped_no_actionable_improvement','diagnosis_failed'):
@@ -947,7 +936,7 @@ class Workflow:
                 if len(parts) == 3 and parts[0] == 'printf' and parts[1] == '%s\\n' and parts[2].startswith('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n'):
                     return {'output':parts[2]+'\n','returncode':0}
                 raise ValueError('Role permits only structured workflow operations or exact submission')
-            if self.online and (not self.active or self.active['index'] not in (3, 4, 5, 6)):
+            if not self.active or self.active['index'] not in (3, 4, 5, 6):
                 raise ValueError('Shell is unavailable outside steps 4-7; only step 4 permits source edits')
             self.assert_stage_source()
             return None

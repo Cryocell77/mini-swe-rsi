@@ -133,3 +133,9 @@ Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型diges
 ## 2026-10-17 在线本地检查资源保护
 
 用户要求修复真实第 5 步测试桩无限循环及超大观察问题后继续单题实验。本地循环测试增加明确退出和有限步数的提示约束；在线改进 shell 输出分块落盘，300,000 字节以上返回显式索引和预览，8 MiB 以上销毁工具沙箱、返回失败和标明不完整的前缀摘要。这是新增的工具资源保护，覆盖此前“工具输出无上限直接内联”的在线行为，不称为上游 SICA 原生事件总线或文件视图重建。benchmark 输出及评分、七步与角色定义保持原样，不新增全局/阶段期限。完整边界与回归证据见 [step5-loop-fix-validation.md](step5-loop-fix-validation.md)。
+
+## 2026-10-17 批次 C：固定在线模式
+
+移除 Workflow 的模式参数与分支及 bridge 的 `--online` 开关，原在线诊断、写权限、候选检查和恢复授权无条件执行。保留审计元数据的 `online=true` 事实字段。容器入口在模型初始化前验证完整在线身份，benchmark 仍供首次作答和独立复测使用。
+
+删除旧 Budget、阶段/24 小时时钟和开发题前缀机制；Broker、Driver 仅执行各自真实任务/请求/工具期限，容器字段改为 `session_remaining_seconds`，无期限为 null/None。唯一任务冻结来自 `task_limit` 与 `online_task_selection.json`。带旧预算或前缀选择产物的运行明确拒绝，不自动迁移。协议版本保持不变，控制源码摘要继续阻止跨实现恢复。保留原生限额、同模型、独立评分、真实用量与未知消耗。验收见 [online-rsi-phase-c-review.md](online-rsi-phase-c-review.md)。

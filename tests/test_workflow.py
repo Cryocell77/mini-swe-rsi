@@ -32,7 +32,7 @@ def test_pinned_fields_and_core_prompts():
 
 
 def test_online_workflow_requires_diagnostic_evidence_before_completion(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *a: None, online=True, feedback=FEEDBACK)
+    flow = w.Workflow(tmp_path, lambda *a: None, feedback=FEEDBACK)
     state = flow.dispatch({'op': 'invoke'})
     with pytest.raises(ValueError):
         flow.dispatch({'op': 'complete', 'invocation_id': state['invocation_id'], 'tool': 'bad'})
@@ -49,7 +49,7 @@ def test_online_committee_is_read_only_and_role_permissions_are_enforced(tmp_pat
         calls.append((identity, prompt, readonly))
         return {'exit_status': 'Submitted', 'submission': identity}
 
-    flow = w.Workflow(tmp_path, delegate, online=True, feedback=FEEDBACK)
+    flow = w.Workflow(tmp_path, delegate, feedback=FEEDBACK)
     result = flow.dispatch({'op': 'committee', 'context': 'evidence', 'proposal': 'design'})
     assert len(calls) == 4 and all(item[2] for item in calls)
     assert result == ''.join(f"\n\nReviewer {i}'s review:\n{item[0]}"
@@ -61,7 +61,7 @@ def test_online_committee_is_read_only_and_role_permissions_are_enforced(tmp_pat
 
 
 def test_child_failure_is_not_fake_success(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *a: {'exit_status': 'LimitsExceeded', 'submission': ''}, online=True, feedback=FEEDBACK)
+    flow = w.Workflow(tmp_path, lambda *a: {'exit_status': 'LimitsExceeded', 'submission': ''}, feedback=FEEDBACK)
     with pytest.raises(ValueError, match='LimitsExceeded'):
         flow.dispatch({'op': 'committee', 'context': '', 'proposal': ''})
     assert flow.counter == 1
@@ -90,7 +90,7 @@ def test_pinned_sources_reject_missing_extra_or_changed(tmp_path, monkeypatch, m
 def test_atomic_state_write_preserves_previous_valid_state(tmp_path, monkeypatch):
     from pathlib import Path
 
-    flow = w.Workflow(tmp_path, lambda *a: None, online=True, feedback=FEEDBACK)
+    flow = w.Workflow(tmp_path, lambda *a: None, feedback=FEEDBACK)
     previous = read(tmp_path/'workflow_state.json')
 
     def interrupted(*args, **kwargs):
@@ -107,7 +107,7 @@ def test_tool_aliases_preserve_online_permissions(tmp_path):
     assert w.tool_aliases() == {
         'meta_improvement_reasoning_structure': 'invoke',
         'meta_improvement_review_committee': 'committee'}
-    flow = w.Workflow(tmp_path, lambda *a: None, online=True, feedback=FEEDBACK)
+    flow = w.Workflow(tmp_path, lambda *a: None, feedback=FEEDBACK)
     request = {'op': 'meta_improvement_reasoning_structure', 'step': 1}
     outcome = flow.execute(command(request), 'orchestrator')
     assert outcome['returncode'] == 0

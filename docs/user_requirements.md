@@ -118,3 +118,7 @@
 ## 2026-10-17 第 5 步故障修复与单题复验
 
 用户要求修复本地离线测试桩无限循环与超大工具观察问题，测试验收后继续最小真实实验。在线改进工具采用可审计的落盘索引与输出资源保护；不改变上游循环或候选通过标准，不恢复此前额外全局/阶段时限。继承本地代理 subscription 授权，固定开发集第一题、task_limit=1；修复改变控制摘要，因此从新目录冻结修复后的身份，不改写旧失败记录。修复边界、308 项回归和真实实验结果见 [step5-loop-fix-validation.md](step5-loop-fix-validation.md)。
+
+## 2026-10-17 批次 C 与 DSH 委派
+
+用户要求用已运行的 DeepSeek Harness Desktop 作子 agent，指定 DeepSeek-V4.1-Flash / High，实施文档批次 C；主 agent 独立审查、测试验收后提交符合现有格式的 commit。用户另明确授权最小桥接配置：当前仓库白名单及必要文件读写/测试工具。通过现有 Desktop 插件创建独立项目子工作区，未启动第二套 Harness；结果整合回当前项目。先单独提交已验收 P1 补修 `f6f3bd9`，批次 C 另行提交。不推进 D/E，不启动新的真实 RSI 实验。记录见 [online-rsi-phase-c-review.md](online-rsi-phase-c-review.md)。

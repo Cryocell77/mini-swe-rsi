@@ -25,7 +25,7 @@ docker = pytest.importorskip("docker")
 from mini_swe_rsi.broker import Broker
 from mini_swe_rsi.context_budget import ContextBudget
 from mini_swe_rsi.driver import Driver, initial_code
-from mini_swe_rsi.core import Budget, read, tree_hash, write
+from mini_swe_rsi.core import read, tree_hash, write
 from mini_swe_rsi.online import OnlineLoop, execution_hash
 
 
@@ -279,10 +279,8 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
         "OPENAI_API_KEY": "fixture-only-key",
         "LOCAL_LLM_MODEL": "fixture-model"})
     root = tmp_path / "docker-run"
-    budget = Budget(root)
-    budget.enter("search")
     context = ContextBudget({"context_window": 32768, "max_output_tokens": 2048})
-    broker = Broker(root, budget, context=context)
+    broker = Broker(root, context=context)
     broker.model = "fixture-model"
     # The fixture has no token tariff.  Mark the local fixture as a non-cloud
     # service so host accounting still executes instead of rejecting a call.
@@ -298,7 +296,7 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
 
     driver = None
     try:
-        driver = Driver(root, FixtureData(), broker, budget)
+        driver = Driver(root, FixtureData(), broker)
         h0 = root / "versions/H0000/agent_code"
         initial_code(h0)
         h1 = root / "versions/H0001/agent_code"
@@ -332,7 +330,7 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
             try:
                 status, _ = driver.controller(
                     source, logs,
-                    ["improve", "--online", "--workdir", "/home/agent/workdir",
+                    ["improve", "--workdir", "/home/agent/workdir",
                      "--best-iter", str(index), "--current-iter", str(index),
                      "--parent-iter", str(index), "--candidate-id", f"P{index + 1:04d}",
                      "--task-id", "fixture-task", "--round-id", f"R{index + 1:04d}",
@@ -407,10 +405,8 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
             "OPENAI_API_KEY": "fixture-only-key",
             "LOCAL_LLM_MODEL": "fixture-model"})
         root = tmp_path / "online-loop"
-        budget = Budget(root)
-        budget.enter("search")
         context = ContextBudget({"context_window": 65536, "max_output_tokens": 4096})
-        broker = Broker(root, budget, context=context)
+        broker = Broker(root, context=context)
         broker.model = "fixture-model"
         broker.service_identity = {"ollama": {"cloud": False}}
         broker.pricing = {"input_per_million": 0.0, "cached_input_per_million": 0.0,
@@ -428,7 +424,7 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
                 return {"image_id": fixture_image.id, "repo_digests": [], "image": fixture_tag}
 
         data = FixtureData()
-        driver = Driver(root, data, broker, budget)
+        driver = Driver(root, data, broker)
 
         # Exercise the real Docker task/candidate containers while keeping the
         # official grader deterministic and local to this test.  Driver.score

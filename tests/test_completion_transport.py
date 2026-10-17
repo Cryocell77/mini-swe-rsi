@@ -17,6 +17,9 @@ w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 
 
+PUBLIC_FEEDBACK = {'task_id': 'task', 'round_id': 'R0001', 'evidence_refs': []}
+
+
 def command(request):
     return {'command': 'sica-workflow ' + shlex.quote(json.dumps(request, ensure_ascii=False))}
 
@@ -30,7 +33,7 @@ def raw_command(request):
     [(True, 'reviewer'), ('editor', 'software_developer'), ('orchestrator', 'orchestrator')],
 )
 def test_structured_submission_preserves_complete_report_for_every_role(tmp_path, readonly, role):
-    flow = w.Workflow(tmp_path / role, lambda *args: None)
+    flow = w.Workflow(tmp_path / role, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     state = flow.dispatch({'op': 'invoke'})
     report = (
         '第一行\nquotes: \'single\' "double"\n'
@@ -55,7 +58,7 @@ def test_structured_submission_preserves_complete_report_for_every_role(tmp_path
 
 
 def test_structured_submission_accepts_exact_prefixed_legacy_report(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     report = w.FINAL_OUTPUT_SENTINEL + '\nlegacy complete'
 
     output = flow.execute(command({'op': 'submit', 'report': report}), True, 'reviewer')
@@ -65,7 +68,7 @@ def test_structured_submission_accepts_exact_prefixed_legacy_report(tmp_path):
 
 
 def test_raw_json_submission_reaches_mini_without_shell_tokenization(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     report = (
         '第一行\n'
         "apostrophe: it's safe; quoted: \"double quotes\"\n"
@@ -83,7 +86,7 @@ def test_raw_json_submission_reaches_mini_without_shell_tokenization(tmp_path):
 
 
 def test_raw_json_transport_also_handles_structured_workflow_operations(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
 
     output = flow.execute(raw_command({'op': 'invoke'}), role='orchestrator')
 
@@ -93,7 +96,7 @@ def test_raw_json_transport_also_handles_structured_workflow_operations(tmp_path
 
 
 def test_raw_json_trailing_shell_syntax_is_rejected_without_execution(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     command_text = raw_command({'op': 'submit', 'report': 'complete'})['command']
 
     output = flow.execute({'command': command_text + ' ; printf hacked'}, True, 'reviewer')
@@ -117,7 +120,7 @@ def test_raw_json_trailing_shell_syntax_is_rejected_without_execution(tmp_path):
     ],
 )
 def test_structured_submission_rejects_empty_or_malformed_reports(tmp_path, report):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
 
     output = flow.execute(command({'op': 'submit', 'report': report}), True, 'reviewer')
 
@@ -127,7 +130,7 @@ def test_structured_submission_rejects_empty_or_malformed_reports(tmp_path, repo
 
 
 def test_structured_submission_rejects_shell_wrapped_or_extra_fields(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *args: None)
+    flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     report = w.FINAL_OUTPUT_SENTINEL + '\ncomplete'
 
     malformed_wrapper = flow.execute(

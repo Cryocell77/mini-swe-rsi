@@ -12,7 +12,7 @@ import pytest
 import yaml
 from jinja2 import Template
 
-from mini_swe_rsi.core import ROOT, Budget, improvement_contract
+from mini_swe_rsi.core import ROOT, improvement_contract
 from mini_swe_rsi.broker import Broker, ModelError
 
 w = runpy.run_path(str(ROOT/'runtime/workflow.py'))
@@ -60,7 +60,8 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
     def mapped(value):
         return actual_path(str(value).replace('/home/agent/workdir',str(candidate)).replace('/home/agent/archive',str(archive)))
     monkeypatch.setattr(module,'Path',mapped)
-    flow = module.Workflow(tmp_path/'logs',lambda *a:None)
+    flow = module.Workflow(tmp_path/'logs',lambda *a:None,
+        feedback={'task_id':'task','round_id':'R0001','evidence_refs':[]})
     historical = archive/'old.txt';historical.write_text('task from old testbed\nsecond\nthird\n')
     (candidate/'link').symlink_to(historical)
     out = flow.inspect({'op':'read','path':str(candidate/'link'),'start_line':2,'end_line':3})
@@ -79,7 +80,7 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
 
 def test_status_rejections_and_generic_error_do_not_inherit_old_terminal_reason(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget,context=ContextBudget());broker.model='fixture'
+    broker=Broker(tmp_path,context=ContextBudget());broker.model='fixture'
     token=broker.session('roles',calls=1)
     def status(auth=token):
         req=urllib.request.Request(f'http://127.0.0.1:{broker.port}/status',data=b'{}',headers={'Authorization':'Bearer '+auth})
@@ -114,7 +115,8 @@ def test_actual_fourth_run_actions_are_rejected_without_rewriting(tmp_path):
     old=json.loads((ROOT/'tests/fixtures/role_transport_fourth_run.json').read_text())
     assert 'helpful assistant' in old['old_system']
     assert 'Please solve this issue' in old['old_user_excerpt']
-    flow=w['Workflow'](tmp_path,lambda *a:None)
+    flow=w['Workflow'](tmp_path,lambda *a:None,
+        feedback={'task_id':'task','round_id':'R0001','evidence_refs':[]})
     actions=[re.search(r'```mswea_bash_command\n(.*?)\n```',message,re.S).group(1) for message in old['observed_actions']]
     assert len(actions)>=2
     assert any('/testbed/sklearn/pipeline.py' in action for action in actions)
@@ -137,7 +139,7 @@ def test_actual_fourth_run_actions_are_rejected_without_rewriting(tmp_path):
 
 def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight');broker=Broker(tmp_path,budget,context=ContextBudget())
+    broker=Broker(tmp_path,context=ContextBudget())
     token=broker.session('editor',solver='fixture')
     monkeypatch.setattr('mini_swe_rsi.broker.subprocess.run',lambda *a,**kw:pytest.fail('expired command executed'))
     try:
@@ -146,8 +148,4 @@ def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypat
         assert broker.status(token)['terminal_reason']=='TimeExceeded'
         assert broker.status(token)['calls']==0 and broker.sessions[token]['tool_calls']==0
         assert broker.events[-1]['kind']=='tool_rejection' and not broker.events[-1]['actual_call']
-        broker.sessions[token]['deadline']=__import__('time').time()+60
-        monkeypatch.setattr(budget,'check',lambda:(_ for _ in ()).throw(__import__('mini_swe_rsi.core',fromlist=['BudgetExceeded']).BudgetExceeded('global')))
-        with pytest.raises(ModelError,match='TimeExceeded'):broker.tool(token,{'command':'touch x'})
-        assert broker.events[-1]['basis']=='experiment_budget'
     finally:broker.close()

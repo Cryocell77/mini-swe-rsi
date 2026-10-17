@@ -20,7 +20,7 @@ def flow_at_three(tmp_path):
     (candidate/'description.txt').write_text('original\n')
     (candidate/'agent_change_log.md').write_text('original\n')
     flow = w.Workflow(tmp_path/'logs', lambda *_: {'exit_status':'Submitted','submission':'evidence'},
-                      online=True, identities={'workdir':str(candidate)},
+                      identities={'workdir':str(candidate)},
                       feedback={'task_id':'t','round_id':'R0001','evidence_refs':['tasks/t/trace.txt']})
     flow.dispatch({'op':'invoke'})
     for _ in range(2):

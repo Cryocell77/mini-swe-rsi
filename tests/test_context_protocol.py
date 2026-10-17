@@ -115,7 +115,6 @@ def test_service_context_identity_is_separate_and_must_support_budget(num_ctx, f
     from mini_swe_rsi.broker import Broker, ModelError
     broker = Broker.__new__(Broker)
     broker.config = {'OPENAI_BASE_URL':'https://fixture/v1','OPENAI_API_KEY':'secret'}
-    broker.budget = SimpleNamespace(remaining=lambda:30)
     shown = {'parameters':f'num_ctx {num_ctx}' if num_ctx else 'temperature 1',
              'details':{'family':family},'template':'{{ .Prompt }}',
              'model_info':{'qwen35.context_length':262144}}

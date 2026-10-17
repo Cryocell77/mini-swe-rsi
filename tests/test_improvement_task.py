@@ -29,7 +29,7 @@ def _prelaunch_driver(tmp_path):
 
 
 def _online_args(version='H0000'):
-    return ['improve', '--online', '--parent-iter', '0', '--best-iter', '0',
+    return ['improve', '--parent-iter', '0', '--best-iter', '0',
             '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', version]
 
@@ -37,7 +37,7 @@ def _online_args(version='H0000'):
 def test_online_improvement_prompt_binds_task_round_and_version():
     render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
     prompt = render(2, 2, 2, 'P0001', ROOT/'vendor/sica/agent_main.py',
-                    online=True, task_id='task-1', round_id='R0001', version='H0002',
+                    task_id='task-1', round_id='R0001', version='H0002',
                     feedback='Observed public failure')
     assert 'task-1' in prompt and 'R0001' in prompt and 'H0002' in prompt
     assert 'parent=agent_2; proposer=agent_2; candidate=P0001' in prompt
@@ -68,7 +68,7 @@ def test_existing_online_workflow_evidence_cannot_be_overwritten(tmp_path):
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
     with pytest.raises(RuntimeError, match='Existing workflow state'):
-        driver.controller(code, logs, ['improve', '--online'], 'fixture')
+        driver.controller(code, logs, ['improve'], 'fixture')
     assert (logs/'result.json').read_text().find('TimeExceeded') >= 0
 
 
@@ -79,7 +79,7 @@ def test_online_improvement_rejects_parent_and_proposer_identity_mismatch(tmp_pa
     initial_code(code)
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
-    args = ['improve', '--online', '--parent-iter', '0', '--best-iter', '1',
+    args = ['improve', '--parent-iter', '0', '--best-iter', '1',
             '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', 'H0000']
     with pytest.raises(RuntimeError, match='parent|proposer|best'):
@@ -122,8 +122,75 @@ def test_online_renderer_contract_change_is_rejected_before_runtime_setup(tmp_pa
     monkeypatch.setattr('mini_swe_rsi.driver.improvement_contract', lambda: changed)
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
-    args = ['improve', '--online', '--parent-iter', '0', '--best-iter', '0',
+    args = ['improve', '--parent-iter', '0', '--best-iter', '0',
             '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', 'H0000']
     with pytest.raises(RuntimeError, match='Frozen improvement task contract'):
         driver.controller(code, tmp_path/'logs', args, 'fixture')
+
+
+def _bridge_entry(monkeypatch, argv):
+    import runpy
+    bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+    monkeypatch.setattr('sys.argv', ['bridge', *argv])
+    # Identity validation must precede any model/agent setup and log creation.
+    monkeypatch.setitem(bridge['main'].__globals__, 'budget_config',
+                        lambda: pytest.fail('entry read limits before identity validation'))
+    return bridge['main']
+
+
+def _improvement_argv(tmp_path, **overrides):
+    values = {'parent': '0', 'best': '0', 'candidate': 'P0001', 'task': 'task',
+              'round': 'R0001', 'version': 'H0000', 'prompt': '/task.txt'}
+    values.update(overrides)
+    argv = ['improve', '--logdir', str(tmp_path/'logs'),
+            '--parent-iter', values['parent'], '--best-iter', values['best'],
+            '--candidate-id', values['candidate'], '--task-id', values['task'],
+            '--round-id', values['round'], '--online-version', values['version'],
+            '--prompt-file', values['prompt']]
+    return argv
+
+
+def test_improvement_entry_requires_full_identity_before_model_setup(tmp_path, monkeypatch):
+    argv = ['improve', '--logdir', str(tmp_path/'logs'), '--parent-iter', '0',
+            '--best-iter', '0', '--candidate-id', 'P0001', '--prompt-file', '/task.txt']
+    main = _bridge_entry(monkeypatch, argv)
+    with pytest.raises(ValueError, match='task_id, round_id, online_version'):
+        main(str(tmp_path/'missing-entry'))
+    assert not (tmp_path/'logs').exists()
+
+
+def test_improvement_entry_rejects_wrong_version_or_proposer_before_model_setup(tmp_path, monkeypatch):
+    wrong_version = _improvement_argv(tmp_path, version='H0005')
+    with pytest.raises(ValueError, match='must equal H0000'):
+        _bridge_entry(monkeypatch, wrong_version)(str(tmp_path/'missing-entry'))
+    wrong_proposer = _improvement_argv(tmp_path, best='1')
+    with pytest.raises(ValueError, match='parent and proposer'):
+        _bridge_entry(monkeypatch, wrong_proposer)(str(tmp_path/'missing-entry'))
+    assert not (tmp_path/'logs').exists()
+
+
+def test_improvement_entry_rejects_missing_parent_candidate_or_feedback(tmp_path, monkeypatch):
+    argv = _improvement_argv(tmp_path, candidate='')
+    with pytest.raises(ValueError, match='candidate_id'):
+        _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
+    argv = _improvement_argv(tmp_path, prompt='')
+    with pytest.raises(ValueError, match='prompt_file'):
+        _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
+    argv = [arg for arg in _improvement_argv(tmp_path) if arg != '--parent-iter']
+    argv.remove('0')
+    with pytest.raises(ValueError, match='parent_iter'):
+        _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
+    assert not (tmp_path/'logs').exists()
+
+
+def test_benchmark_entry_rejects_resume_authorization_without_model_setup(tmp_path, monkeypatch):
+    argv = ['benchmark', '--logdir', str(tmp_path/'logs'),
+            '--prompt-file', '/task.txt',
+            '--resume-workflow', str(tmp_path/'authorization.json')]
+    with pytest.raises(ValueError, match='does not support workflow restoration'):
+        _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
+    assert not (tmp_path/'logs').exists()
+    bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+    assert bridge['validate_improvement_args'](
+        SimpleNamespace(command='benchmark', resume_workflow=None)) is None

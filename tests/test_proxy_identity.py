@@ -7,16 +7,13 @@ import urllib.error
 import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
-from mini_swe_rsi.core import Budget
 
 
 @pytest.fixture
 def proxy(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(
         OPENAI_BASE_URL='http://127.0.0.1:8317/v1', OPENAI_API_KEY='fixture', LOCAL_LLM_MODEL='qfmodel'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    broker = Broker(tmp_path, budget)
+    broker = Broker(tmp_path)
     selected = {'id': 'qfmodel', 'owned_by': 'qoder'}
     catalog = [{'slug': 'qfmodel', 'context_window': 180000, 'max_context_window': 180000,
                 'max_tokens': 8192, 'base_instructions': 'UNTRUSTED CATALOG PROMPT'}]

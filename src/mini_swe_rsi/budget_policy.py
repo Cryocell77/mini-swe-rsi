@@ -11,6 +11,8 @@ def sica_budget(model_max_output_tokens, context_max_tokens):
             'role_iterations': {'archive_explorer': 500, 'software_developer': 1000,
                                 'general_problem_solver': 500, 'reviewer': 500},
             'completion_max_requests': 5,
+            # A benchmark task has a 600-second deadline.  Improvement passes 0,
+            # which mini_swe_agent treats as no additional wall-clock limit.
             'benchmark_wall_seconds': 600, 'improvement_wall_seconds': 0,
             'tool_timeout_seconds': 600, 'command_min_seconds': 5,
             'command_max_seconds': 1800, 'command_default_seconds': 600,

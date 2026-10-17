@@ -7,7 +7,7 @@ import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget
-from mini_swe_rsi.core import Budget, secrets
+from mini_swe_rsi.core import secrets
 
 
 CAPS = dict(id='deepseek-flash', context_window=1048576, max_output_tokens=393216,
@@ -18,9 +18,7 @@ CAPS = dict(id='deepseek-flash', context_window=1048576, max_output_tokens=39321
 def broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
         OPENAI_BASE_URL='https://api.deepseek.com', OPENAI_API_KEY='private-fixture', LOCAL_LLM_MODEL='deepseek-flash'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    instance = Broker(tmp_path, budget)
+    instance = Broker(tmp_path)
     instance.remote = lambda path: {'data':[CAPS]}
     instance.identity()
     yield instance
@@ -66,9 +64,7 @@ def test_remote_identity_never_uses_qwen_tokenizer(broker):
 def ollama_broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
         OPENAI_BASE_URL='http://fixture/v1', OPENAI_API_KEY='private-fixture', LOCAL_LLM_MODEL='qwen35-4b-agent'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    instance = Broker(tmp_path, budget)
+    instance = Broker(tmp_path)
     data = {'/models':{'data':[{'id':'qwen35-4b-agent:latest'}]},
             '/api/version':{'version':'fixture'},
             '/api/tags':{'models':[{'name':'qwen35-4b-agent:latest','digest':'a'*64}]}}
@@ -132,11 +128,12 @@ def test_ollama_missing_digest_or_model_is_not_guessed(ollama_broker):
         broker.identity()
 
 
-def test_independent_iterations_and_improvement_deadline(broker):
+def test_independent_iterations_and_improvement_has_no_extra_deadline(broker):
     token = broker.session('proposal', seconds=None)
     requests = endpoint(broker, iter([reply(),reply(),reply()]))
     session = broker.sessions[token]
-    assert session['max_calls'] is None and session['deadline']-time.time() > 600
+    assert session['max_calls'] is None
+    assert broker.status(token)['remaining_seconds'] is None
     session['iterations']['main'] = 499
     broker.complete(token,{'messages':[]})
     with pytest.raises(ModelError,match='LimitsExceeded'):
@@ -215,15 +212,6 @@ def test_tool_scope_output_and_benchmark_cost_guard(broker, monkeypatch):
     with pytest.raises(ModelError,match='CostExceeded'):
         broker.complete(token,{'messages':[]})
     assert broker.sessions[token]['calls']==0
-
-
-def test_expired_original_budget_is_not_reset(tmp_path):
-    from mini_swe_rsi.core import write, read, BudgetExceeded
-    started=time.time()-86401
-    write(tmp_path/'budget.json',{'started':started,'phases':{}})
-    with pytest.raises(BudgetExceeded):
-        Budget(tmp_path).enter('preflight')
-    assert read(tmp_path/'budget.json')['started']==started
 
 
 def test_pinned_upstream_budget_scopes_match_policy():

@@ -16,7 +16,7 @@ spec.loader.exec_module(w)
 def diagnosed(tmp_path):
     ref = 'tasks/0001-task/trace.txt'
     flow = w.Workflow(tmp_path, lambda *_: {'exit_status': 'Submitted', 'submission': 'Evidence inspected'},
-                      online=True, identities={'version': 'H0000'},
+                      identities={'version': 'H0000'},
                       feedback={'task_id': 'task', 'round_id': 'R0001', 'evidence_refs': [ref]})
     flow.dispatch({'op': 'invoke'})
     for index in range(2):
@@ -57,8 +57,7 @@ def test_model_cannot_replace_host_identity_or_omit_mechanism_plan(tmp_path, pla
 
 def test_diagnostic_report_cannot_make_a_private_reference_trusted(tmp_path):
     ref = 'tasks/0001-task/trace.txt'
-    flow = w.Workflow(tmp_path, lambda *_: {'exit_status': 'Submitted', 'submission': 'Public evidence inspected'}, online=True,
-                      feedback={'task_id': 'task', 'round_id': 'R0001', 'evidence_refs': [ref]})
+    flow = w.Workflow(tmp_path, lambda *_: {'exit_status': 'Submitted', 'submission': 'Public evidence inspected'}, feedback={'task_id': 'task', 'round_id': 'R0001', 'evidence_refs': [ref]})
     flow.dispatch({'op': 'invoke'})
     flow.dispatch({'op': 'delegate', 'role': 'archive_explorer', 'task': 'Inspect public evidence'})
     with pytest.raises(ValueError, match='public task feedback'):
@@ -86,8 +85,7 @@ def test_candidate_check_must_use_step_three_mechanism_plan(tmp_path):
 
 
 def test_online_archive_does_not_rank_unpaired_versions(tmp_path):
-    flow = w.Workflow(tmp_path, lambda *_: None, online=True,
-                      identities={'public_archive': str(tmp_path/'archive')},
+    flow = w.Workflow(tmp_path, lambda *_: None, identities={'public_archive': str(tmp_path/'archive')},
                       feedback={'task_id': 'task', 'round_id': 'R0001',
                                 'evidence_refs': ['tasks/0001-task/trace.txt']})
     with pytest.raises(ValueError, match='chronological overview|different task coverage'):

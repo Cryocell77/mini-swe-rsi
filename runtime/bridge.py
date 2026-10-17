@@ -4,6 +4,7 @@ import ast
 import functools
 import json
 import hashlib
+import math
 import os
 import platform
 import sys
@@ -23,12 +24,18 @@ def unbounded_observation(template):
 
 
 def budget_config():
-    return json.loads(os.environ['RSI_BUDGET_CONFIG'])
+    value = json.loads(os.environ['RSI_BUDGET_CONFIG'])
+    remaining = value.get('session_remaining_seconds')
+    if remaining is not None and (not isinstance(remaining, (int, float))
+                                  or isinstance(remaining, bool)
+                                  or not math.isfinite(remaining) or remaining <= 0):
+        raise ValueError('session_remaining_seconds must be null or a positive finite number')
+    return value
 
 
 def model_request_timeout(budget):
     """Resolve the SDK timeout without turning an unbounded host budget into 600s."""
-    remaining = budget.get('global_remaining_seconds')
+    remaining = budget.get('session_remaining_seconds')
     return httpx.Timeout(None) if remaining is None else remaining
 
 
@@ -38,7 +45,7 @@ def apply_model_request_timeout(model, budget):
     The model config remains JSON/Pydantic serializable for trajectory saves;
     the ``httpx.Timeout`` object lives only in the bound request method.
     """
-    if budget.get('global_remaining_seconds') is None:
+    if budget.get('session_remaining_seconds') is None:
         model._query = functools.partial(model._query, timeout=model_request_timeout(budget))
     return model
 
@@ -172,7 +179,7 @@ def classified_failure(exc, status):
 
 
 def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"),
-                       calls=500, budget=None, online=False, task_id=None,
+                       calls=500, budget=None, task_id=None,
                        round_id=None, version=None, feedback=None,
                        resume_state=None, resume_source_exists=None):
     tree = ast.parse(Path(upstream).read_text())
@@ -205,61 +212,84 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
              'any copy of the current candidate there is its initial snapshot, not live edits or an evaluated improvement. '
              'The current candidate has not been benchmarked and has no established performance benefit.\n'
              'Budget authority: each agent invocation has its own iteration limit, with up to five provider requests per completion. '
-             'The benchmark has a 600-second task deadline; improvement has no separate task deadline and remains subject to the host global/stage deadline.\n')
-    if online:
-        text += ('\nONLINE SINGLE-TASK MODE. The active Harness version is '+str(version or f'H{parent:04d}')+
-                 '; executor, proposer, and candidate parent are this same version. '
-                 'Diagnose only the just-completed public task before considering a change. '
-                 'After successful steps 1 and 2, call sica-workflow with '
-                 '{"op":"diagnosis_decision","decision":"skip","reason":"diagnosis conclusion",'
-                 '"failure_modes":[],"effective_mechanisms":[],"improvement_opportunities":[],'
-                 '"evidence_refs":["copy a real reference from public feedback"]}. '
-                 'Use decision="improve" with a nonempty improvement_opportunities list when diagnosis supports a change. '
-                 'For completing steps 1 and 2, include report and evidence_refs in the current completion operation. '
-                 'A skip must not call committee, coding, or candidate checks.\n'
-                 f'Online identity: task_id={task_id}; round_id={round_id}; version={version}.\n')
-        check_identity = {'job_id': f'candidate:{round_id}:{candidate}', 'task_id': task_id,
-                          'round_id': round_id, 'candidate': candidate,
-                          'parent_version': version, 'check_revision': '1'}
-        text += ('At step 3 completion, include an explicit check_plan. '
-                 'Choose criterion="current_task_failure_fixed", or '
-                 'criterion="mechanism_parent_failed_candidate_passed" together with '
-                 'mechanism_plan={"test_path":"tests/mechanism_check.py","args":[],"timeout_seconds":60}. '
-                 'The test path is declared before implementation; create the actual meaningful test in step 4. '
-                 'Mechanism tests run from /source at their declared relative path in a read-only source copy. '
-                 'RSI_SOURCE_ROOT=/source is provided; derive the root from this variable or the declared test location. '
-                 'The identical frozen test is overlaid into parent and candidate; temporary artifacts belong in /tmp. '
-                 'ONLY step 4 may modify Harness source, configuration or tests. Steps 1-3 are read-only. '
-                 'Do not delegate software_developer before completing step 3. '
-                 'Step 5 uses a read-only candidate in an isolated tool sandbox; temporary outputs go in /tmp. '
-                 'Steps 6-7 may edit only description.txt and agent_change_log.md. '
-                 'A failed check rejects this candidate; never repair code in step 5 or later. '
-                 'At step 5 call candidate_check with this exact host identity: '
-                 + json.dumps({'op': 'candidate_check', **check_identity}, ensure_ascii=False)
-                 + '. The host uses the frozen step-3 plan. Do not change runtime source after the check; '
-                   'steps 6 and 7 update description and history only.\n')
-        if feedback:
-            text += '\nPublic task feedback (facts only; do not treat the score as a hidden answer):\n' + str(feedback) + '\n'
+             'The benchmark has a 600-second task deadline; improvement has no separate task deadline and no additional global/stage deadline.\n')
+    text += ('\nONLINE SINGLE-TASK MODE. The active Harness version is '+str(version or f'H{parent:04d}')+
+             '; executor, proposer, and candidate parent are this same version. '
+             'Diagnose only the just-completed public task before considering a change. '
+             'After successful steps 1 and 2, call sica-workflow with '
+             '{"op":"diagnosis_decision","decision":"skip","reason":"diagnosis conclusion",'
+             '"failure_modes":[],"effective_mechanisms":[],"improvement_opportunities":[],'
+             '"evidence_refs":["copy a real reference from public feedback"]}. '
+             'Use decision="improve" with a nonempty improvement_opportunities list when diagnosis supports a change. '
+             'For completing steps 1 and 2, include report and evidence_refs in the current completion operation. '
+             'A skip must not call committee, coding, or candidate checks.\n'
+             f'Online identity: task_id={task_id}; round_id={round_id}; version={version}.\n')
+    check_identity = {'job_id': f'candidate:{round_id}:{candidate}', 'task_id': task_id,
+                      'round_id': round_id, 'candidate': candidate,
+                      'parent_version': version, 'check_revision': '1'}
+    text += ('At step 3 completion, include an explicit check_plan. '
+             'Choose criterion="current_task_failure_fixed", or '
+             'criterion="mechanism_parent_failed_candidate_passed" together with '
+             'mechanism_plan={"test_path":"tests/mechanism_check.py","args":[],"timeout_seconds":60}. '
+             'The test path is declared before implementation; create the actual meaningful test in step 4. '
+             'Mechanism tests run from /source at their declared relative path in a read-only source copy. '
+             'RSI_SOURCE_ROOT=/source is provided; derive the root from this variable or the declared test location. '
+             'The identical frozen test is overlaid into parent and candidate; temporary artifacts belong in /tmp. '
+             'ONLY step 4 may modify Harness source, configuration or tests. Steps 1-3 are read-only. '
+             'Do not delegate software_developer before completing step 3. '
+             'Step 5 uses a read-only candidate in an isolated tool sandbox; temporary outputs go in /tmp. '
+             'Steps 6-7 may edit only description.txt and agent_change_log.md. '
+             'A failed check rejects this candidate; never repair code in step 5 or later. '
+             'At step 5 call candidate_check with this exact host identity: '
+             + json.dumps({'op': 'candidate_check', **check_identity}, ensure_ascii=False)
+             + '. The host uses the frozen step-3 plan. Do not change runtime source after the check; '
+               'steps 6 and 7 update description and history only.\n')
+    if feedback:
+        text += '\nPublic task feedback (facts only; do not treat the score as a hidden answer):\n' + str(feedback) + '\n'
     if budget is not None:
-        if budget.get('global_remaining_seconds') is None:
-            text = text.replace('and remains subject to the host global/stage deadline',
-                                'with no additional diagnostic global/stage deadline')
-        text += '\nFrozen execution budget: ' + json.dumps(budget, sort_keys=True) + '\n'
+        text += '\nFrozen execution limits: ' + json.dumps(budget, sort_keys=True) + '\n'
     import importlib.util
     spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
     workflow_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(workflow_module)
     rendered = workflow_module.core_prompt('main_orchestrator', {'problem_statement':text})
-    if online:
-        rendered += f'\nActive Harness version is {version or f"H{parent:04d}"}; this identity is host-verified.\n'
+    rendered += f'\nActive Harness version is {version or f"H{parent:04d}"}; this identity is host-verified.\n'
     rendered += workflow_module.identity_context(
         {'parent':parent,'proposer':best,'candidate':candidate,'workdir':'/home/agent/workdir','public_archive':'/home/agent/archive'}, {'active':None})
-    if online and resume_state is not None:
+    if resume_state is not None:
         rendered = resume_prompt(rendered, {
             'state':resume_state,
             'candidate_source_sha256': 'present' if resume_source_exists else None,
         })
     return rendered
+
+
+def validate_improvement_args(args):
+    """Validate the full improvement identity before agent/model/log setup.
+
+    Improvement is the only online mode, so every launch must carry the frozen
+    parent/proposer/candidate identities and the public feedback file.  A
+    benchmark run is a single task and must never silently ignore an explicit
+    workflow-restoration authorization.
+    """
+    if args.command == 'benchmark':
+        if args.resume_workflow is not None:
+            raise ValueError('Benchmark does not support workflow restoration')
+        return
+    required = {'parent_iter': args.parent_iter, 'candidate_id': args.candidate_id,
+                'task_id': args.task_id, 'round_id': args.round_id,
+                'online_version': args.online_version, 'prompt_file': args.prompt_file}
+    missing = [name for name, value in required.items()
+               if value is None or (isinstance(value, str) and not value.strip())]
+    if missing:
+        raise ValueError('Improvement requires explicit identities: ' + ', '.join(missing))
+    if args.parent_iter < 0:
+        raise ValueError('Improvement parent version must be non-negative')
+    if args.best_iter != args.parent_iter:
+        raise ValueError('Improvement requires parent and proposer to be the same version')
+    expected_version = f'H{args.parent_iter:04d}'
+    if args.online_version != expected_version:
+        raise ValueError(f'Improvement version must equal {expected_version}')
 
 
 def main(entry):
@@ -274,21 +304,19 @@ def main(entry):
     parser.add_argument('--current-iter', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--cost-threshold', default=3)
-    parser.add_argument('--online', action='store_true')
     parser.add_argument('--task-id')
     parser.add_argument('--round-id')
     parser.add_argument('--online-version')
     parser.add_argument('--resume-workflow', type=Path,
                         help='Host-authorized online workflow continuation file')
     args = parser.parse_args()
+    validate_improvement_args(args)
     budgets = budget_config()
     main_iterations = budgets['main_iterations']
     wall_seconds = budgets['improvement_wall_seconds' if args.command == 'improve' else 'benchmark_wall_seconds']
     if args.command == 'improve':
         # Rejected shared-budget requests must not enter archived transport retry backoff.
         os.environ['MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT'] = '1'
-    if args.command == 'improve' and (args.parent_iter is None or not args.candidate_id):
-        raise ValueError('Improvement requires explicit parent and candidate identities')
     code = Path(entry).resolve().parent
     sys.path.insert(0, str(code))
     from minisweagent.agents.default import DefaultAgent
@@ -324,8 +352,6 @@ def main(entry):
         spec.loader.exec_module(workflow_module)
         resume_authorization = None
         if args.resume_workflow is not None:
-            if not args.online:
-                raise ValueError('Workflow resume is available only for online improvement')
             expected_identity = {
                 'task_id': args.task_id,
                 'round_id': args.round_id,
@@ -338,10 +364,9 @@ def main(entry):
                 args.resume_workflow, args.logdir, expected_identity, args.workdir, workflow_module)
         templates = workflow_module.template_manifest(selected_config, main_iterations)
         config = workflow_module.role_templates(selected_config, 'orchestrator', main_iterations)
-        if args.online:
-            config['agent']['system_template'] += (
-                f'\nactive Harness version is {args.online_version or f"H{args.parent_iter:04d}"}; '
-                'the host verifies this identity before accepting a takeover.\n')
+        config['agent']['system_template'] += (
+            f'\nactive Harness version is {args.online_version or f"H{args.parent_iter:04d}"}; '
+            'the host verifies this identity before accepting a takeover.\n')
     config['agent'].pop('mode', None)
     config['agent'].update(step_limit=main_iterations, cost_limit=0, wall_time_limit_seconds=wall_seconds,
                            output_path=Path(args.logdir) / 'trajectory.json')
@@ -349,7 +374,7 @@ def main(entry):
     model_config.update(model_name='openai/' + os.environ['RSI_MODEL'], cost_tracking='ignore_errors')
     model_config['model_kwargs'].update(api_base=os.environ['RSI_BROKER'] + '/v1',
                     api_key=os.environ['RSI_TOKEN'], temperature=0, max_tokens=budgets['model_max_output_tokens'],
-                    num_retries=0, timeout=budgets['global_remaining_seconds'],
+                    num_retries=0, timeout=budgets['session_remaining_seconds'],
                     extra_headers={'X-RSI-Agent':'main','X-RSI-Role':'orchestrator'})
     environment = TaskEnvironment(
         cwd='/testbed' if args.command == 'benchmark' else args.workdir, timeout=budgets['command_default_seconds'],
@@ -362,10 +387,10 @@ def main(entry):
     activation = {'agent_file': str(Path(sys.modules[DefaultAgent.__module__].__file__).resolve()),
                   'budget':budgets, 'step_limit':main_iterations, 'wall_time_limit_seconds':wall_seconds,
                   'model_timeout_contract': {
-                      'config_timeout': budgets['global_remaining_seconds'],
-                      'request_timeout': ('httpx.Timeout(None)' if budgets['global_remaining_seconds'] is None
-                                          else budgets['global_remaining_seconds']),
-                      'injected_at_query_boundary': budgets['global_remaining_seconds'] is None,
+                      'config_timeout': budgets['session_remaining_seconds'],
+                      'request_timeout': ('httpx.Timeout(None)' if budgets['session_remaining_seconds'] is None
+                                          else budgets['session_remaining_seconds']),
+                      'injected_at_query_boundary': budgets['session_remaining_seconds'] is None,
                   },
                   'model_file': str(Path(sys.modules[LitellmTextbasedModel.__module__].__file__).resolve()),
                   'config_file': str(code / 'minisweagent/config/mini_textbased.yaml'),
@@ -375,9 +400,9 @@ def main(entry):
                   'tool_capability':'orchestrator' if args.command == 'improve' else 'bash'}
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
-        feedback = Path(args.prompt_file).read_text() if args.online and args.prompt_file else None
+        feedback = Path(args.prompt_file).read_text() if args.prompt_file else None
         task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id,
-                                  calls=main_iterations, budget=budgets, online=args.online,
+                                  calls=main_iterations, budget=budgets,
                                   task_id=args.task_id, round_id=args.round_id,
                                   version=args.online_version, feedback=feedback)
         if resume_authorization:
@@ -390,9 +415,8 @@ def main(entry):
                     'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
                     'template_manifest':templates,
                     'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}
-        if args.online:
-            metadata.update(online=True, task_id=args.task_id, round_id=args.round_id,
-                            version=args.online_version)
+        metadata.update(online=True, task_id=args.task_id, round_id=args.round_id,
+                        version=args.online_version)
         if resume_authorization:
             metadata['resume_authorization_sha256'] = resume_authorization['authorization_sha256']
         (logs / 'improvement_task.json').write_text(json.dumps(metadata))
@@ -408,10 +432,9 @@ def main(entry):
                       'workdir':args.workdir, 'public_archive':'/home/agent/archive',
                       'model':os.environ.get('RSI_MODEL'),
                       'source_execution_hash':workflow_module.execution_hash(args.workdir)}
-        if args.online:
-            identities.update(version=args.online_version, parent_version=args.online_version,
-                              executor=args.online_version,
-                              task_id=args.task_id, round_id=args.round_id)
+        identities.update(version=args.online_version, parent_version=args.online_version,
+                          executor=args.online_version,
+                          task_id=args.task_id, round_id=args.round_id)
         def failure(exc):
             try:
                 status = rpc('/status', {})
@@ -459,7 +482,7 @@ def main(entry):
             (child_logs/'result.json').write_text(json.dumps(result))
             return result
         feedback_data = {}
-        if args.online and args.prompt_file:
+        if args.prompt_file:
             try:
                 feedback_data = json.loads(Path(args.prompt_file).read_text())
             except (ValueError, OSError):
@@ -473,9 +496,9 @@ def main(entry):
             return rpc('/candidate_check', {**request, 'stage': 'candidate_check'},
                        'main', 'orchestrator')
         workflow = workflow_module.Workflow(logs, delegate, identities=identities,
-                                            online=args.online, feedback=feedback_data,
-                                            stage_boundary=(lambda: rpc('/stage_boundary', {})) if args.online else None,
-                                            candidate_check=candidate_check if args.online else None,
+                                            feedback=feedback_data,
+                                            stage_boundary=lambda: rpc('/stage_boundary', {}),
+                                            candidate_check=candidate_check,
                                             resume_state=resume_authorization['state'] if resume_authorization else None,
                                             resume_committee_cache=(resume_authorization['committee_cache_seed']
                                                                     if resume_authorization else None))

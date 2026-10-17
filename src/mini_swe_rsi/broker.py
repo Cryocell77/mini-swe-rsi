@@ -19,7 +19,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .core import append_event, secrets, read, write, BudgetExceeded
+from .core import append_event, secrets, read, write
 from .context_budget import ContextBudget
 
 
@@ -216,9 +216,8 @@ def adapt_response(response):
     return returned, 'promoted single complete reasoning action; removed action from ' + ','.join(fields) + '; format=' + kind
 
 class Broker:
-    def __init__(self, root, budget, context=None, billing_mode=None,
-                 transport_policy=None):
-        self.root, self.budget = root, budget
+    def __init__(self, root, context=None, billing_mode=None, transport_policy=None):
+        self.root = root
         self.context = context if context is not None else None
         self.transport_policy = _transport_policy(root, transport_policy)
         self.transport_pause_path = root / 'transport_pause.json'
@@ -561,7 +560,7 @@ class Broker:
         request = urllib.request.Request(url + path, headers={
             'Authorization': 'Bearer ' + self.config['OPENAI_API_KEY']})
         try:
-            with self.opener.open(request, timeout=min(30, self.budget.remaining())) as f:
+            with self.opener.open(request, timeout=30) as f:
                 return json.load(f)
         except Exception as e:
             raise ModelError(f'Model identity request failed: {type(e).__name__}') from None
@@ -571,7 +570,7 @@ class Broker:
             data=json.dumps({'model': model, 'verbose': True}).encode(), headers={
                 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.config['OPENAI_API_KEY']})
         try:
-            with self.opener.open(request, timeout=min(30, self.budget.remaining())) as response:
+            with self.opener.open(request, timeout=30) as response:
                 shown = json.load(response)
         except Exception as exc:
             raise ModelError('Service context configuration unavailable: ' + type(exc).__name__) from None
@@ -655,7 +654,7 @@ class Broker:
                 data=json.dumps({'model': selected['id'], 'verbose': False}).encode(),
                 headers={'Content-Type':'application/json','Authorization':'Bearer '+self.config['OPENAI_API_KEY']})
             try:
-                with self.opener.open(request, timeout=min(30, self.budget.remaining())) as response:
+                with self.opener.open(request, timeout=30) as response:
                     shown = json.load(response)
             except Exception as exc:
                 raise ModelError('Ollama model metadata unavailable: ' + type(exc).__name__) from None
@@ -751,14 +750,18 @@ class Broker:
 
     def session(self, label, solver=None, seconds=600, calls=None):
         token = random_secrets.token_hex(32)
-        remaining = self.budget.remaining()
+        # A session deadline is the only wall-clock limit for its own model and
+        # tool calls.  ``None`` means the session has no host deadline; the
+        # internal representation stays non-finite so JSON serialization below
+        # can map it to ``None`` instead of emitting Infinity.
+        deadline = math.inf if seconds is None else time.time() + seconds
         self.sessions[token] = dict(label=label, solver=solver, calls=0, tokens=0,
                                     cwd='/testbed', started=time.time(), iterations={},
                                     prompt_tokens=0, completion_tokens=0, cached_tokens=0,
                                     cost_upper_bound_usd=0.0, cost_limit_usd=3 if solver else None,
                                     cost_accounting_available=bool(getattr(self, 'pricing', None)),
                                     unmetered_calls=0,
-                                    deadline=time.time() + (remaining if seconds is None else min(seconds, remaining)),
+                                    deadline=deadline,
                                     max_calls=calls, tool_calls=0, errors=[], terminal_reason=None,
                                     rejected_calls=[], inflight=False)
         return token
@@ -796,10 +799,6 @@ class Broker:
     def check_session(self, s, model_request=True):
         self._raise_if_paused()
         kind = 'model_rejection' if model_request else 'tool_rejection'
-        try:
-            self.budget.check()
-        except BudgetExceeded:
-            self.reject(s, 'TimeExceeded', 'experiment_budget',kind=kind)
         if time.time() >= s['deadline']:
             self.reject(s, 'TimeExceeded', 'session_deadline',kind=kind)
         if model_request and s['max_calls'] is not None and s['calls'] >= s['max_calls']:
@@ -818,7 +817,7 @@ class Broker:
             active = self._active_request_meta
             if active is not None:
                 session_token, event_id = active
-        seconds = min(deadline-time.time(), self.budget.remaining())
+        seconds = deadline-time.time()
         if seconds <= 0:
             raise ModelError('TimeExceeded')
         watchdog = self.transport_policy.get('request_timeout_seconds')
@@ -1116,7 +1115,7 @@ class Broker:
         duration = action.get('generous_expected_duration', limits['command_default_seconds'])
         if not isinstance(duration,(float,int)) or isinstance(duration,bool) or not limits['command_min_seconds'] <= duration <= limits['command_max_seconds']:
             raise ModelError('Command duration must be between 5 and 1800 seconds')
-        seconds = max(.1, min(duration, limits['tool_timeout_seconds'], s['deadline']-time.time(), self.budget.remaining()))
+        seconds = max(.1, min(duration, limits['tool_timeout_seconds'], s['deadline']-time.time()))
         args = ['docker', 'exec', '-w', s['cwd'], s['solver'], 'timeout', '-k', '2', str(seconds),
                 'bash', '-lc', command]
         if s.get('stage_tools') is not None:

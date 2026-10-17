@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from mini_swe_rsi.context_budget import ContextBudget
-from mini_swe_rsi.core import Budget, read, tree_hash, write
+from mini_swe_rsi.core import read, tree_hash, write
 from mini_swe_rsi.core import execution_hash as driver_execution_hash
 from mini_swe_rsi.online import OnlineError, OnlineLoop, execution_hash
 from mini_swe_rsi.driver import initial_code
@@ -229,7 +229,7 @@ def test_two_steps_skip_is_terminal_and_does_not_start_step_three(initial_tree, 
     flow = _WORKFLOW.Workflow(workflow_root, lambda *_: {
                                     "exit_status": "Submitted",
                                     "submission": "fixture archive report"},
-                                    online=True, feedback={"task_id": "t1",
+                                    feedback={"task_id": "t1",
                                     "round_id": "R0001",
                                     "evidence_refs": ["tasks/t1/trace.txt"]})
     flow.dispatch({"op": "invoke"})
@@ -280,10 +280,8 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
         "LOCAL_LLM_MODEL": "fixture"})
     root = tmp_path / "broker"
-    budget = Budget(root)
-    budget.enter("preflight")
-    broker = Broker(root, budget, context=ContextBudget({"context_window": 32768,
-                                                         "max_output_tokens": 2048}))
+    broker = Broker(root, context=ContextBudget({"context_window": 32768,
+                                                 "max_output_tokens": 2048}))
     broker.model = "fixture"
     broker.service_identity = {"ollama": {"cloud": False}}
     calls = []
@@ -371,11 +369,8 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         assert denied.value.code in (401, 403)
         with pytest.raises(ModelError, match="execution identity"):
             broker.candidate_check(token2, metadata, agent="other-agent", role="orchestrator")
-        restarted_budget = Budget(root)
-        restarted_budget.enter("preflight")
-        restarted = Broker(root, restarted_budget,
-                           context=ContextBudget({"context_window": 32768,
-                                                  "max_output_tokens": 2048}))
+        restarted = Broker(root, context=ContextBudget({"context_window": 32768,
+                                                        "max_output_tokens": 2048}))
         restarted.model = "fixture"
         restarted.service_identity = {"ollama": {"cloud": False}}
         restarted.register_candidate_job(job_id, lambda: pytest.fail("replayed callback"), metadata)
@@ -398,7 +393,7 @@ def test_online_phase_permissions_and_evidence_are_host_checked(initial_tree, tm
     (tmp_path / "workflow/tasks/t1/trace.txt").write_text("public fixture trace\n")
     flow = _WORKFLOW.Workflow(tmp_path / "workflow", lambda *_: {"exit_status": "Submitted",
                                                                   "submission": "fixture"},
-                                    online=True, feedback={"task_id": "t1", "round_id": "R0001",
+                                    feedback={"task_id": "t1", "round_id": "R0001",
                                     "evidence_refs": ["tasks/t1/trace.txt"]})
     invoked = flow.dispatch({"op": "invoke"})
     first = invoked["completion_tool"]
@@ -435,7 +430,7 @@ def test_online_phase_permissions_and_evidence_are_host_checked(initial_tree, tm
     no_evidence = _WORKFLOW.Workflow(tmp_path / "no-evidence", lambda *_: {
                                          "exit_status": "Submitted",
                                          "submission": "fixture archive report"},
-                                     online=True, feedback={"task_id": "t1",
+                                     feedback={"task_id": "t1",
                                      "round_id": "R0001", "evidence_refs": []})
     no_evidence.dispatch({"op": "invoke"})
     no_evidence.call_role("archive_explorer", "fixture archive evidence")
@@ -447,8 +442,7 @@ def test_online_phase_permissions_and_evidence_are_host_checked(initial_tree, tm
     candidate_requests = []
     improve = _WORKFLOW.Workflow(tmp_path / "improve", lambda *_: {
                                  "exit_status": "Submitted",
-                                 "submission": "fixture archive report"}, online=True,
-                                 feedback={"task_id": "t1", "round_id": "R0001",
+                                 "submission": "fixture archive report"}, feedback={"task_id": "t1", "round_id": "R0001",
                                            "evidence_refs": ["tasks/t1/trace.txt"]},
                                  candidate_check=lambda request: (candidate_requests.append(request)
                                                                   or {"metrics": {"calls": 1,

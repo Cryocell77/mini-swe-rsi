@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from mini_swe_rsi.broker import Broker
-from mini_swe_rsi.core import Budget, ROOT, read, write
+from mini_swe_rsi.core import ROOT, read, write
 from mini_swe_rsi.driver import Driver, initial_code
 
 
@@ -16,9 +16,7 @@ from mini_swe_rsi.driver import Driver, initial_code
 def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    broker = Broker(tmp_path, budget, context=ContextBudget())
+    broker = Broker(tmp_path, context=ContextBudget())
     broker.model = 'fixture'
     seen = []
     def complete(token, payload, *identity):
@@ -29,7 +27,7 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
                 'usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
     broker.complete = complete
     broker.tool = lambda token, action: {'output':'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n', 'returncode':0,'exception_info':''}
-    driver = Driver(tmp_path, None, broker, budget)
+    driver = Driver(tmp_path, None, broker)
     try:
         archive = tmp_path/'archive'
         write(archive/'online_state.json', {'active_version':'H0001'})
@@ -86,11 +84,9 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
 def test_controller_deadline_stops_unresponsive_archived_process(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    broker = Broker(tmp_path, budget, context=ContextBudget())
+    broker = Broker(tmp_path, context=ContextBudget())
     broker.model = 'fixture'
-    driver = Driver(tmp_path, None, broker, budget)
+    driver = Driver(tmp_path, None, broker)
     try:
         archive = tmp_path/'archive'
         write(archive/'online_state.json', {'active_version':'H0000'})
@@ -117,14 +113,12 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
     from mini_swe_rsi.core import tree_hash
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
                      OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
-    budget = Budget(tmp_path)
-    budget.enter('preflight')
-    broker = Broker(tmp_path, budget, context=ContextBudget())
+    broker = Broker(tmp_path, context=ContextBudget())
     broker.model = 'fixture'
     def fail(token, payload, *identity):
         raise ModelError('ContextLimitExceeded')
     broker.complete = fail
-    driver = Driver(tmp_path, None, broker, budget)
+    driver = Driver(tmp_path, None, broker)
     try:
         archive = tmp_path/'archive'
         write(archive/'online_state.json', {'active_version':'H0000'})

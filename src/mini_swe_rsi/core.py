@@ -10,7 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DATA = Path('/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated')
 MANIFEST_HASH = 'f3398c5087e1b2ea2e7ffeb5d2d0db7e69d912bb79d7bb9a0200aa737e1b6579'
-PHASE_HOURS = dict(preflight=2, baseline=2, search=6, validation=2, simplify=2, final=9, report=1)
 
 
 def read(path):
@@ -118,8 +117,6 @@ class Data:
                 raise ValueError('Eligibility evidence changed or missing: ' + task_id)
 
     def ids(self, split):
-        if split == 'dev' and hasattr(self, 'dev_ids'):
-            return list(self.dev_ids)
         return list(self.manifest['splits'][split])
 
     def image(self, task_id):
@@ -143,57 +140,6 @@ class Data:
             if job.get('frozen_image') != inventory[job['task']['instance_id']]:
                 raise ValueError('Prior scoring image differs from current inventory')
         write(path, inventory)
-
-
-def freeze_dev_selection(data, root):
-    """Freeze an ordered prefix without changing the approved source manifest."""
-    root = Path(root)
-    scope = read(root/'execution_scope.json') if (root/'execution_scope.json').exists() else {}
-    frozen = root/'dev_selection.json'
-    if 'dev_count' not in scope and not frozen.exists():
-        return
-    count = scope.get('dev_count', len(data.manifest['splits']['dev']))
-    original = data.manifest['splits']['dev']
-    if type(count) is not int or not 1 <= count <= len(original):
-        raise ValueError('Invalid development prefix size')
-    selection = {'policy':'source manifest ordered prefix', 'count':count,
-                 'ids':original[:count], 'source_manifest_sha256':MANIFEST_HASH}
-    if frozen.exists() and read(frozen) != selection:
-        raise ValueError('Frozen development selection changed')
-    if not frozen.exists():
-        write(frozen, selection)
-    data.dev_ids = tuple(selection['ids'])
-
-
-class BudgetExceeded(RuntimeError):
-    pass
-
-
-class Budget:
-    """Wall-clock deadlines persist across restarts; a restart cannot reset time."""
-    def __init__(self, root):
-        self.path = Path(root) / 'budget.json'
-        if not self.path.exists():
-            write(self.path, {'started': time.time(), 'phases': {}})
-
-    def enter(self, phase):
-        d = read(self.path)
-        if phase not in d['phases']:
-            d['phases'][phase] = time.time()
-            write(self.path, d)
-        self.phase = phase
-        self.check()
-
-    def remaining(self):
-        d = read(self.path)
-        if d.get('unbounded_diagnostic') is True:
-            return float('inf')
-        return min(d['started'] + 24 * 3600,
-                   d['phases'][self.phase] + PHASE_HOURS[self.phase] * 3600) - time.time()
-
-    def check(self):
-        if self.remaining() <= 0:
-            raise BudgetExceeded(f'{self.phase}: wall-clock budget exhausted')
 
 
 def append_event(root, event):

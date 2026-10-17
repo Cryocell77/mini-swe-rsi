@@ -1,6 +1,6 @@
 import pytest
 
-from mini_swe_rsi.core import Budget, tree_hash, write
+from mini_swe_rsi.core import tree_hash, write
 from mini_swe_rsi.driver import Driver, GradingUnavailable, InfrastructureError
 from mini_swe_rsi.grader import grading_failure_reason
 
@@ -16,8 +16,6 @@ def test_official_timeout_is_a_task_failure_not_an_infrastructure_retry():
 def test_grading_recovery_keeps_same_answer_and_respects_persistent_retry_cap(tmp_path, recover):
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
-    driver.budget = Budget(tmp_path)
-    driver.budget.enter('baseline')
     code = tmp_path/'code'
     code.mkdir()
     (code/'implementation.py').write_text('x = 1\n')

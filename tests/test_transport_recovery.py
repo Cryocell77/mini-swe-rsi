@@ -30,7 +30,6 @@ def online_flow(tmp_path, delegate=None, source_hash='candidate-source'):
     return w.Workflow(
         tmp_path,
         delegate or (lambda *args: {'exit_status': 'Submitted', 'submission': 'archive'}),
-        online=True,
         identities={
             'version': 'H0000', 'parent_version': 'H0000', 'model': 'fixture-model',
             'source_execution_hash': source_hash, 'task_id': 't1', 'round_id': 'R0001',
@@ -58,17 +57,17 @@ def make_active_resume_state(tmp_path):
 
 
 def test_unbounded_model_timeout_is_explicit_httpx_none_and_finite_is_host_deadline():
-    unbounded = b.model_request_timeout({'global_remaining_seconds': None})
+    unbounded = b.model_request_timeout({'session_remaining_seconds': None})
     assert isinstance(unbounded, httpx.Timeout)
     assert all(getattr(unbounded, key) is None for key in ('connect', 'read', 'write', 'pool'))
-    assert b.model_request_timeout({'global_remaining_seconds': 37.5}) == 37.5
+    assert b.model_request_timeout({'session_remaining_seconds': 37.5}) == 37.5
 
 
 def test_unbounded_timeout_stays_serializable_but_reaches_query_boundary():
     from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
 
     model = LitellmTextbasedModel(model_name='fixture', model_kwargs={'timeout': None})
-    b.apply_model_request_timeout(model, {'global_remaining_seconds': None})
+    b.apply_model_request_timeout(model, {'session_remaining_seconds': None})
     assert model.serialize()['info']['config']['model']['model_kwargs']['timeout'] is None
 
     seen = {}
@@ -77,7 +76,7 @@ def test_unbounded_timeout_stays_serializable_but_reaches_query_boundary():
         def _query(self, messages, **kwargs):
             seen.update(kwargs)
 
-    fake = b.apply_model_request_timeout(FakeModel(), {'global_remaining_seconds': None})
+    fake = b.apply_model_request_timeout(FakeModel(), {'session_remaining_seconds': None})
     fake._query([])
     assert isinstance(seen['timeout'], httpx.Timeout)
 
@@ -85,7 +84,6 @@ def test_unbounded_timeout_stays_serializable_but_reaches_query_boundary():
 def test_workflow_transport_error_is_fatal_to_parent_agent(tmp_path):
     flow = w.Workflow(
         tmp_path, lambda *args: (_ for _ in ()).throw(w.WorkflowTransportError('HTTP 500')),
-        online=True,
         identities={'public_archive': str(tmp_path / 'archive')},
         feedback={'task_id': 't1', 'round_id': 'R0001', 'evidence_refs': [REF]},
     )
@@ -100,7 +98,6 @@ def test_workflow_transport_error_is_fatal_to_parent_agent(tmp_path):
 def test_provider_transport_exception_is_wrapped_as_fatal(tmp_path):
     flow = w.Workflow(
         tmp_path, lambda *args: (_ for _ in ()).throw(httpx.ReadTimeout('broker closed')),
-        online=True,
         identities={'public_archive': str(tmp_path / 'archive')},
         feedback={'task_id': 't1', 'round_id': 'R0001', 'evidence_refs': [REF]},
     )
@@ -115,8 +112,7 @@ def test_default_state_overwrite_remains_rejected(tmp_path):
     flow.dispatch({'op': 'invoke'})
 
     with pytest.raises(ValueError, match='Refusing to overwrite'):
-        w.Workflow(tmp_path, lambda *args: None, online=True,
-                   feedback={'task_id':'t1','round_id':'R0001','evidence_refs':[REF]})
+        w.Workflow(tmp_path, lambda *args: None, feedback={'task_id':'t1','round_id':'R0001','evidence_refs':[REF]})
 
 
 def test_online_resume_restores_live_state_and_continues_counter(tmp_path):
@@ -128,7 +124,7 @@ def test_online_resume_restores_live_state_and_continues_counter(tmp_path):
     }
     resumed = w.Workflow(tmp_path, lambda identity, *args: {
         'exit_status': 'Submitted', 'submission': identity},
-        online=True, identities=identities,
+        identities=identities,
         feedback={'task_id': 't1', 'round_id': 'R0001', 'evidence_refs': [REF]},
         resume_state=state)
 
@@ -152,19 +148,16 @@ def test_online_resume_restores_live_state_and_continues_counter(tmp_path):
     assert resumed.counter == 19
 
 
-def test_resume_rejects_native_or_invalid_counter_state(tmp_path):
+def test_resume_rejects_invalid_counter_state(tmp_path):
     flow = make_active_resume_state(tmp_path)
     state = json.loads((tmp_path / 'workflow_state.json').read_text())
     state['role_calls'] = -1
     (tmp_path / 'workflow_state.json').write_text(json.dumps(state))
     identities = {'version': 'H0000', 'source_execution_hash': 'candidate-source'}
     with pytest.raises(ValueError, match='role_calls'):
-        w.Workflow(tmp_path, lambda *args: None, online=True, identities=identities,
+        w.Workflow(tmp_path, lambda *args: None, identities=identities,
                    feedback={'task_id': 't1', 'round_id': 'R0001', 'evidence_refs': [REF]},
                    resume_state=state)
-    with pytest.raises(ValueError, match='only for an online'):
-        w.Workflow(tmp_path, lambda *args: None, resume_state=json.loads(
-            (tmp_path / 'workflow_state.json').read_text()))
 
 
 def test_resume_authorization_binds_state_identity_and_candidate_source(tmp_path):
@@ -209,8 +202,7 @@ def test_host_and_container_resume_prompt_bytes_match(tmp_path):
     state = json.loads((tmp_path / 'workflow_state.json').read_text())
     authorization = {'state': state, 'candidate_source_sha256': 'candidate-source'}
     kwargs = dict(upstream=ROOT / 'vendor/sica/agent_main.py', calls=50,
-                  budget={'global_remaining_seconds': None}, online=True,
-                  task_id='t1', round_id='R0001', version='H0000', feedback='public facts')
+                  budget={'session_remaining_seconds': None}, task_id='t1', round_id='R0001', version='H0000', feedback='public facts')
     host_base = b.improvement_prompt(0, 0, 0, 'P0001', **kwargs)
     container_base = b.improvement_prompt(0, 0, 0, 'P0001', **kwargs)
     assert host_base.encode() == container_base.encode()
@@ -271,7 +263,6 @@ def test_committee_cache_rehashes_real_workdir_after_source_change(tmp_path):
         tmp_path / 'logs',
         lambda identity, *args: calls.append(identity) or {
             'exit_status': 'Submitted', 'submission': identity},
-        online=True,
         identities={'version': 'H0000', 'parent_version': 'H0000', 'model': 'fixture-model',
                     'workdir': str(workdir), 'source_execution_hash': 'stale-h0',
                     'task_id': 't1', 'round_id': 'R0001'},
@@ -303,7 +294,6 @@ def test_resume_preserves_old_committee_seed_without_reusing_it(tmp_path):
         tmp_path / 'logs',
         lambda identity, *args: calls.append(identity) or {
             'exit_status': 'Submitted', 'submission': identity},
-        online=True,
         identities={'version': 'H0000', 'parent_version': 'H0000', 'model': 'fixture-model',
                     'workdir': str(workdir), 'source_execution_hash': 'stale-h0',
                     'task_id': 't1', 'round_id': 'R0001'},

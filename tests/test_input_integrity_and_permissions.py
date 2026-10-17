@@ -8,7 +8,7 @@ import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget, LOCK_PATH
-from mini_swe_rsi.core import ROOT, Budget, read
+from mini_swe_rsi.core import ROOT, read
 
 spec = importlib.util.spec_from_file_location('permission_fixture', ROOT/'runtime/workflow.py')
 w = importlib.util.module_from_spec(spec)
@@ -31,8 +31,7 @@ def test_online_role_boundaries_and_archive_overview_permissions(tmp_path):
         assert w.role_capabilities(role)['operations'] == operations
         assert ('Online archive analysis:' in w.instructions(role)) == (role=='archive_explorer')
     assert w.role_capabilities('general_problem_solver')['delegates']=={'software_developer'}
-    flow=w.Workflow(tmp_path,lambda *a:pytest.fail('Unauthorized delegate'), online=True,
-                    feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
+    flow=w.Workflow(tmp_path,lambda *a:pytest.fail('Unauthorized delegate'), feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
     req={'op':'archive','kind':'overview','role':'archive_explorer'}
     for role in ('orchestrator','reviewer','software_developer','general_problem_solver'):
         assert flow.execute(command(req),True,role)['returncode']==1
@@ -41,8 +40,7 @@ def test_online_role_boundaries_and_archive_overview_permissions(tmp_path):
 
 
 def test_bound_completion_rejects_wrong_stale_names_and_ids(tmp_path):
-    flow=w.Workflow(tmp_path,lambda *a:None, online=True,
-                    feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
+    flow=w.Workflow(tmp_path,lambda *a:None, feedback={'task_id':'task','round_id':'R0001','evidence_refs':['tasks/task/trace.txt']})
     current=flow.dispatch({'op':'invoke'})
     tool=current['completion_tool']
     assert len(tool.split('_')[1])==4  # Original _make_id uses four hex digits.
@@ -58,10 +56,9 @@ def test_bound_completion_rejects_wrong_stale_names_and_ids(tmp_path):
 @pytest.fixture
 def audited_broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture',LOCAL_LLM_MODEL='fixture'))
-    budget=Budget(tmp_path);budget.enter('preflight')
     context=ContextBudget({'context_window':65536,'max_output_tokens':65535})
     context.enable_verified_text_audit(read(LOCK_PATH))
-    broker=Broker(tmp_path,budget,context);broker.model='fixture'
+    broker=Broker(tmp_path,context);broker.model='fixture'
     yield broker
     broker.close()
 

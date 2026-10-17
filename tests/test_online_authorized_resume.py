@@ -18,7 +18,7 @@ def authorization_fixture(tmp_path):
     identities={'task_id':'t1','round_id':'R0001','version':'H0000',
                 'parent':0,'proposer':0,'candidate':'P0001'}
     flow=w.Workflow(logs,lambda *_:{'exit_status':'Submitted','submission':'evidence'},
-                    online=True,feedback={'task_id':'t1','round_id':'R0001',
+                    feedback={'task_id':'t1','round_id':'R0001',
                                           'evidence_refs':['tasks/t1/trace.txt']})
     flow.dispatch({'op':'invoke'})
     for _ in range(2):
@@ -80,7 +80,6 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
     import shutil
     from mini_swe_rsi.broker import Broker
     from mini_swe_rsi.context_budget import ContextBudget
-    from mini_swe_rsi.core import Budget
     from mini_swe_rsi.driver import Driver, initial_code
 
     fixture_spec=importlib.util.spec_from_file_location('resume_http_fixture', ROOT/'tests/test_online_docker.py')
@@ -89,13 +88,12 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:{
         'OPENAI_BASE_URL':endpoint.url,'OPENAI_API_KEY':'fixture-only',
         'LOCAL_LLM_MODEL':'fixture-model'})
-    root=tmp_path/'run';budget=Budget(root)
-    state=read(budget.path);state['unbounded_diagnostic']=True;write(budget.path,state);budget.enter('search')
-    broker=Broker(root,budget,context=ContextBudget({'context_window':65536,'max_output_tokens':4096}))
+    root=tmp_path/'run'
+    broker=Broker(root,context=ContextBudget({'context_window':65536,'max_output_tokens':4096}))
     broker.model='fixture-model';broker.service_identity={'ollama':{'cloud':False}}
     driver=None
     try:
-        driver=Driver(root,SimpleNamespace(),broker,budget)
+        driver=Driver(root,SimpleNamespace(),broker)
         source=root/'versions/H0000/agent_code';initial_code(source)
         logs=root/'rounds/R0001';target=logs/'candidate_work'
         shutil.copytree(source,target)
@@ -104,7 +102,7 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
         feedback={'task_id':'t1','round_id':'R0001','evidence_refs':['tasks/t1/trace.txt']}
         write(prompt,feedback)
         flow=w.Workflow(logs,lambda *_:{'exit_status':'Submitted','submission':'archive evidence'},
-                        online=True,feedback=feedback)
+                        feedback=feedback)
         flow.dispatch({'op':'invoke'})
         for _ in range(2):
             flow.call_role('archive_explorer','evidence')
@@ -122,7 +120,7 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
               'candidate_source_sha256':before,'committee_cache_seed':[]})
         token=broker.session('restore-fixture',seconds=None)
         status,_=driver.controller(source,logs,
-            ['improve','--online','--task-id','t1','--round-id','R0001','--candidate-id','P0001',
+            ['improve','--task-id','t1','--round-id','R0001','--candidate-id','P0001',
              '--parent-iter','0','--best-iter','0','--current-iter','0',
              '--online-version','H0000','--prompt-file','/task.txt'],
             token,target=target,prompt=prompt,resume_checkpoint=authorization)
