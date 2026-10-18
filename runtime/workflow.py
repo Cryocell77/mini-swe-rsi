@@ -7,6 +7,7 @@ import ast
 import json
 import hashlib
 import copy
+import runpy
 import shlex
 import uuid
 from pathlib import Path
@@ -298,8 +299,7 @@ class Workflow:
         if not isinstance(state, dict):
             raise ValueError('Invalid online workflow resume state schema')
         fields = set(self._resume_state_fields())
-        legacy_fields = fields - {'committee_cache'}
-        if set(state) not in (fields, legacy_fields):
+        if set(state) != fields:
             raise ValueError('Invalid online workflow resume state schema')
         if state_path.exists():
             try:
@@ -329,7 +329,7 @@ class Workflow:
         if (not isinstance(state['diagnostic_reports'], dict)
                 or not isinstance(state['diagnostic_role_evidence'], dict)):
             raise ValueError('Resume diagnostic state is invalid')
-        if 'committee_cache' in state and not isinstance(state['committee_cache'], list):
+        if not isinstance(state['committee_cache'], list):
             raise ValueError('Resume committee cache is invalid')
         if state['check_plan'] is not None and not isinstance(state['check_plan'], dict):
             raise ValueError('Resume check_plan is invalid')
@@ -354,7 +354,7 @@ class Workflow:
         self.diagnostic_role_evidence = copy.deepcopy(state['diagnostic_role_evidence'])
         self.check_plan = copy.deepcopy(state['check_plan'])
         self.candidate_check_result = copy.deepcopy(state['candidate_check'])
-        self._restore_committee_cache(state.get('committee_cache', []))
+        self._restore_committee_cache(state['committee_cache'])
 
     def _restore_committee_cache(self, seeds):
         if seeds is None:
@@ -812,21 +812,12 @@ class Workflow:
         if plan['criterion'] == 'mechanism_parent_failed_candidate_passed' and mechanism is None:
             raise ValueError('Mechanism acceptance requires mechanism_plan in step 3 check_plan')
         if mechanism is not None:
-            if not isinstance(mechanism, dict):
-                raise ValueError('check_plan mechanism_plan must be an object')
-            relative = mechanism.get('test_path', mechanism.get('entrypoint'))
-            if (not isinstance(relative, str) or not relative or Path(relative).is_absolute()
-                    or '..' in Path(relative).parts or Path(relative).suffix != '.py'):
-                raise ValueError('check_plan mechanism_plan requires a relative Python test_path')
-            args = mechanism.get('args', [])
-            if (not isinstance(args, list) or len(args) > 32
-                    or any(not isinstance(arg, str) for arg in args)):
-                raise ValueError('check_plan mechanism_plan args must be a short string list')
-            timeout = mechanism.get('timeout_seconds', 60)
-            if type(timeout) is not int or not 1 <= timeout <= 600:
-                raise ValueError('check_plan mechanism_plan timeout must be 1..600 seconds')
-            plan['mechanism_plan'] = {'test_path':relative, 'args':args,
-                                      'timeout_seconds':timeout}
+            try:
+                normalize = runpy.run_path(
+                    Path(__file__).with_name('check_plan.py'))['normalize_mechanism_plan']
+                plan['mechanism_plan'] = normalize(mechanism)
+            except ValueError as exc:
+                raise ValueError(f'check_plan mechanism_plan: {exc}') from None
         plan['revision'] = '1'
         path = self.logs / 'check_plan_declared.json'
         if path.exists() and json.loads(path.read_text()) != plan:

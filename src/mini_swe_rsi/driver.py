@@ -523,20 +523,13 @@ class Driver:
 
     @staticmethod
     def _mechanism_plan(plan):
-        """Validate the small, deterministic offline mechanism test contract."""
-        if not isinstance(plan, dict):
-            raise InfrastructureError('Mechanism check plan must be an object')
-        relative = plan.get('test_path', plan.get('entrypoint'))
-        if (not isinstance(relative, str) or not relative or Path(relative).is_absolute()
-                or '..' in Path(relative).parts or Path(relative).suffix != '.py'):
-            raise InfrastructureError('Mechanism check requires a relative Python test_path')
-        args = plan.get('args', [])
-        if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args) or len(args) > 32:
-            raise InfrastructureError('Mechanism check args must be a short string list')
-        timeout = plan.get('timeout_seconds', 60)
-        if type(timeout) is not int or not 1 <= timeout <= 600:
-            raise InfrastructureError('Mechanism check timeout must be 1..600 seconds')
-        return {'test_path': relative, 'args': args, 'timeout_seconds': timeout}
+        """Load and apply the shared mechanism plan normalizer."""
+        try:
+            normalize = runpy.run_path(str(ROOT / 'runtime' / 'check_plan.py'))[
+                'normalize_mechanism_plan']
+            return normalize(plan)
+        except ValueError as exc:
+            raise InfrastructureError(str(exc)) from None
 
     def _run_mechanism_process(self, source, test_file, args, timeout, *, test_path):
         """Preserve the declared test location in an isolated source overlay."""

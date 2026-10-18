@@ -18,6 +18,7 @@ from .core import (Data, ROOT, append_event, attempt_result_paths, digest,
                    result_matches_source, tree_hash, write, improvement_contract)
 from .driver import Driver, InfrastructureError, initial_code, validate_code
 from .broker import Broker, ModelError
+from .online_contract import ONLINE_PROTOCOL, CHECK_POLICY_REVISION, validate_online_contract
 
 
 class OnlineError(RuntimeError):
@@ -71,25 +72,11 @@ def freeze_task_selection(data, root, task_limit=None):
 class OnlineLoop:
     """Run a fixed task sequence against one active Harness version at a time."""
 
-    protocol = 'mini-swe-rsi-online-v5'
+    protocol = ONLINE_PROTOCOL
 
     @classmethod
     def _validate_contract(cls, contract):
-        if not isinstance(contract, dict):
-            raise OnlineError('Online contract must be an object')
-        protocol_keys = ('protocol', 'online_protocol')
-        if (not any(key in contract for key in protocol_keys)
-                or any(contract.get(key, cls.protocol) != cls.protocol for key in protocol_keys)):
-            raise OnlineError(f'Unsupported online protocol; only {cls.protocol} is accepted')
-        if 'common_tasks' in contract:
-            raise OnlineError('Online contract common_tasks is unsupported')
-        policy = contract.get('check_policy')
-        if not isinstance(policy, dict):
-            raise OnlineError('Online check policy must be an object')
-        if 'common_tasks' in policy:
-            raise OnlineError('Online check policy common_tasks is unsupported')
-        if policy.get('revision') != '2':
-            raise OnlineError('Online check policy revision is unsupported')
+        validate_online_contract(contract, error_type=OnlineError)
 
     def __init__(self, root, tasks, driver=None, broker=None, active_code=None,
                  model_identity=None, service_identity=None, contract=None, resume_checkpoint=None):
@@ -106,7 +93,7 @@ class OnlineLoop:
             'protocol': self.protocol,
             'tasks': list(self.tasks),
             'check_policy': {
-                'revision': '2',
+                'revision': CHECK_POLICY_REVISION,
                 'criterion': 'current_task_failure_fixed_or_mechanism_parent_failed_candidate_passed',
             },
         }
@@ -154,7 +141,7 @@ class OnlineLoop:
                 'task_limit': task_limit,
                 'improvement_task': improvement_contract(),
                 'check_policy': {
-                    'revision': '2',
+                    'revision': CHECK_POLICY_REVISION,
                     'criterion': 'current_task_failure_fixed_or_mechanism_parent_failed_candidate_passed',
                 },
             }
@@ -187,12 +174,13 @@ class OnlineLoop:
 
     def _control_manifest(self):
         """Freeze the code that interprets the online contract."""
-        files = [ROOT/'runtime/bridge.py', ROOT/'runtime/workflow.py',
+        files = [ROOT/'runtime/bridge.py', ROOT/'runtime/workflow.py', ROOT/'runtime/check_plan.py',
                  ROOT/'runtime/relay.py', ROOT/'vendor/sica/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
-                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness_seed.py')]
+                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness_seed.py',
+                   'online_contract.py')]
         files += [ROOT/'upstream.lock.json']
         files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
                   ('mini-no-billing.patch', 'mini-no-billing.json')]
@@ -315,10 +303,16 @@ class OnlineLoop:
     def active_code(self):
         path = self.root/'versions'/self.active_version/'agent_code'
         identity = read(path.parent/'version_identity.json')
-        if (identity.get('version') != self.active_version or identity.get('control_manifest') != self.control_manifest
-                or identity.get('control_manifest_sha256') not in (None, self._contract_digest())
-                or identity.get('model_identity_sha256') not in (None, self._identity_digest(self.model_identity))
-                or identity.get('service_identity_sha256') not in (None, self._identity_digest(self.service_identity))):
+        expected_identity = {
+            'version': self.active_version,
+            'control_manifest': self.control_manifest,
+            'control_manifest_sha256': self._contract_digest(),
+            'model_identity_sha256': self._identity_digest(self.model_identity),
+            'service_identity_sha256': self._identity_digest(self.service_identity),
+        }
+        if (not isinstance(identity, dict)
+                or any(key not in identity or identity[key] != value
+                       for key, value in expected_identity.items())):
             raise OnlineError('Active version control identity differs from current runtime')
         if tree_hash(path) != identity.get('full_source_hash') or execution_hash(path) != identity.get('execution_hash'):
             raise OnlineError('Active version source changed after acceptance')
@@ -1036,6 +1030,22 @@ class OnlineLoop:
             return None
         return diagnosis['decision']
 
+    @staticmethod
+    def _decision_parent(feedback, decision):
+        if (not isinstance(decision, dict)
+                or decision.get('round_id') != feedback['round_id']
+                or decision.get('task_id') != feedback['task_id']
+                or decision.get('parent_version') != feedback['version']):
+            raise OnlineError('Durable decision identity is incomplete or differs')
+        parent = decision['parent_version']
+        try:
+            number = int(parent[1:]) if isinstance(parent, str) and parent.startswith('H') else -1
+        except ValueError:
+            number = -1
+        if number < 0 or parent != f'H{number:04d}':
+            raise OnlineError('Durable decision has an invalid parent version')
+        return parent, number
+
     def _commit_round(self, feedback, decision):
         path = self.root/'decisions'/f"{feedback['round_id']}.json"
         if path.exists():
@@ -1043,22 +1053,15 @@ class OnlineLoop:
             # A durable decision is immutable. Recovery uses its exact
             # contents and never silently rewrites it.
             return self._apply_existing_decision(feedback, old)
-        if decision.get('parent_version') not in (None, self.active_version):
+        parent, _ = self._decision_parent(feedback, decision)
+        if parent != self.active_version:
             raise OnlineError('Decision parent is not the active version')
         write(path, decision)
         return self._apply_existing_decision(feedback, decision)
 
     def _apply_existing_decision(self, feedback, decision):
+        parent, parent_number = self._decision_parent(feedback, decision)
         accepted = decision.get('decision') == 'accepted'
-        parent = decision.get('parent_version', feedback.get('version'))
-        if parent != feedback.get('version'):
-            raise OnlineError('Durable decision parent does not match task feedback')
-        try:
-            parent_number = int(parent[1:]) if isinstance(parent, str) and parent.startswith('H') else -1
-        except (TypeError, ValueError):
-            parent_number = -1
-        if parent_number < 0 or parent != f'H{parent_number:04d}':
-            raise OnlineError('Durable decision has an invalid parent version')
         idx = feedback['task_index']
         current = self.state
         if accepted:
@@ -1070,21 +1073,19 @@ class OnlineLoop:
                 raise OnlineError('Accepted decision has no candidate source')
             source_full, source_exec = tree_hash(source), execution_hash(source)
             candidate_identity = self._proposal_dir(int(proposal_id[1:]))/'candidate_identity.json'
-            if candidate_identity.exists():
-                ident = read(candidate_identity)
-                if ident.get('parent_version') != parent:
-                    raise OnlineError('Candidate parent identity differs during recovery')
-                if ident.get('candidate_hash') not in (None, source_full):
-                    raise OnlineError('Candidate full hash differs during recovery')
-                if ident.get('execution_hash') not in (None, source_exec):
-                    raise OnlineError('Candidate execution hash differs during recovery')
+            if (not candidate_identity.exists() or not candidate_identity.is_file()
+                    or candidate_identity.is_symlink()):
+                raise OnlineError('Accepted decision has no candidate identity during recovery')
+            ident = read(candidate_identity)
+            expected_candidate_identity = self._candidate_identity(
+                proposal_id, parent, feedback['full_source_hash'], source, '1')
+            if ident != expected_candidate_identity:
+                raise OnlineError('Candidate identity differs during recovery')
             check_path = self._round_dir(int(feedback['round_id'][1:]))/'candidate_check.json'
-            if check_path.exists():
-                check = read(check_path)
-                if check.get('parent_version') not in (None, parent) or check.get('proposal') not in (None, proposal_id):
-                    raise OnlineError('Candidate check parent/proposal differs during recovery')
-                if check.get('candidate_execution_hash') not in (None, source_exec):
-                    raise OnlineError('Candidate check execution hash differs during recovery')
+            if not check_path.exists() or not check_path.is_file() or check_path.is_symlink():
+                raise OnlineError('Accepted decision has no candidate check during recovery')
+            self._validate_candidate_snapshot(read(check_path), feedback, proposal_id, source,
+                                              accepted=True)
             # Version numbering is a property of the immutable decision's
             # parent, never of whichever active label happens to be present
             # while recovery is replayed.
@@ -1157,6 +1158,61 @@ class OnlineLoop:
                          current_task=None, current_round=None, current_proposal=None)
         self._event('round_committed', round_id=feedback['round_id'], decision=decision.get('decision'), version=active)
         return active
+
+    @staticmethod
+    def _execution_summary(round_id, proposal_id, candidate_check, acceptance, metrics):
+        """Build the shared public record for a completed candidate check."""
+        return {'round_id': round_id, 'proposal': proposal_id,
+                'candidate_check': candidate_check, 'acceptance': acceptance,
+                'metrics': metrics}
+
+    def _candidate_decision(self, feedback, proposal_id, acceptance, summary, completed_steps):
+        """Build the shared durable decision for a checked candidate."""
+        return {'round_id': feedback['round_id'], 'task_id': feedback['task_id'],
+                'proposal': proposal_id, 'parent_version': self.active_version,
+                'decision': 'accepted' if acceptance['passed'] else 'rejected',
+                'acceptance': acceptance, 'candidate_check': 'candidate_check.json',
+                'completed_steps': completed_steps, 'takeover_summary': summary}
+
+    @staticmethod
+    def _candidate_identity(proposal_id, parent_version, parent_hash, candidate, plan_revision):
+        return {'proposal': proposal_id, 'parent_version': parent_version,
+                'parent_hash': parent_hash, 'candidate_hash': tree_hash(candidate),
+                'execution_hash': execution_hash(candidate), 'plan_revision': plan_revision}
+
+    def _ensure_candidate_identity(self, path, proposal_id, parent_version,
+                                   parent_hash, candidate, plan_revision):
+        """Verify an immutable candidate identity, creating only a missing one."""
+        identity = self._candidate_identity(
+            proposal_id, parent_version, parent_hash, candidate, plan_revision)
+        path = Path(path)
+        if path.exists() or path.is_symlink():
+            if not path.is_file() or path.is_symlink() or read(path) != identity:
+                raise OnlineError('Candidate identity differs during recovery')
+        else:
+            write(path, identity)
+        return identity
+
+    @staticmethod
+    def _validate_candidate_snapshot(snapshot, feedback, proposal_id, candidate, *, accepted=False):
+        candidate_exec = execution_hash(candidate)
+        expected = {
+            'job_id': f'candidate:{feedback["round_id"]}:{proposal_id}',
+            'task_id': feedback['task_id'], 'check_revision': '1',
+            'round_id': feedback['round_id'], 'proposal': proposal_id,
+            'parent_version': feedback['version'], 'parent_hash': feedback['full_source_hash'],
+            'parent_execution_hash': feedback['execution_hash'],
+            'candidate_hash': tree_hash(candidate),
+            'candidate_execution_hash': candidate_exec,
+        }
+        if (not isinstance(snapshot, dict)
+                or any(snapshot.get(key) != value for key, value in expected.items())
+                or not isinstance(snapshot.get('checked_candidate_hash'), str)
+                or not snapshot['checked_candidate_hash']
+                or not isinstance(snapshot.get('checked_candidate_execution_hash'), str)
+                or not snapshot['checked_candidate_execution_hash']
+                or (accepted and snapshot['checked_candidate_execution_hash'] != candidate_exec)):
+            raise OnlineError('Candidate check identity differs during recovery')
 
     def _recover(self):
         state = self.state
@@ -1272,12 +1328,11 @@ class OnlineLoop:
                     error = persisted.get('error') or {}
                     if error.get('type') == 'CandidateRejected':
                         workflow = read(workflow_path)
-                        summary = {'round_id': state['current_round'],
-                                   'proposal': state['current_proposal'],
-                                   'candidate_check': None,
-                                   'acceptance': {'passed': False,
-                                                  'reason': error.get('message', 'candidate check rejected')},
-                                   'metrics': workflow.get('metrics')}
+                        summary = self._execution_summary(
+                            state['current_round'], state['current_proposal'], None,
+                            {'passed': False,
+                             'reason': error.get('message', 'candidate check rejected')},
+                            workflow.get('metrics'))
                         workflow['execution_summary'] = summary
                         write(workflow_path, workflow)
                         decision = {'round_id': state['current_round'],
@@ -1313,14 +1368,12 @@ class OnlineLoop:
                 if (isinstance(plan, dict) and 'common_tasks' in plan) or (
                         isinstance(frozen_plan, dict) and 'common_tasks' in frozen_plan):
                     raise OnlineError('Persisted candidate check plan common_tasks is unsupported')
-                if any(frozen_plan.get(key) != plan.get(key)
-                       for key in ('criterion','mechanism_plan','revision')):
+                if (plan.get('revision') != '1'
+                        or any(frozen_plan.get(key) != plan.get(key)
+                               for key in ('criterion','mechanism_plan','revision'))):
                     raise OnlineError('Frozen candidate check plan differs from step-3 declaration')
-                if (snapshot.get('job_id') != persisted.get('job_id')
-                        or snapshot.get('parent_version') != self.active_version
-                        or snapshot.get('parent_hash') != tree_hash(self.active_code)
-                        or snapshot.get('parent_execution_hash') != execution_hash(self.active_code)
-                        or snapshot.get('candidate_execution_hash') != execution_hash(candidate)):
+                self._validate_candidate_snapshot(snapshot, feedback, state['current_proposal'], candidate)
+                if snapshot['job_id'] != persisted.get('job_id'):
                     raise OnlineError('Persisted candidate check identity differs during recovery')
                 acceptance = self._acceptance(candidate, feedback, snapshot, plan)
                 workflow = read(workflow_path)
@@ -1334,17 +1387,20 @@ class OnlineLoop:
                         raise OnlineError('Persisted execution summary differs from host check evidence')
                     summary = existing_summary
                 else:
-                    summary = {'round_id': state['current_round'],
-                               'proposal': state['current_proposal'], 'candidate_check': snapshot,
-                               'acceptance': acceptance, 'metrics': workflow.get('metrics')}
+                    summary = self._execution_summary(
+                        state['current_round'], state['current_proposal'], snapshot,
+                        acceptance, workflow.get('metrics'))
+                if acceptance['passed']:
+                    self._ensure_candidate_identity(
+                        self._proposal_dir(int(state['current_proposal'][1:])) /
+                        'candidate_identity.json', state['current_proposal'],
+                        self.active_version, feedback['full_source_hash'], candidate,
+                        plan['revision'])
                 workflow['execution_summary'] = summary
                 write(workflow_path, workflow)
-                decision = {'round_id': state['current_round'], 'task_id': state['current_task'],
-                            'proposal': state['current_proposal'], 'parent_version': self.active_version,
-                            'decision': 'accepted' if acceptance['passed'] else 'rejected',
-                            'acceptance': acceptance, 'candidate_check': 'candidate_check.json',
-                            'completed_steps': workflow.get('completed_steps', 7),
-                            'takeover_summary': summary}
+                decision = self._candidate_decision(
+                    feedback, state['current_proposal'], acceptance, summary,
+                    workflow.get('completed_steps', 7))
                 self._commit_round(feedback, decision)
                 return
         if state['status'] in ('diagnosing','diagnosis_pending','improving','checking','decision_ready'):
@@ -1503,10 +1559,9 @@ class OnlineLoop:
                 shutil.copytree(working, candidate)
         else:
             shutil.copytree(working, candidate)
-        write(proposal_dir/'candidate_identity.json', {'proposal': proposal_id,
-            'parent_version': self.active_version, 'parent_hash': tree_hash(self.active_code),
-            'candidate_hash': tree_hash(candidate), 'execution_hash': execution_hash(candidate),
-            'plan_revision': plan['revision']})
+        self._ensure_candidate_identity(
+            proposal_dir/'candidate_identity.json', proposal_id,
+            self.active_version, parent_hash, candidate, plan['revision'])
         if tree_hash(candidate) == parent_hash and execution_hash(candidate) == execution_hash(self.active_code):
             decision = {'round_id': round_id, 'task_id': feedback['task_id'],
                         'proposal': proposal_id, 'parent_version': self.active_version,
@@ -1523,10 +1578,10 @@ class OnlineLoop:
             # durable rejection, while an unknown host interruption remains a
             # resumable boundary handled by the recovery path.
             workflow['metrics'] = self._finish_improvement_session()
-            summary = {'round_id': round_id, 'proposal': proposal_id,
-                       'process_status': workflow.get('process_status'),
-                       'metrics': workflow.get('metrics'), 'candidate_check': None,
-                       'acceptance': {'passed': False, 'reason': str(exc)}}
+            summary = self._execution_summary(
+                round_id, proposal_id, None,
+                {'passed': False, 'reason': str(exc)}, workflow.get('metrics'))
+            summary['process_status'] = workflow.get('process_status')
             workflow['execution_summary'] = summary
             write(round_dir/'online_workflow_result.json', workflow)
             decision = {'round_id': round_id, 'task_id': feedback['task_id'],
@@ -1540,14 +1595,13 @@ class OnlineLoop:
         workflow['metrics'] = self._finish_improvement_session()
         write(round_dir/'online_workflow_result.json', workflow)
         acceptance = self._acceptance(candidate, feedback, snapshot, plan)
-        summary = {'round_id': round_id, 'proposal': proposal_id, 'process_status': workflow.get('process_status'),
-                   'metrics': workflow.get('metrics'), 'candidate_check': snapshot, 'acceptance': acceptance}
+        summary = self._execution_summary(
+            round_id, proposal_id, snapshot, acceptance, workflow.get('metrics'))
+        summary['process_status'] = workflow.get('process_status')
         workflow['execution_summary'] = summary
         write(round_dir/'online_workflow_result.json', workflow)
-        decision = {'round_id': round_id, 'task_id': feedback['task_id'], 'proposal': proposal_id,
-                    'parent_version': self.active_version, 'decision': 'accepted' if acceptance['passed'] else 'rejected',
-                    'acceptance': acceptance, 'candidate_check': 'candidate_check.json',
-                    'diagnosis': diagnosis, 'completed_steps': 7, 'takeover_summary': summary}
+        decision = self._candidate_decision(feedback, proposal_id, acceptance, summary, 7)
+        decision['diagnosis'] = diagnosis
         return self._commit_round(feedback, decision)
 
     def run_once(self):

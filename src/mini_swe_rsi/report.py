@@ -6,9 +6,9 @@ from pathlib import Path
 
 from .core import read, write
 from .public_filter import public_value as _public_report_value
+from .online_contract import ONLINE_PROTOCOL, validate_online_contract
 
 
-_ONLINE_PROTOCOL = 'mini-swe-rsi-online-v5'
 _LEGACY_MARKERS = (
     'baseline.json', 'preflight.json', 'gates.json', 'champions.json',
     'recursive_track_result.json', 'verification.json', 'test_seal.json',
@@ -25,34 +25,16 @@ def _ensure_online_root(root):
     config = state = None
     if config_path.exists():
         config = read(config_path)
-        if not isinstance(config, dict):
-            raise ValueError('Online configuration must be a JSON object')
-        if ('online_protocol' in config and 'protocol' in config
-                and config['online_protocol'] != config['protocol']):
-            raise ValueError('Online configuration has conflicting protocol fields')
-        configured_protocol = config.get('online_protocol', config.get('protocol'))
-        if configured_protocol != _ONLINE_PROTOCOL:
-            raise ValueError(
-                f'Unsupported online protocol {configured_protocol!r}; reports require {_ONLINE_PROTOCOL}')
-        if 'common_tasks' in config:
-            raise ValueError('Online contract common_tasks is unsupported')
-        if 'check_policy' in config:
-            policy = config['check_policy']
-            if not isinstance(policy, dict):
-                raise ValueError('Online check policy must be an object')
-            if 'common_tasks' in policy:
-                raise ValueError('Online check policy common_tasks is unsupported')
-            if policy.get('revision') != '2':
-                raise ValueError('Online check policy revision is unsupported')
+        validate_online_contract(config, require_policy=False)
     elif not state_path.exists():
         raise ValueError('Online report requires online_state.json or an online configuration')
     if state_path.exists():
         state = read(state_path)
         if not isinstance(state, dict):
             raise ValueError('Online state must be a JSON object')
-        if state.get('protocol') != _ONLINE_PROTOCOL:
+        if state.get('protocol') != ONLINE_PROTOCOL:
             raise ValueError(
-                f'Unsupported online protocol {state.get("protocol")!r}; reports require {_ONLINE_PROTOCOL}')
+                f'Unsupported online protocol {state.get("protocol")!r}; reports require {ONLINE_PROTOCOL}')
     for marker in _LEGACY_MARKERS:
         if (root/marker).exists():
             raise ValueError(f'Refusing to report a legacy native run as online: {marker}')

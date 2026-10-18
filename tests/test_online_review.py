@@ -6,6 +6,7 @@ import pytest
 
 from mini_swe_rsi.core import ROOT
 from mini_swe_rsi.core import write
+from mini_swe_rsi.driver import Driver, InfrastructureError
 
 
 spec = importlib.util.spec_from_file_location('online_review_workflow', ROOT/'runtime/workflow.py')
@@ -40,6 +41,48 @@ def test_step_three_requires_a_model_declared_plan(tmp_path):
     flow.dispatch({'op': completion, 'check_plan': plan})
     assert flow.completed_steps == 3
     assert json.loads((tmp_path/'check_plan_declared.json').read_text()) == {**plan, 'revision': '1'}
+
+
+def test_mechanism_plan_uses_shared_strict_normalization(tmp_path):
+    requested = {'test_path': 'tests/check.py', 'args': ['--fixture'], 'timeout_seconds': 30}
+    expected = dict(requested)
+    flow = diagnosed(tmp_path)
+    frozen = flow._freeze_check_plan({'criterion': 'mechanism_parent_failed_candidate_passed',
+                                      'mechanism_plan': requested})
+    assert frozen['mechanism_plan'] == expected == Driver._mechanism_plan(requested)
+    for index, bad in enumerate((
+        {'entrypoint': 'tests/check.py'},
+        {'test_path': 'tests/check.py', 'unknown': True},
+    )):
+        invalid = diagnosed(tmp_path/f'invalid_{index}')
+        with pytest.raises(ValueError, match='entrypoint|Unknown'):
+            invalid._freeze_check_plan({'criterion': 'mechanism_parent_failed_candidate_passed',
+                                     'mechanism_plan': bad})
+        assert not (invalid.logs/'check_plan_declared.json').exists()
+        with pytest.raises(InfrastructureError, match='entrypoint|Unknown'):
+            Driver._mechanism_plan(bad)
+
+
+def test_resume_state_requires_committee_cache_and_restores_entries(tmp_path):
+    flow = diagnosed(tmp_path)
+    seed = {'context': 'context', 'proposal': 'proposal',
+            'reviewer_specialisation_name': next(iter(flow.specs)),
+            'submission': 'cached review', 'role_identity': '001_reviewer',
+            'source_execution_hash': 'fixture-source'}
+    flow._restore_committee_cache([seed])
+    flow.save()
+    state = json.loads((tmp_path/'workflow_state.json').read_text())
+    resumed = w.Workflow(tmp_path, lambda *_: {'exit_status': 'Submitted', 'submission': 'evidence'},
+                         identities={'version': 'H0000'}, feedback=flow.feedback,
+                         resume_state=state)
+    assert any(entry['submission'] == 'cached review'
+               for entry in resumed.committee_cache.values())
+    missing = dict(state)
+    missing.pop('committee_cache')
+    (tmp_path/'workflow_state.json').write_text(json.dumps(missing))
+    with pytest.raises(ValueError, match='schema'):
+        w.Workflow(tmp_path, lambda *_: None, identities={'version': 'H0000'},
+                   feedback=flow.feedback, resume_state=missing)
 
 
 @pytest.mark.parametrize('plan', [
@@ -165,13 +208,13 @@ def test_online_report_rejects_malformed_or_native_roots(tmp_path, kind):
     if kind == 'malformed_config':
         (run/'configuration.json').write_text('{not-json')
     else:
-        write(run/'configuration.json', {'online_protocol': 'mini-swe-rsi-online-v5'})
-        write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v5', 'active_version': 'H0000'})
+        write(run/'configuration.json', {'online_protocol': 'mini-swe-rsi-online-v6'})
+        write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v6', 'active_version': 'H0000'})
         if kind == 'malformed_state':
             write(run/'online_state.json', ['invalid'])
         elif kind == 'conflicting_protocol':
             write(run/'configuration.json', {
-                'online_protocol': 'mini-swe-rsi-online-v5', 'protocol': 'native-v1'})
+                'online_protocol': 'mini-swe-rsi-online-v6', 'protocol': 'native-v1'})
         elif kind == 'native_root':
             write(run/'baseline.json', {'legacy': True})
     with pytest.raises((ValueError, json.JSONDecodeError), match='Online|online|legacy|protocol|JSON|Expecting'):
@@ -188,7 +231,7 @@ def test_online_v2_and_common_task_contracts_are_explicitly_rejected(tmp_path):
         })
     with pytest.raises(OnlineError, match='common_tasks is unsupported'):
         OnlineLoop(tmp_path/'common', ('task',), contract={
-            'protocol': 'mini-swe-rsi-online-v5',
+            'protocol': 'mini-swe-rsi-online-v6',
             'check_policy': {'revision': '2', 'common_tasks': []},
         })
 
@@ -199,11 +242,11 @@ def test_online_report_rejects_common_task_policy_in_current_root(tmp_path):
     run = tmp_path/'run'
     run.mkdir()
     write(run/'configuration.json', {
-        'online_protocol': 'mini-swe-rsi-online-v5',
-        'protocol': 'mini-swe-rsi-online-v5',
+        'online_protocol': 'mini-swe-rsi-online-v6',
+        'protocol': 'mini-swe-rsi-online-v6',
         'check_policy': {'revision': '2', 'common_tasks': []},
     })
-    write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v5', 'active_version': 'H0000'})
+    write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v6', 'active_version': 'H0000'})
     with pytest.raises(ValueError, match='common_tasks is unsupported'):
         build_online_report(run)
 

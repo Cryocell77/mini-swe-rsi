@@ -40,21 +40,18 @@ def tree_hash(path):
 def attempt_result_paths(root, filename='host_result.json'):
     """Return durable task-result paths in retry order.
 
-    Both the task and candidate-check paths may contain a top-level result from
-    older runs or one result per retry.  Keep the ordering and filesystem
-    boundary in one place; callers still decide which result fields establish
-    scoring, activation, or takeover authority.
+    Results are written below explicit, regular ``attempt_N`` directories.
+    Keep retry ordering and the filesystem boundary in one place; callers still
+    decide which result fields establish scoring, activation, or takeover
+    authority.
     """
     root = Path(root)
     attempts = sorted(
-        (p for p in root.glob('attempt_*') if p.is_dir() and not p.is_symlink()),
-        key=lambda p: (
-            int(p.name.split('_', 1)[1])
-            if p.name.split('_', 1)[1].isdigit() else 10**9,
-            p.name,
-        ),
+        (p for p in root.glob('attempt_*') if p.is_dir() and not p.is_symlink()
+         and p.name[8:].isascii() and p.name[8:].isdigit()),
+        key=lambda p: (int(p.name[8:]), p.name),
     )
-    return [p / filename for p in attempts] + [root / filename]
+    return [p / filename for p in attempts]
 
 
 def read_regular_json(path):
@@ -182,5 +179,6 @@ def improvement_contract():
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
             'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
             'workflow_sha256': digest(ROOT/'runtime/workflow.py'),
+            'check_plan_sha256': digest(ROOT/'runtime/check_plan.py'),
             'relay_sha256': digest(ROOT/'runtime/relay.py'),
             'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'vendor/sica_workflow').glob('*')) if p.is_file()}}

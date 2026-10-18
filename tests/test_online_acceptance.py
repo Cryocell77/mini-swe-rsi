@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from mini_swe_rsi.context_budget import ContextBudget
-from mini_swe_rsi.core import read, tree_hash, write
+from mini_swe_rsi.core import attempt_result_paths, read, tree_hash, write
 from mini_swe_rsi.core import execution_hash as driver_execution_hash
 from mini_swe_rsi.online import OnlineError, OnlineLoop, execution_hash
 from mini_swe_rsi.driver import initial_code
@@ -522,9 +522,10 @@ def test_recovery_after_decision_does_not_repeat_task_check_or_takeover(initial_
     (proposal / "minisweagent" / "recovery_marker.py").write_text("MARKER = 1\n")
     write(proposal.parent / "candidate_identity.json", {
         "proposal": "P0001", "parent_version": "H0000",
-        "parent_hash": execution_hash(loop.active_code),
+        "parent_hash": tree_hash(loop.active_code),
         "candidate_hash": tree_hash(proposal),
-        "execution_hash": execution_hash(proposal)})
+        "execution_hash": execution_hash(proposal),
+        "plan_revision": "1"})
     write(round_dir / "diagnosis.json", {"task_id": "t1", "round_id": "R0001",
                                           "decision": "improve", "reason": "fixture",
                                           "evidence_refs": feedback["evidence_refs"],
@@ -547,11 +548,14 @@ def test_recovery_after_decision_does_not_repeat_task_check_or_takeover(initial_
                                               "current_task": "t1", "current_round": "R0001",
                                               "current_proposal": "P0001"})
     check_snapshot = {"job_id": "candidate:R0001:P0001", "task_id": "t1",
-                      "check_revision": "1", "parent_version": "H0000",
-                      "parent_hash": execution_hash(loop.active_code),
-                      "candidate_hash": execution_hash(proposal),
+                      "check_revision": "1", "round_id": "R0001", "proposal": "P0001",
+                      "parent_version": "H0000",
+                      "parent_hash": tree_hash(loop.active_code),
+                      "candidate_hash": tree_hash(proposal),
                       "parent_execution_hash": execution_hash(loop.active_code),
                       "candidate_execution_hash": execution_hash(proposal),
+                      "checked_candidate_hash": tree_hash(proposal),
+                      "checked_candidate_execution_hash": execution_hash(proposal),
                       "check": {"record": {"score": 1.0},
                                 "metrics": {"calls": 1, "tokens": 12}}}
     write(round_dir / "candidate_check.json", check_snapshot)
@@ -636,3 +640,75 @@ def test_active_source_staleness_is_rejected_on_restart(initial_tree, tmp_path):
     with pytest.raises(OnlineError, match="source or control identity|source changed|stale"):
         OnlineLoop(loop.root, ("t1",), driver=FakeDriver(("skip",)),
                    broker=FakeBroker())
+
+
+def test_active_identity_allows_explicit_empty_identities_but_requires_all_fields(
+        initial_tree, tmp_path):
+    loop = OnlineLoop(tmp_path / "run", ("t1",), active_code=initial_tree,
+                      model_identity=None, service_identity=None)
+    # ``None`` is a valid explicit identity input; its persisted digest is
+    # still required and must not be replaced by an absent field.
+    assert loop.active_code.is_dir()
+    identity_path = loop.root / "versions/H0000/version_identity.json"
+    identity = read(identity_path)
+    for key in ("control_manifest", "control_manifest_sha256",
+                "model_identity_sha256", "service_identity_sha256"):
+        missing = dict(identity)
+        missing.pop(key)
+        write(identity_path, missing)
+        with pytest.raises(OnlineError, match="control identity"):
+            _ = loop.active_code
+        write(identity_path, identity)
+
+
+@pytest.mark.parametrize("missing", ["candidate_identity.json", "candidate_check.json"])
+def test_accepted_recovery_requires_candidate_records(initial_tree, tmp_path, missing):
+    driver = FakeDriver(("accept",))
+    broker = FakeBroker()
+    loop = make_loop(tmp_path, initial_tree, driver, broker, tasks=("t1", "t2"))
+    feedback = loop.execute_task()
+    round_dir = loop._round_dir(1)
+    round_dir.mkdir(parents=True, exist_ok=True)
+    proposal = loop.root / "proposals/P0001/agent_code"
+    proposal.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copytree(loop.active_code, proposal)
+    (proposal / "minisweagent" / "recovery_marker.py").write_text("MARKER = 1\n")
+    write(proposal.parent / "candidate_identity.json", {
+        "proposal": "P0001", "parent_version": "H0000",
+        "parent_hash": tree_hash(loop.active_code),
+        "candidate_hash": tree_hash(proposal),
+        "execution_hash": execution_hash(proposal), "plan_revision": "1"})
+    write(round_dir / "candidate_check.json", {
+        "job_id": "candidate:R0001:P0001", "task_id": "t1",
+        "check_revision": "1", "round_id": "R0001", "proposal": "P0001",
+        "parent_version": "H0000", "parent_hash": tree_hash(loop.active_code),
+        "candidate_hash": tree_hash(proposal),
+        "parent_execution_hash": execution_hash(loop.active_code),
+        "candidate_execution_hash": execution_hash(proposal),
+        "checked_candidate_hash": tree_hash(proposal),
+        "checked_candidate_execution_hash": execution_hash(proposal),
+        "check": {"record": {"score": 1.0}}})
+    write(loop.root / "decisions/R0001.json", {
+        "round_id": "R0001", "task_id": "t1", "proposal": "P0001",
+        "parent_version": "H0000", "decision": "accepted"})
+    write(loop.root / "online_state.json", {
+        **loop.state, "status": "checking", "current_task": "t1",
+        "current_round": "R0001", "current_proposal": "P0001"})
+    (proposal.parent / missing if missing == "candidate_identity.json"
+     else round_dir / missing).unlink()
+    with pytest.raises(OnlineError, match="candidate identity|candidate check"):
+        OnlineLoop(loop.root, ("t1", "t2"), driver=driver, broker=broker,
+                   model_identity={"model": "fixture"},
+                   service_identity={"endpoint": "fixture"})
+
+
+def test_top_level_result_is_ignored_by_attempt_layout(tmp_path):
+    task = tmp_path / "task"
+    write(task / "host_result.json", {"record": {"score": 1}})
+    assert attempt_result_paths(task) == []
+    for name in ('attempt_10', 'attempt_2', 'attempt_0', 'attempt_old'):
+        write(task / name / 'host_result.json', {'record': {'score': 1}})
+    (task / 'attempt_1').symlink_to(task / 'attempt_0', target_is_directory=True)
+    assert [p.parent.name for p in attempt_result_paths(task)] == [
+        'attempt_0', 'attempt_2', 'attempt_10']
