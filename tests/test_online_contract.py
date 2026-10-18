@@ -11,16 +11,17 @@ from tests.test_online_state import make_loop
 
 
 @pytest.mark.parametrize('config', [
+    {'protocol': 'mini-swe-rsi-online-v4', 'check_policy': {'revision': '2'}},
     {'protocol': 'mini-swe-rsi-online-v3', 'check_policy': {'revision': '2'}},
     {'protocol': 'mini-swe-rsi-online-v2', 'check_policy': {'revision': '1', 'common_tasks': []}},
-    {'protocol': 'mini-swe-rsi-online-v2', 'online_protocol': 'mini-swe-rsi-online-v4',
+    {'protocol': 'mini-swe-rsi-online-v2', 'online_protocol': 'mini-swe-rsi-online-v5',
      'check_policy': {'revision': '2'}},
-    {'protocol': 'mini-swe-rsi-online-v4', 'online_protocol': 'mini-swe-rsi-online-v2',
+    {'protocol': 'mini-swe-rsi-online-v5', 'online_protocol': 'mini-swe-rsi-online-v2',
      'check_policy': {'revision': '2'}},
-    {'protocol': 'mini-swe-rsi-online-v4', 'check_policy': {'revision': '2', 'common_tasks': ['future']}},
-    {'protocol': 'mini-swe-rsi-online-v4', 'check_policy': {'revision': '2'}, 'common_tasks': ['future']},
-    {'protocol': 'mini-swe-rsi-online-v4', 'check_policy': None},
-    {'protocol': 'mini-swe-rsi-online-v4', 'check_policy': {'revision': '1'}},
+    {'protocol': 'mini-swe-rsi-online-v5', 'check_policy': {'revision': '2', 'common_tasks': ['future']}},
+    {'protocol': 'mini-swe-rsi-online-v5', 'check_policy': {'revision': '2'}, 'common_tasks': ['future']},
+    {'protocol': 'mini-swe-rsi-online-v5', 'check_policy': None},
+    {'protocol': 'mini-swe-rsi-online-v5', 'check_policy': {'revision': '1'}},
 ])
 def test_unsupported_contract_fails_before_data_or_model_setup(tmp_path, monkeypatch, config):
     run = tmp_path / 'run'
@@ -34,7 +35,7 @@ def test_unsupported_contract_fails_before_data_or_model_setup(tmp_path, monkeyp
     assert list(run.iterdir()) == [path]
 
 
-@pytest.mark.parametrize('protocol', ['mini-swe-rsi-online-v2', 'mini-swe-rsi-online-v3'])
+@pytest.mark.parametrize('protocol', ['mini-swe-rsi-online-v2', 'mini-swe-rsi-online-v3', 'mini-swe-rsi-online-v4'])
 @pytest.mark.parametrize('filename', ['configuration.json', 'online_state.json'])
 def test_report_cannot_relabel_an_old_online_run(tmp_path, filename, protocol):
     write(tmp_path / filename, {'protocol': protocol})

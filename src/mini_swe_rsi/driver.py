@@ -77,13 +77,27 @@ def initial_code(destination):
     for name, expected in read(ROOT/'upstream.lock.json')['mini']['files'].items():
         if digest(source/name) != expected:
             raise RuntimeError('Pinned mini source changed: ' + name)
-    destination.mkdir(parents=True)
-    shutil.copytree(source, destination / 'minisweagent', ignore=shutil.ignore_patterns('__pycache__'))
+    from .harness_seed import apply_seed_patch
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Do not publish a partial H0 if verification or patch application fails.
+    with tempfile.TemporaryDirectory(prefix='.harness-seed-', dir=destination.parent) as staging:
+        seed = Path(staging)/'agent_code'
+        package = seed/'minisweagent'
+        for name in read(ROOT/'upstream.lock.json')['mini']['files']:
+            target = package/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source/name, target)
+        apply_seed_patch(package)
+        _seed_metadata(seed)
+        seed.rename(destination)
+
+
+def _seed_metadata(destination):
     (destination / '__init__.py').write_text('')
     (destination / '__main__.py').write_text('from bridge import main\nmain(__file__)\n')
     shutil.copy(ROOT / '.upstream/mini/LICENSE.md', destination / 'LICENSE.mini')
-    (destination / 'agent_change_log.md').write_text('# H0\nOfficial pinned mini-swe-agent; no evolved strategies.\n')
-    (destination / 'description.txt').write_text('H0: official mini-swe-agent, fixed model and host execution adapter.\n')
+    (destination / 'agent_change_log.md').write_text('# H0\nPinned mini-swe-agent with reproducible accounting removal; no evolved strategies.\n')
+    (destination / 'description.txt').write_text('H0: pinned mini-swe-agent without monetary accounting, fixed model and host execution adapter.\n')
     (destination / 'README.md').write_text(
         '# Archived mini-swe-agent\nEditable implementation: minisweagent/. '
         'Text action configuration: minisweagent/config/mini_textbased.yaml. '

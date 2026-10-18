@@ -1,4 +1,4 @@
-"""The retained upstream ABI must never re-enable RSI monetary accounting."""
+"""The actual generated Harness contains no monetary implementation or placeholders."""
 import json
 import os
 import subprocess
@@ -12,22 +12,27 @@ from mini_swe_rsi.online import OnlineLoop
 
 
 @pytest.mark.parametrize('malformed', [False, True])
-def test_actual_mini_query_bypasses_price_lookup_and_retains_evidence(malformed):
-    # Isolate imports of the pinned, editable mini source from host test imports.
+def test_generated_mini_query_has_no_billing_and_retains_evidence(tmp_path, malformed):
+    from mini_swe_rsi.driver import initial_code
+
+    seed = tmp_path/'seed'
+    initial_code(seed)
+    # Import the actual generated Harness in a separate process.
     script = '''
-import runpy, sys
-from pathlib import Path
-sys.path.insert(0, str(Path(sys.argv[1])/'.upstream/mini/src'))
+import sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
 import litellm
 from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
 from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import FormatError, LimitsExceeded
-adapt = runpy.run_path(str(Path(sys.argv[1])/'runtime/bridge.py'))['disable_model_billing']
 def unexpected_price(*args, **kwargs):
     raise AssertionError('Monetary lookup must never be invoked')
 litellm.cost_calculator.completion_cost = unexpected_price
-model = adapt(LitellmTextbasedModel(model_name='openai/unpriced-fixture'))
+model = LitellmTextbasedModel(model_name='openai/unpriced-fixture')
+assert not hasattr(model, '_calculate_cost')
+assert 'cost_tracking' not in type(model.config).model_fields
 malformed = sys.argv[2] == 'True'
 response = litellm.ModelResponse(
     choices=[{'message': {'role': 'assistant', 'content': 'missing action' if malformed else
@@ -35,7 +40,8 @@ response = litellm.ModelResponse(
               'finish_reason': 'stop'}],
     usage={'prompt_tokens': 5, 'completion_tokens': 2, 'total_tokens': 7})
 model._query = lambda *args, **kwargs: response
-GLOBAL_MODEL_STATS.cost_limit = 0.000001
+assert not hasattr(GLOBAL_MODEL_STATS, 'cost')
+assert not hasattr(GLOBAL_MODEL_STATS, 'cost_limit')
 if malformed:
     try:
         model.query([{'role':'user', 'content':'task'}])
@@ -44,10 +50,12 @@ if malformed:
     else:
         raise AssertionError('Missing action must remain a format error')
 else:
-    agent = DefaultAgent(model, object(), system_template='sys', instance_template='task',
-                         cost_limit=0, step_limit=2)
-    # A stale monetary accumulator cannot stop the online agent; iteration still can.
-    agent.cost = 1000000
+    agent = DefaultAgent(model, SimpleNamespace(get_template_vars=lambda: {}, serialize=lambda: {}), system_template='sys', instance_template='task',
+                         step_limit=2)
+    assert not hasattr(agent, 'cost')
+    assert 'cost_limit' not in type(agent.config).model_fields
+    assert 'model_cost' not in agent.get_template_vars()
+    assert 'instance_cost' not in agent.serialize()['info']['model_stats']
     first = agent.query()
     assert first['extra']['actions'] == [{'command': 'echo hello'}]
     assert first['content'].startswith('candidate customization')
@@ -58,12 +66,14 @@ else:
         pass
     else:
         raise AssertionError('Iteration limit was lost')
-assert extra['cost'] == 0.0  # Required upstream ABI, never a free-service claim.
+assert 'cost' not in extra
 assert extra['response']['usage']['total_tokens'] == 7
-assert GLOBAL_MODEL_STATS.cost == 0.0
+assert GLOBAL_MODEL_STATS.n_calls == (1 if malformed else 2)
 '''
-    result = subprocess.run([sys.executable, '-c', script, str(ROOT), str(malformed)],
-                            env={**os.environ, 'LITELLM_LOCAL_MODEL_COST_MAP': 'True'},
+    result = subprocess.run([sys.executable, '-c', script, str(seed), str(malformed)],
+                            env={**os.environ, 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
+                                 'MSWEA_GLOBAL_COST_LIMIT': 'obsolete-invalid',
+                                 'MSWEA_COST_TRACKING': 'obsolete-invalid'},
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
 

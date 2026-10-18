@@ -71,7 +71,7 @@ def freeze_task_selection(data, root, task_limit=None):
 class OnlineLoop:
     """Run a fixed task sequence against one active Harness version at a time."""
 
-    protocol = 'mini-swe-rsi-online-v4'
+    protocol = 'mini-swe-rsi-online-v5'
 
     @classmethod
     def _validate_contract(cls, contract):
@@ -192,8 +192,10 @@ class OnlineLoop:
         files += [ROOT/'src/mini_swe_rsi'/name for name in
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
-                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py')]
+                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness_seed.py')]
         files += [ROOT/'upstream.lock.json']
+        files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
+                  ('mini-no-billing.patch', 'mini-no-billing.json')]
         files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
         return {'improvement': improvement_contract(),
                 'files': {str(p.relative_to(ROOT)): digest(p) for p in files if p.is_file()}}

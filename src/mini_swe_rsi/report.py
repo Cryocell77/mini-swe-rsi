@@ -8,7 +8,7 @@ from .core import read, write
 from .public_filter import public_value as _public_report_value
 
 
-_ONLINE_PROTOCOL = 'mini-swe-rsi-online-v4'
+_ONLINE_PROTOCOL = 'mini-swe-rsi-online-v5'
 _LEGACY_MARKERS = (
     'baseline.json', 'preflight.json', 'gates.json', 'champions.json',
     'recursive_track_result.json', 'verification.json', 'test_seal.json',

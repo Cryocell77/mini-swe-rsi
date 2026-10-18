@@ -501,6 +501,17 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
         assert "DOCKER_GENERATION_H2" in config2
         assert execution_hash(h0) != execution_hash(h1) != execution_hash(h2)
 
+        # Actual task, orchestrator and delegated processes emit no monetary ABI.
+        trajectories = list(root.rglob("trajectory.json"))
+        assert trajectories
+        assert any("roles" in path.parts for path in trajectories)
+        for path in trajectories:
+            trajectory = read(path)
+            assert "instance_cost" not in trajectory["info"]["model_stats"]
+            assert "cost_limit" not in trajectory["info"]["config"]["agent"]
+            assert "cost_tracking" not in trajectory["info"]["config"]["model"]
+            assert all("cost" not in msg.get("extra", {}) for msg in trajectory["messages"])
+
         events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
         model_events = [event for event in events if event.get("kind") == "model_call"]
         assert len(model_events) == len(endpoint.requests)

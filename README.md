@@ -17,7 +17,7 @@ uv pip install --python .eval-venv/bin/python --no-deps .upstream/swebench
 docker build -t mini-swe-rsi-runtime:0.1 runtime
 ```
 
-上游提交、来源与文件摘要固定在 `upstream.lock.json`；宿主依赖为 `uv.lock`，容器依赖为 `runtime/requirements.lock`，独立评分依赖为 `evaluator.lock.txt`。保留 SICA 七步、角色与任务提示原文及许可证，实际执行使用归档的官方 mini-swe-agent。
+上游提交、来源与文件摘要固定在 `upstream.lock.json`；宿主依赖为 `uv.lock`，容器依赖为 `runtime/requirements.lock`，独立评分依赖为 `evaluator.lock.txt`。保留 SICA 七步、角色与任务提示原文及许可证，实际执行使用从固定 mini-swe-agent 生成的归档 Harness；初始化时应用可追踪的计费删除补丁，不修改上游原始快照。
 
 数据默认复用 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其他位置通过 `--data PATH` 指定，数据和清单摘要必须一致。当前仍保留原固定数据集与完整镜像库存校验；在线只按冻结的开发题顺序执行，缺少任务镜像时按不可变摘要恢复。
 
@@ -30,7 +30,7 @@ uv run mini-swe-rsi report --run runs/online
 
 `--task-limit N` 冻结开发题原顺序的前 N 题；省略时使用全部开发题。三题检查使用 `--task-limit 3`。每个运行目录独占运行锁，请勿并行启动同一目录。
 
-运行仅记录 token、调用次数和耗时，不估算美元成本，也不设置费用阈值。模型服务无需提供单价或订阅声明。旧 `--billing-mode` 参数已删除，旧 `.env` 中的 `RSI_BILLING_MODE` 被忽略，无需修改配置文件。
+运行仅记录 token、调用次数和耗时，不估算美元成本，也不设置费用阈值。实际初始 Harness 已删除模型价格计算、金额累计、费用配置、模板变量及轨迹字段，不使用禁用开关或零值占位。模型服务无需提供单价或订阅声明。旧 `--billing-mode` 参数已删除，旧 `.env` 中的 `RSI_BILLING_MODE` 被忽略，无需修改配置文件。
 
 报告完全离线，生成 `online_report.json` 与 `online_report.md`，分别列出首次任务、候选检查、接任/拒绝/跳过和已发生模型消耗。原批量运行目录不能作为在线报告输入。
 
@@ -57,7 +57,7 @@ uv run mini-swe-rsi online --run runs/online
 
 已有模型工作流不能自动作为新会话重新开启。需要明确的宿主私有恢复授权时使用 `--resume-checkpoint PATH`；授权覆盖未完成的前五步和适用的未完成检查，累计调用与角色迭代继续计量。这是新模型上下文，不宣称原对话无缝续跑。
 
-当前在线合同为 `mini-swe-rsi-online-v4`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2/v3 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
+当前在线合同为 `mini-swe-rsi-online-v5`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2/v3/v4 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
 
 ## 模型与服务
 

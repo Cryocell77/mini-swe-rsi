@@ -39,17 +39,6 @@ def model_request_timeout(budget):
     return httpx.Timeout(None) if remaining is None else remaining
 
 
-def disable_model_billing(model):
-    """Bypass mini's price lookup; zero is an upstream ABI placeholder, not a tariff.
-
-    The archived mini query path requires a ``cost`` entry even for format
-    errors. Host accounting uses provider tokens only. Agents additionally use
-    ``cost_limit=0`` to disable mini's default monetary stop condition.
-    """
-    model._calculate_cost = lambda response: {'cost': 0.0}
-    return model
-
-
 def apply_model_request_timeout(model, budget):
     """Inject an unbounded timeout only at the SDK call boundary.
 
@@ -353,7 +342,7 @@ def main(entry):
             f'\nactive Harness version is {args.online_version or f"H{args.parent_iter:04d}"}; '
             'the host verifies this identity before accepting a takeover.\n')
     config['agent'].pop('mode', None)
-    config['agent'].update(step_limit=main_iterations, cost_limit=0, wall_time_limit_seconds=wall_seconds,
+    config['agent'].update(step_limit=main_iterations, wall_time_limit_seconds=wall_seconds,
                            output_path=Path(args.logdir) / 'trajectory.json')
     model_config = config['model']
     model_config.update(model_name='openai/' + os.environ['RSI_MODEL'])
@@ -364,7 +353,7 @@ def main(entry):
     environment = TaskEnvironment(
         cwd='/testbed' if args.command == 'benchmark' else args.workdir, timeout=budgets['command_default_seconds'],
         env=config['environment'].get('env', {}))
-    agent_model = apply_model_request_timeout(disable_model_billing(LitellmTextbasedModel(**model_config)), budgets)
+    agent_model = apply_model_request_timeout(LitellmTextbasedModel(**model_config), budgets)
     agent = DefaultAgent(agent_model, environment, **config['agent'])
     logs = Path(args.logdir)
     logs.mkdir(parents=True, exist_ok=True)
@@ -433,7 +422,7 @@ def main(entry):
             child_config.pop('mode', None)
             child_model_config = {**model_config, **{k:adapted['model'][k] for k in ('observation_template','format_error_template')}}
             # SICA gives each invocation an independent iteration allowance; global time stays host-owned.
-            child_config.update(step_limit=budgets['role_iterations'].get(role, budgets['main_iterations']), cost_limit=0, wall_time_limit_seconds=wall_seconds,
+            child_config.update(step_limit=budgets['role_iterations'].get(role, budgets['main_iterations']), wall_time_limit_seconds=wall_seconds,
                                 output_path=child_logs/'trajectory.json')
             child_environment = TaskEnvironment(cwd=args.workdir, timeout=budgets['command_default_seconds'],
                                env=config['environment'].get('env', {}))
@@ -441,7 +430,7 @@ def main(entry):
             child_environment.identity, child_environment.role = identity, role
             child_environment.readonly = True if readonly else 'editor'
             child_model = apply_model_request_timeout(
-                disable_model_billing(LitellmTextbasedModel(**child_model_config)), budgets)
+                LitellmTextbasedModel(**child_model_config), budgets)
             child = DefaultAgent(child_model, child_environment, **child_config)
             (child_logs/'activation.json').write_text(json.dumps({**activation, 'role':identity,
                           'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True,

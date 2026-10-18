@@ -1,5 +1,7 @@
 # 在线 RSI 计费精简验收
 
+此为提交 `95dbc9d` 的历史验收。后续按用户要求删除了实际 Harness 的计费实现和零值占位，当前方案见 [Harness 计费删除验收](online-rsi-harness-accounting-removal-review.md)。
+
 日期：2026-10-18。基点：`9d8c13a`，批次 E 已完成之后的独立补充。最新用户要求覆盖先前保留费用限制及订阅合同的约束。
 
 ## 实施范围

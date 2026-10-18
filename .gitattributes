@@ -1,0 +1,2 @@
+# Unified patches use a single space to prefix empty context lines.
+src/mini_swe_rsi/assets/*.patch whitespace=-blank-at-eol

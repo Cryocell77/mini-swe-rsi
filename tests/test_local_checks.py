@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -81,10 +80,10 @@ class Model:
     def query(self, messages):
         self.n += 1
         if self.n == 1:
-            raise FormatError({'role':'user', 'content':'missing action', 'extra':{'cost':0}})
+            raise FormatError({'role':'user', 'content':'missing action', 'extra':{}})
         if sys.argv[1] == 'fixed' and self.n == 3:
             raise InterruptAgentFlow({'role':'exit', 'content':'done', 'extra':{'exit_status':'Submitted'}})
-        return {'role':'assistant', 'content':'echo hello', 'extra':{'actions':[{'command':'echo hello'}], 'cost':0}}
+        return {'role':'assistant', 'content':'echo hello', 'extra':{'actions':[{'command':'echo hello'}]}}
     def format_message(self, **kwargs): return kwargs
     def format_observation_messages(self, message, outputs, template_vars):
         return [{'role':'user', 'content':'hello'}]
@@ -107,8 +106,10 @@ print('RESULT', result['exit_status'], 'CALLS', agent.model.n)
 @pytest.mark.parametrize('mode,expected', [('bounded','RESULT LimitsExceeded CALLS 4'), ('fixed','RESULT Submitted CALLS 3')])
 def test_original_stub_needs_explicit_termination_and_fixed_harness_finishes(tmp_path, mode, expected):
     script = tmp_path/'test_stub.py'; script.write_text(STUB_SCRIPT)
+    from mini_swe_rsi.driver import initial_code
+    seed = tmp_path/'seed'; initial_code(seed)
     result = subprocess.run([sys.executable, str(script), mode],
-                            env={**os.environ, 'PYTHONPATH':str(ROOT/'.upstream/mini/src')},
+                            env={**os.environ, 'PYTHONPATH':str(seed)},
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert expected in result.stdout
@@ -126,8 +127,8 @@ def test_real_loop_stops_before_oom_and_next_tool_can_read_saved_prefix(tmp_path
         OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='fixture', LOCAL_LLM_MODEL='fixture'))
     client = docker.from_env()
     driver = SimpleNamespace(client=client, image=client.images.get('mini-swe-rsi-runtime:0.1'), running=[])
-    candidate = tmp_path/'candidate'; candidate.mkdir()
-    shutil.copytree(ROOT/'.upstream/mini/src/minisweagent', candidate/'minisweagent')
+    from mini_swe_rsi.driver import initial_code
+    candidate = tmp_path/'candidate'; initial_code(candidate)
     (candidate/'loop.py').write_text(STUB_SCRIPT)
     source_hash = hashlib.sha256((candidate/'loop.py').read_bytes()).hexdigest()
     logs = tmp_path/'logs'

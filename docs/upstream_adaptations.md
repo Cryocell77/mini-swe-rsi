@@ -158,3 +158,10 @@ ContextBudget 只接收显式 provider 能力，删除历史隐式容量分支�
 按最新用户要求删除宿主单价、美元累计、费用阈值、订阅模式及相关反馈／报告字段。所有服务继续通过原有认证容量与身份核验；价格变化不再改变 SenseNova 身份。在线合同升为 `mini-swe-rsi-online-v4`，资源政策为 `sica-budget-scopes-v2`；旧 v2/v3 目录拒绝恢复和重新报告。七步 improvement v6 与检查政策 revision 2 不变。
 
 固定上游 mini/SICA 原文保持。bridge 对主角色和子角色实例绕过 mini `_calculate_cost`，保留查询所必需的 `cost: 0.0` 接口占位，并显式 `cost_limit=0` 禁用默认限制；这不声明服务免费。第三方 LiteLLM 的内部元数据和原始响应可能仍含成本字段，不参与宿主计费或验收。`LITELLM_LOCAL_MODEL_COST_MAP=True` 保留用于阻止 SDK 导入时联网获取其内置元数据，避免破坏容器网络隔离。具体范围和验证见 [online-rsi-billing-removal-review.md](online-rsi-billing-removal-review.md)。
+
+
+### 2026-10-18 实际 Harness 计费删除补丁
+
+用户进一步要求彻底移除实际 Harness 计费实现。H0 先核验固定 mini 原始文件，再在临时目录应用 `mini-no-billing-v1` 补丁，检查补丁本身、输入文件和输出文件摘要，全部成功后才发布归档。补丁覆盖 16 个 Python 文件和 7 个 YAML 配置：移除各模型价格计算／费用注册配置、Agent 金额累计与费用限制、相关模板变量／轨迹字段、测试模型、交互与附带运行入口的计费参数／显示；全局调用计数继续执行。上游原文、许可证、依赖锁与历史运行保持。
+
+bridge 不再替换 `_calculate_cost`、返回 `cost: 0.0` 或注入 `cost_limit=0`。运行模型、动作解析与角色配置仍来自所选归档；补丁只应用于新 H0，不重写已演化候选。宿主完整控制摘要冻结补丁、逐文件清单及生成实现。在线合同升为 v5，旧 v2/v3/v4 不自动迁移；资源政策 v2、检查政策 revision 2、七步 improvement v6 保持。见 [Harness 计费删除验收](online-rsi-harness-accounting-removal-review.md)。
