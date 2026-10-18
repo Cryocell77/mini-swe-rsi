@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .core import read, write
 from .public_filter import public_value as _public_report_value
-from .online_contract import ONLINE_PROTOCOL, validate_online_contract
+from .online_contract import validate_online_contract
 
 
 _LEGACY_MARKERS = (
@@ -32,9 +32,7 @@ def _ensure_online_root(root):
         state = read(state_path)
         if not isinstance(state, dict):
             raise ValueError('Online state must be a JSON object')
-        if state.get('protocol') != ONLINE_PROTOCOL:
-            raise ValueError(
-                f'Unsupported online protocol {state.get("protocol")!r}; reports require {ONLINE_PROTOCOL}')
+        validate_online_contract(state, require_policy=False)
     for marker in _LEGACY_MARKERS:
         if (root/marker).exists():
             raise ValueError(f'Refusing to report a legacy native run as online: {marker}')
@@ -104,7 +102,7 @@ def build_online_report(root):
     result.update(total_model_calls=usage['calls'], total_tokens=usage['tokens'],
                   usage=usage, usage_by_activity=by_activity,
                   token_accounting_complete=log_complete and usage['unmetered_calls'] == 0,
-                  event_log_complete=log_complete, test_sealed=True,
+                  event_log_complete=log_complete,
                   interpretation='First task attempts and post-feedback checks are separate. Online acceptance does not establish general RSI benefit.')
     if (root/'failure.json').exists():
         result['failure'] = _public_report_value(read(root/'failure.json'))

@@ -29,14 +29,13 @@ def _prelaunch_driver(tmp_path):
 
 
 def _online_args(version='H0000'):
-    return ['improve', '--parent-iter', '0', '--best-iter', '0',
-            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+    return ['improve', '--parent-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', version]
 
 
 def test_online_improvement_prompt_binds_task_round_and_version():
     render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-    prompt = render(2, 2, 2, 'P0001', ROOT/'vendor/sica/agent_main.py',
+    prompt = render(2, 'P0001', ROOT/'vendor/sica/agent_main.py',
                     task_id='task-1', round_id='R0001', version='H0002',
                     feedback='Observed public failure')
     assert 'task-1' in prompt and 'R0001' in prompt and 'H0002' in prompt
@@ -72,7 +71,7 @@ def test_existing_online_workflow_evidence_cannot_be_overwritten(tmp_path):
     assert (logs/'result.json').read_text().find('TimeExceeded') >= 0
 
 
-def test_online_improvement_rejects_parent_and_proposer_identity_mismatch(tmp_path):
+def test_online_improvement_rejects_removed_iteration_aliases(tmp_path):
     from mini_swe_rsi.driver import Driver, initial_code
 
     code = tmp_path/'code'
@@ -80,10 +79,22 @@ def test_online_improvement_rejects_parent_and_proposer_identity_mismatch(tmp_pa
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
     args = ['improve', '--parent-iter', '0', '--best-iter', '1',
-            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+            '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', 'H0000']
-    with pytest.raises(RuntimeError, match='parent|proposer|best'):
+    with pytest.raises(RuntimeError, match='best/current'):
         driver.controller(code, tmp_path/'logs', args, 'fixture')
+
+
+@pytest.mark.parametrize('removed', ['--best-iter', '--current-iter',
+                                     '--best-iter=1', '--current-iter=1'])
+def test_driver_rejects_removed_iteration_alias_forms(tmp_path, removed):
+    from mini_swe_rsi.driver import Driver, initial_code
+
+    code = tmp_path/'code'
+    initial_code(code)
+    driver = Driver.__new__(Driver)
+    with pytest.raises(RuntimeError, match='best/current'):
+        driver.controller(code, tmp_path/'logs', _online_args() + [removed], 'fixture')
 
 
 @pytest.mark.parametrize('case', ['version_label', 'selected_path', 'inactive_version'])
@@ -122,8 +133,7 @@ def test_online_renderer_contract_change_is_rejected_before_runtime_setup(tmp_pa
     monkeypatch.setattr('mini_swe_rsi.driver.improvement_contract', lambda: changed)
     driver = Driver.__new__(Driver)
     driver.root = tmp_path
-    args = ['improve', '--parent-iter', '0', '--best-iter', '0',
-            '--current-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
+    args = ['improve', '--parent-iter', '0', '--candidate-id', 'P0001', '--task-id', 'task',
             '--round-id', 'R0001', '--online-version', 'H0000']
     with pytest.raises(RuntimeError, match='Frozen improvement task contract'):
         driver.controller(code, tmp_path/'logs', args, 'fixture')
@@ -140,11 +150,11 @@ def _bridge_entry(monkeypatch, argv):
 
 
 def _improvement_argv(tmp_path, **overrides):
-    values = {'parent': '0', 'best': '0', 'candidate': 'P0001', 'task': 'task',
+    values = {'parent': '0', 'candidate': 'P0001', 'task': 'task',
               'round': 'R0001', 'version': 'H0000', 'prompt': '/task.txt'}
     values.update(overrides)
     argv = ['improve', '--logdir', str(tmp_path/'logs'),
-            '--parent-iter', values['parent'], '--best-iter', values['best'],
+            '--parent-iter', values['parent'],
             '--candidate-id', values['candidate'], '--task-id', values['task'],
             '--round-id', values['round'], '--online-version', values['version'],
             '--prompt-file', values['prompt']]
@@ -153,7 +163,7 @@ def _improvement_argv(tmp_path, **overrides):
 
 def test_improvement_entry_requires_full_identity_before_model_setup(tmp_path, monkeypatch):
     argv = ['improve', '--logdir', str(tmp_path/'logs'), '--parent-iter', '0',
-            '--best-iter', '0', '--candidate-id', 'P0001', '--prompt-file', '/task.txt']
+            '--candidate-id', 'P0001', '--prompt-file', '/task.txt']
     main = _bridge_entry(monkeypatch, argv)
     with pytest.raises(ValueError, match='task_id, round_id, online_version'):
         main(str(tmp_path/'missing-entry'))
@@ -164,9 +174,20 @@ def test_improvement_entry_rejects_wrong_version_or_proposer_before_model_setup(
     wrong_version = _improvement_argv(tmp_path, version='H0005')
     with pytest.raises(ValueError, match='must equal H0000'):
         _bridge_entry(monkeypatch, wrong_version)(str(tmp_path/'missing-entry'))
-    wrong_proposer = _improvement_argv(tmp_path, best='1')
-    with pytest.raises(ValueError, match='parent and proposer'):
+    wrong_proposer = _improvement_argv(tmp_path)
+    wrong_proposer += ['--best-iter', '1']
+    with pytest.raises(SystemExit):
         _bridge_entry(monkeypatch, wrong_proposer)(str(tmp_path/'missing-entry'))
+    assert not (tmp_path/'logs').exists()
+
+
+@pytest.mark.parametrize('removed', ['--best-iter', '--current-iter',
+                                     '--best-iter=1', '--current-iter=1'])
+def test_bridge_rejects_removed_iteration_alias_forms(tmp_path, monkeypatch, removed):
+    argv = _improvement_argv(tmp_path) + [removed]
+    with pytest.raises(SystemExit) as exc:
+        _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
+    assert exc.value.code == 2
     assert not (tmp_path/'logs').exists()
 
 

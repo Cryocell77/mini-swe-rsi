@@ -52,14 +52,14 @@ def test_structured_submission_preserves_complete_report_for_every_role(tmp_path
     assert flow.status not in ('completed', 'skipped_no_actionable_improvement')
 
 
-def test_structured_submission_accepts_exact_prefixed_legacy_report(tmp_path):
+def test_structured_submission_rejects_exact_prefixed_legacy_report(tmp_path):
     flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
     report = w.FINAL_OUTPUT_SENTINEL + '\nlegacy complete'
 
     output = flow.execute(command({'op': 'submit', 'report': report}), True, 'reviewer')
 
-    assert output == {'output': report + '\n', 'returncode': 0}
-    assert output['output'].count(w.FINAL_OUTPUT_SENTINEL) == 1
+    assert output['returncode'] == 1
+    assert flow.active is None and flow.completed_steps == 0
 
 
 def test_raw_json_submission_reaches_mini_without_shell_tokenization(tmp_path):

@@ -31,7 +31,7 @@ def online_archive_view(source, destination):
         if (source/name).exists():
             files.append(source/name)
     for path in (source/'tasks').glob('*') if (source/'tasks').exists() else []:
-        for name in ('public_feedback.json', 'trace.txt', 'execution_tree.txt',
+        for name in ('public_feedback.json', 'trace.txt',
                      'patch.diff', 'answer.txt', 'activation.json', 'execution_summary.json'):
             item = path/name
             if item.exists() and item.is_file():

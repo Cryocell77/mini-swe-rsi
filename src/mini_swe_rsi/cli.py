@@ -21,7 +21,7 @@ def main():
         if args.command == 'report':
             from .report import build_online_report
             result = build_online_report(root)
-            print(json.dumps({k: result.get(k) for k in ('test_sealed','total_model_calls','total_tokens','failure')}, ensure_ascii=False))
+            print(json.dumps({k: result.get(k) for k in ('total_model_calls','total_tokens','failure')}, ensure_ascii=False))
             return
         try:
             previous_failure = root/'failure.json'

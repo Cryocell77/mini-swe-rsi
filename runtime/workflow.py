@@ -23,6 +23,11 @@ class WorkflowTransportError(RuntimeError):
     """A model transport failure that must stop the parent agent immediately."""
 
 
+_SOURCE_HASH = runpy.run_path(str(Path(__file__).with_name('source_hash.py')))
+execution_hash = _SOURCE_HASH['execution_hash']
+candidate_source_hash = _SOURCE_HASH['candidate_source_hash']
+
+
 def is_model_request_exception(exc):
     """Recognize provider and HTTP transport failures as process-fatal."""
     cls = type(exc)
@@ -30,38 +35,6 @@ def is_model_request_exception(exc):
             or cls.__name__ in {'APIError', 'APITimeoutError', 'Timeout', 'TimeoutException',
                                 'ConnectError', 'ConnectTimeout', 'ReadTimeout',
                                 'RemoteProtocolError'})
-
-
-def execution_hash(path):
-    """Hash the selected runtime files using the host's execution identity rules."""
-    root = Path(path)
-    if not root.exists() or not root.is_dir():
-        return None
-    excluded_root = {'README.md', 'LICENSE.mini', 'description.txt', 'agent_change_log.md'}
-    digest = hashlib.sha256()
-    for item in sorted(root.rglob('*')):
-        if (not item.is_file() or item.is_symlink() or '__pycache__' in item.parts):
-            continue
-        relative = item.relative_to(root)
-        if relative.parts and relative.parts[0] != 'minisweagent' and item.name not in ('__init__.py', '__main__.py'):
-            continue
-        if len(relative.parts) == 1 and item.name in excluded_root:
-            continue
-        digest.update(str(relative).encode() + b'\0' + item.read_bytes())
-    return digest.hexdigest()
-
-
-def candidate_source_hash(path):
-    """Hash every regular file in a candidate tree for resume authorization."""
-    root = Path(path)
-    if not root.exists() or not root.is_dir():
-        return None
-    digest = hashlib.sha256()
-    for item in sorted(root.rglob('*')):
-        if not item.is_file() or item.is_symlink() or '__pycache__' in item.parts:
-            continue
-        digest.update(str(item.relative_to(root)).encode() + b'\0' + item.read_bytes())
-    return digest.hexdigest()
 
 
 def definitions(source=SOURCE):
@@ -101,10 +74,10 @@ def instructions(role="orchestrator"):
 sica-workflow {"op":"..."}
 Use one raw JSON object directly after sica-workflow, without shell quoting.
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
-{"op":"submit","report":"<full non-empty report>"},
+{"op":"submit","report":"<full non-empty report body; omit the completion sentinel>"},
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
-Use sica-workflow only for structured operations. Every role finishes with the structured submit operation and its complete non-empty report; the host adds the mini completion sentinel. Arbitrary bash is unavailable to restricted roles; editing roles may use normal mini bash only during their allowed editing steps. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and have no additional global/stage deadline.
+Use sica-workflow only for structured operations. Every role finishes with the structured submit operation and its complete non-empty report; the report is the raw report body and must not include the COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT sentinel because the host adds it. Arbitrary bash is unavailable to restricted roles; editing roles may use normal mini bash only during their allowed editing steps. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and have no additional global/stage deadline.
 Read-only inspection operations: {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
 Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
 Compatibility: online public file views use these read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The old echo/printf sentinel forms are unsupported. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
@@ -112,7 +85,7 @@ Compatibility: online public file views use these read/list/search operations; e
         start = text.index('Operations:')
         stop = text.index('Read-only inspection operations:')
         capabilities = ('This delegated role cannot invoke, inspect, or complete the parent reasoning structure. '
-                        'It may finish its own run with {"op":"submit","report":"<full non-empty report>"}; '
+                        'It may finish its own run with {"op":"submit","report":"<full non-empty report body; omit the completion sentinel>"}; '
                         'Each role invocation has its independent SICA iteration allowance (software_developer 1000; other roles 500), '
                         'up to five provider requests per completion. Commands have a 600-second tool safety timeout; output and context '
                         'capacities come from the frozen model declaration. No additional global/stage time limit applies. ')
@@ -211,7 +184,7 @@ def role_templates(config, role):
         + '\n' + role_definition['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role))
     adapted['agent']['instance_template'] = '{{task}}\nShared session at role start: {{session_status}}'
     example = 'sica-workflow {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":40}'
-    submission_example = 'sica-workflow {"op":"submit","report":"<full non-empty report>"}'
+    submission_example = 'sica-workflow {"op":"submit","report":"<full non-empty report body; omit the completion sentinel>"}'
     operation_error_guidance = ('For structured-operation errors, use this valid inspection syntax: '
         if role in ('software_developer','general_problem_solver') else 'Use a supported inspection operation or exact final submission. Valid inspection syntax: ')
     adapted['model']['observation_template'] = ("<returncode>{{output.returncode}}</returncode>\n"
@@ -224,7 +197,7 @@ def role_templates(config, role):
         "Return exactly one complete mswea_bash_command block, with a THOUGHT before it. "
         "Use one structured command, for example:\n```mswea_bash_command\n" + example + "\n```\n"
         "Do not append shell pipes or redirects to structured commands. For final submission use this structured command: "
-        'sica-workflow {"op":"submit","report":"<full non-empty report>"}. '
+        'sica-workflow {"op":"submit","report":"<full non-empty report body; omit the completion sentinel>"}. '
         "The JSON must be raw and directly follow sica-workflow; shell-quoted JSON and echo/printf submissions are unsupported.")
     return adapted
 
@@ -880,15 +853,11 @@ class Workflow:
         prefix = FINAL_OUTPUT_SENTINEL + '\n'
         if type(report) is not str or not report.strip():
             raise ValueError('report must be a non-empty string')
-        if report == FINAL_OUTPUT_SENTINEL:
+        if report.strip() == FINAL_OUTPUT_SENTINEL:
             raise ValueError('report must contain a non-empty submission')
-        if report.startswith(prefix):
-            body = report[len(prefix):]
-            if not body.strip():
-                raise ValueError('report must contain a non-empty submission')
-            output = report
-        else:
-            output = prefix + report
+        if report.startswith(FINAL_OUTPUT_SENTINEL):
+            raise ValueError('report must be the raw report body without the completion sentinel')
+        output = prefix + report
         return {'output':output + '\n','returncode':0}
 
     def execute(self, action, readonly=False, role=None):
@@ -927,7 +896,7 @@ class Workflow:
             if readonly and readonly != 'editor':
                 raise ValueError(
                     'Role permits only sica-workflow followed by one raw JSON object; '
-                    'use {"op":"submit","report":"<full non-empty report>"} to finish')
+                    'use {"op":"submit","report":"<full non-empty report body; omit the completion sentinel>"} to finish')
             if not self.active or self.active['index'] not in (3, 4, 5, 6):
                 raise ValueError('Shell is unavailable outside steps 4-7; only step 4 permits source edits')
             self.assert_stage_source()

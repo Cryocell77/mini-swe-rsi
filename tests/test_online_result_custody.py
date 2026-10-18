@@ -3,7 +3,7 @@ import shutil
 
 import pytest
 
-from mini_swe_rsi.core import read, tree_hash, write
+from mini_swe_rsi.core import read, result_matches_source, tree_hash, write
 from mini_swe_rsi.driver import Driver, GradingUnavailable, InfrastructureError
 from mini_swe_rsi.online import OnlineError
 from tests.test_online_state import make_loop
@@ -47,7 +47,47 @@ def test_feedback_and_parent_record_select_the_same_matching_attempt(tmp_path):
     task = loop.root / 'tasks/0001-t1'
     assert read(task / 'execution_summary.json')['attempt'] == 'attempt_1'
     assert (task / 'trace.txt').read_text() == 'matching second attempt evidence'
-    assert loop._load_parent_record(feedback)['score'] == feedback['record']['score'] == 0
+    assert loop._load_parent_hash(feedback) == feedback['full_source_hash']
+
+
+@pytest.mark.parametrize('mutation', ['missing_record', 'wrong_task', 'wrong_score'])
+def test_parent_hash_requires_matching_nested_feedback_record(tmp_path, mutation):
+    loop = make_loop(tmp_path)
+    feedback = loop.execute_task()
+    host_path = loop._task_dir(0, 't1') / 'attempt_0/host_result.json'
+    host = read(host_path)
+    if mutation == 'missing_record':
+        host.pop('record')
+    elif mutation == 'wrong_task':
+        host['record']['problem_id'] = 'other-task'
+    else:
+        host['record']['score'] = 99
+    write(host_path, host)
+    with pytest.raises(OnlineError, match='Parent task result'):
+        loop._load_parent_hash(feedback)
+
+
+def test_existing_summary_requires_complete_current_identity_and_is_not_overwritten(tmp_path):
+    loop = make_loop(tmp_path)
+    feedback = loop.execute_task()
+    summary_path = loop._task_dir(0, 't1') / 'execution_summary.json'
+    original = read(summary_path)
+    broken = dict(original)
+    broken.pop('attempt')
+    write(summary_path, broken)
+    with pytest.raises(OnlineError, match='summary identity'):
+        loop._feedback('t1', 0, loop._task_dir(0, 't1'))
+    assert read(summary_path) == broken
+
+
+def test_result_source_identity_requires_only_complete_code_hash():
+    assert result_matches_source({'code_hash': 'full'}, 'full')
+    assert not result_matches_source({'code_hash': 'different'}, 'full')
+    for record in ({'execution_hash': 'full'},
+                   {'code_hash': 'full', 'execution_hash': 'stale'},
+                   {'code_hash': 'full', 'full_source_hash': 'full'}):
+        with pytest.raises(ValueError, match='non-canonical'):
+            result_matches_source(record, 'full')
 
 
 def test_candidate_metadata_cannot_fall_back_to_an_unmatched_top_level_record(tmp_path, monkeypatch):
@@ -65,7 +105,7 @@ def test_candidate_metadata_cannot_fall_back_to_an_unmatched_top_level_record(tm
     monkeypatch.setattr('mini_swe_rsi.driver.validate_code', lambda _: None)
     monkeypatch.setattr(driver, 'task_retry', lambda *args, **kwargs: record)
     with pytest.raises(InfrastructureError, match='no matching completed host result'):
-        driver.candidate_check(code, 't1', output, job_id='check')
+        driver.candidate_check(code, 't1', output, job_id='check', parent_hash=tree_hash(code))
     assert not (tmp_path / 'private/candidate_checks/check.json').exists()
 
 

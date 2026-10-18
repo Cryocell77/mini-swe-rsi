@@ -30,7 +30,7 @@ def test_public_online_archive_whitelist_and_frozen_view(tmp_path):
     assert tree_hash(view/'versions/H0000/agent_code') == tree_hash(code)
     names = {p.name for p in view.rglob('*') if p.is_file()}
     assert {'configuration.json','online_state.json','public_feedback.json','patch.diff'} <= names
-    assert not {'raw_response.json'} & names
+    assert not {'raw_response.json', 'execution_tree.txt'} & names
     assert online_archive_view(source, view) == view
     (view/'tasks/0001-task/patch.diff').write_text('modified')
     with pytest.raises(RuntimeError, match='Frozen'):

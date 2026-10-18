@@ -203,13 +203,13 @@ def test_host_and_container_resume_prompt_bytes_match(tmp_path):
     authorization = {'state': state, 'candidate_source_sha256': 'candidate-source'}
     kwargs = dict(upstream=ROOT / 'vendor/sica/agent_main.py',
                   budget={'session_remaining_seconds': None}, task_id='t1', round_id='R0001', version='H0000', feedback='public facts')
-    host_base = b.improvement_prompt(0, 0, 0, 'P0001', **kwargs)
-    container_base = b.improvement_prompt(0, 0, 0, 'P0001', **kwargs)
+    host_base = b.improvement_prompt(0, 'P0001', **kwargs)
+    container_base = b.improvement_prompt(0, 'P0001', **kwargs)
     assert host_base.encode() == container_base.encode()
     assert b.resume_prompt(host_base, authorization).encode() == b.resume_prompt(
         container_base, authorization).encode()
     # Resume state remains an optional host-only continuation input.
-    legacy = b.improvement_prompt(0, 0, 0, 'P0001', **kwargs,
+    legacy = b.improvement_prompt(0, 'P0001', **kwargs,
                                   resume_state=state, resume_source_exists=True)
     assert legacy.encode() == b.resume_prompt(host_base, authorization).encode()
 

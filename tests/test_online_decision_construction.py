@@ -43,7 +43,10 @@ def _prepare_checking_recovery(tmp_path):
     write(loop.root / 'candidate_checks/candidate:R0001:P0001.json', {
         'status': 'completed', 'job_id': job_id,
         'metadata': {'job_id': job_id, 'task_id': 't1', 'round_id': 'R0001',
-                     'candidate': 'P0001', 'parent_version': 'H0000'},
+                     'candidate': 'P0001', 'parent_version': 'H0000',
+                     'check_revision': '1', 'stage': 'candidate_check',
+                     'agent': 'main', 'role': 'orchestrator',
+                     'session_token_sha256': '0' * 64},
         'result': {'record': {'problem_id': 't1', 'score': 1.0}},
     })
     write(round_dir / 'candidate_check.json', {

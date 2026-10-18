@@ -1,15 +1,14 @@
 """Shared online identity and policy checks; reporting may omit a policy."""
 
-ONLINE_PROTOCOL = 'mini-swe-rsi-online-v7'
+ONLINE_PROTOCOL = 'mini-swe-rsi-online-v8'
 CHECK_POLICY_REVISION = '2'
 
 
 def validate_online_contract(contract, *, require_policy=True, error_type=ValueError):
     if not isinstance(contract, dict):
         raise error_type('Online contract must be an object')
-    keys = ('protocol', 'online_protocol')
-    if (not any(key in contract for key in keys)
-            or any(contract[key] != ONLINE_PROTOCOL for key in keys if key in contract)):
+    if ('online_protocol' in contract
+            or contract.get('protocol') != ONLINE_PROTOCOL):
         raise error_type(f'Unsupported online protocol; only {ONLINE_PROTOCOL} is accepted')
     if 'common_tasks' in contract:
         raise error_type('Online contract common_tasks is unsupported')

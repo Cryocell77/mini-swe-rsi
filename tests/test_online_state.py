@@ -50,7 +50,7 @@ class Driver:
         output = Path(output)
         (output / 'attempt_0').mkdir(parents=True, exist_ok=True)
         record = {'problem_id': task_id, 'score': 0.0}
-        execution = {'code_hash': execution_hash(code), 'record': record}
+        execution = {'code_hash': tree_hash(code), 'record': record}
         if self.tamper_task:
             execution['code_hash'] = 'wrong'
         write(output / 'attempt_0/task_execution.json', execution)
@@ -58,8 +58,8 @@ class Driver:
         write(output / 'attempt_0/activation.json', {'command': 'benchmark'})
         root = output.parents[1]
         write(root / 'private/task_grading' / output.relative_to(root) / 'attempts.json', [])
-        for name, value in {'trace.txt': 'trace', 'execution_tree.txt': 'tree',
-                            'patch.diff': '', 'answer.txt': 'answer'}.items():
+        for name, value in {'trace.txt': 'trace', 'patch.diff': '',
+                            'answer.txt': 'answer'}.items():
             (output / 'attempt_0' / name).write_text(value)
         return record
 
@@ -128,10 +128,10 @@ class Driver:
         return 0, ''
 
     def candidate_check(self, candidate, task_id, output, *, job_id=None,
-                        parent_record=None, check_revision='1', parent_code=None,
+                        parent_hash, check_revision='1', parent_code=None,
                         mechanism_plan=None):
         self.check_calls.append((Path(candidate), {
-            'job_id': job_id, 'parent_record': parent_record,
+            'job_id': job_id, 'parent_hash': parent_hash,
             'check_revision': check_revision, 'parent_code': parent_code,
             'mechanism_plan': mechanism_plan,
         }))
@@ -140,17 +140,15 @@ class Driver:
         attempt = output / 'attempt_0'
         write(attempt / 'host_result.json', {
             'record': record, 'code_hash': tree_hash(candidate),
-            'execution_hash': execution_hash(candidate),
             'result': {'exit_status': 'Submitted'},
         })
-        write(attempt / 'task_execution.json', {'code_hash': tree_hash(candidate),
-                                                'execution_hash': execution_hash(candidate)})
+        write(attempt / 'task_execution.json', {'code_hash': tree_hash(candidate)})
         write(attempt / 'activation.json', {'command': 'benchmark'})
         root = output.parents[2]
         write(root / 'private/candidate_checks' / (str(job_id).replace('/', '_') + '.json'),
               {'job_id': job_id, 'task_id': task_id, 'check_revision': str(check_revision),
                'candidate_hash': tree_hash(candidate), 'execution_hash': execution_hash(candidate),
-               'parent_hash': parent_record.get('code_hash') if parent_record else None,
+               'parent_hash': parent_hash,
                'record': record})
         return {'job_id': job_id, 'task_id': task_id,
                 'check_revision': str(check_revision),
@@ -304,7 +302,7 @@ def test_recovery_with_execution_evidence_resumes_host_grading(tmp_path):
     task_dir = loop._task_dir(0, 't1')
     task_dir.mkdir(parents=True, exist_ok=True)
     write(task_dir / 'attempt_0/task_execution.json', {
-        'code_hash': execution_hash(loop.active_code),
+        'code_hash': tree_hash(loop.active_code),
         'record': {'problem_id': 't1', 'score': 0.0},
     })
     write(loop.root / 'online_state.json', {

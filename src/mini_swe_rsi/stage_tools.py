@@ -47,7 +47,6 @@ class StageTools:
         self.step = None
 
     def command(self, command, seconds):
-        import subprocess
         step = stage_permissions(self.logs)
         if step != self.step:
             self.close()

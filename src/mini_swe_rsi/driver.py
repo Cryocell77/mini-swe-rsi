@@ -202,9 +202,10 @@ class Driver:
             parent = int(argument('--parent-iter'))
             if parent < 0:
                 raise RuntimeError('Online improvement parent version must be non-negative')
-            proposer = int(argument('--best-iter'))
-            if proposer != parent:
-                raise RuntimeError('Online improvement requires parent and proposer to be the same version')
+            if any(option == value or value.startswith(option + '=')
+                   for value in command_args for option in ('--best-iter', '--current-iter')):
+                raise RuntimeError('Online improvement best/current iteration options were removed')
+            proposer = parent
             candidate = argument('--candidate-id')
             task_id = argument('--task-id')
             round_id = argument('--round-id')
@@ -212,7 +213,6 @@ class Driver:
             expected_version = f'H{parent:04d}'
             if version != expected_version:
                 raise RuntimeError('Online improvement version does not match parent version')
-            relative = None
             resume = None
             if resume_checkpoint is not None:
                 if target is None:
@@ -239,8 +239,7 @@ class Driver:
             render_kwargs.update(task_id=task_id, round_id=round_id, version=version)
             if prompt is not None and Path(prompt).exists():
                 render_kwargs['feedback'] = Path(prompt).read_text()
-            rendered = render(proposer, int(argument('--current-iter')), parent, candidate,
-                              ROOT/'vendor/sica/agent_main.py', **render_kwargs)
+            rendered = render(parent, candidate, ROOT/'vendor/sica/agent_main.py', **render_kwargs)
             if resume is not None:
                 rendered = runpy.run_path(str(ROOT/'runtime/bridge.py'))['resume_prompt'](rendered, resume)
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
@@ -249,6 +248,7 @@ class Driver:
                              'renderer_sha256': contract['renderer_sha256'],
                              'upstream_task_sha256': contract['upstream_task_sha256'],
                              'workflow_sha256':contract['workflow_sha256'],
+                             'source_hash_sha256':contract['source_hash_sha256'],
                              'relay_sha256':contract['relay_sha256'],
                              'workflow_sources':contract['workflow_sources']}
             task_identity.update(task_id=task_id, round_id=round_id,
@@ -427,7 +427,7 @@ class Driver:
             if (output / 'trajectory.json').exists():
                 saved = read(output / 'trajectory.json')
                 transcript = '\n\n'.join(str(m.get('content', '')) for m in saved.get('messages', []))
-            for filename, content in [('trace.txt', transcript), ('execution_tree.txt', transcript),
+            for filename, content in [('trace.txt', transcript),
                                       ('answer.txt', result.get('submission', ''))]:
                 if not (output / filename).exists():
                     (output / filename).write_text(content)
@@ -496,14 +496,14 @@ class Driver:
                     prior = read_regular_json(attempt_dir/'host_result.json')
                     if prior is None:
                         raise GradingUnavailable('Completed task result is not a regular host record')
-                    if prior.get('code_hash') != tree_hash(code):
+                    if not result_matches_source(prior, tree_hash(code), error_type=GradingUnavailable):
                         raise GradingUnavailable('Completed task source changed; refusing mixed-version results')
                     return prior['record']
                 if (attempt_dir/'task_execution.json').exists():
                     saved = read_regular_json(attempt_dir/'task_execution.json')
                     if saved is None:
                         raise GradingUnavailable('Saved task execution is not a regular host record')
-                    if saved['code_hash'] != tree_hash(code):
+                    if not result_matches_source(saved, tree_hash(code), error_type=GradingUnavailable):
                         raise GradingUnavailable('Saved task source changed before grading recovery')
                     return self.finish_task(task_id, attempt_dir,
                                            grading_namespace=grading_namespace)
@@ -632,7 +632,7 @@ class Driver:
                 'candidate_passed': candidate_status == 0}
 
     def candidate_check(self, candidate, task_id, output, *, job_id=None,
-                        parent_record=None, check_revision='1', parent_code=None,
+                        parent_hash, check_revision='1', parent_code=None,
                         mechanism_plan=None):
         """Run a candidate in a fresh task process and return an immutable check.
 
@@ -643,6 +643,10 @@ class Driver:
         """
         candidate = Path(candidate).resolve()
         output = Path(output).resolve()
+        if not isinstance(parent_hash, str) or not parent_hash:
+            raise InfrastructureError('Candidate check requires a parent source hash')
+        if parent_code is not None and tree_hash(parent_code) != parent_hash:
+            raise InfrastructureError('Candidate check parent source hash differs')
         validate_code(candidate)
         before = tree_hash(candidate)
         execution_before = execution_hash(candidate)
@@ -658,15 +662,15 @@ class Driver:
         for path in attempt_result_paths(output):
             evidence_candidate = read_regular_json(path)
             if (evidence_candidate is not None
-                    and evidence_candidate.get('record') == result
-                    and result_matches_source(evidence_candidate, {before, execution_before})):
+                    and result_matches_source(evidence_candidate, before, error_type=InfrastructureError)
+                    and evidence_candidate.get('record') == result):
                 host, evidence = path, evidence_candidate
                 break
         if evidence is None:
             raise InfrastructureError('Candidate check has no matching completed host result')
         private = {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
                    'candidate_hash':after, 'execution_hash':execution_after,
-                   'parent_hash':parent_record.get('code_hash') if parent_record else None,
+                   'parent_hash':parent_hash,
                    'record':result, 'grade':evidence.get('grade'),
                    'execution_status':evidence.get('result',{}).get('exit_status'),
                    'metrics':evidence.get('metrics'), 'evidence_path':str(host)}
@@ -691,7 +695,7 @@ class Driver:
                 public_metrics[key] = metrics[key]
         return {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
                 'candidate_hash':after, 'execution_hash':execution_after,
-                'parent_hash':parent_record.get('code_hash') if parent_record else None,
+                'parent_hash':parent_hash,
                 'score':result.get('score'), 'passed':bool(result.get('score')),
                 'execution_status':evidence.get('result',{}).get('exit_status'),
                 'metrics':public_metrics, 'mechanism_check':mechanism}

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mini_swe_rsi.core import ROOT, digest, execution_hash as driver_execution_hash, read, tree_hash, write
+from mini_swe_rsi.core import ROOT, digest, read, tree_hash, write
 from mini_swe_rsi.recovery import load_workflow_authorization, restore_session_accounting
 
 spec = importlib.util.spec_from_file_location('host_resume_workflow', ROOT/'runtime/workflow.py')
@@ -121,7 +121,7 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
         token=broker.session('restore-fixture',seconds=None)
         status,_=driver.controller(source,logs,
             ['improve','--task-id','t1','--round-id','R0001','--candidate-id','P0001',
-             '--parent-iter','0','--best-iter','0','--current-iter','0',
+             '--parent-iter','0',
              '--online-version','H0000','--prompt-file','/task.txt'],
             token,target=target,prompt=prompt,resume_checkpoint=authorization)
         metrics=broker.finish(token)
@@ -183,12 +183,11 @@ def test_candidate_check_uses_second_attempt_evidence(tmp_path, monkeypatch):
     write(output/'attempt_1/host_result.json', {
         'record':record,'result':{'exit_status':'Submitted'},
             'grade':{'resolved':True},'metrics':{'calls':7},
-            'code_hash':tree_hash(code),
-            'execution_hash':driver_execution_hash(code)})
+            'code_hash':tree_hash(code)})
     monkeypatch.setattr(module,'validate_code',lambda _:None)
     driver=object.__new__(Driver);driver.root=tmp_path
     monkeypatch.setattr(driver,'task_retry',lambda *a,**k:record)
-    result=driver.candidate_check(code,'t1',output,job_id='retry-job')
+    result=driver.candidate_check(code,'t1',output,job_id='retry-job',parent_hash=tree_hash(code))
     assert result['execution_status']=='Submitted'
     assert result['metrics']['calls']==7
     private=read(tmp_path/'private/candidate_checks/retry-job.json')

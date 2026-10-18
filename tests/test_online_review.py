@@ -208,13 +208,13 @@ def test_online_report_rejects_malformed_or_native_roots(tmp_path, kind):
     if kind == 'malformed_config':
         (run/'configuration.json').write_text('{not-json')
     else:
-        write(run/'configuration.json', {'online_protocol': 'mini-swe-rsi-online-v7'})
-        write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v7', 'active_version': 'H0000'})
+        write(run/'configuration.json', {'online_protocol': 'mini-swe-rsi-online-v8'})
+        write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v8', 'active_version': 'H0000'})
         if kind == 'malformed_state':
             write(run/'online_state.json', ['invalid'])
         elif kind == 'conflicting_protocol':
             write(run/'configuration.json', {
-                'online_protocol': 'mini-swe-rsi-online-v7', 'protocol': 'native-v1'})
+                'online_protocol': 'mini-swe-rsi-online-v8', 'protocol': 'native-v1'})
         elif kind == 'native_root':
             write(run/'baseline.json', {'legacy': True})
     with pytest.raises((ValueError, json.JSONDecodeError), match='Online|online|legacy|protocol|JSON|Expecting'):
@@ -231,7 +231,7 @@ def test_online_v2_and_common_task_contracts_are_explicitly_rejected(tmp_path):
         })
     with pytest.raises(OnlineError, match='common_tasks is unsupported'):
         OnlineLoop(tmp_path/'common', ('task',), contract={
-            'protocol': 'mini-swe-rsi-online-v7',
+            'protocol': 'mini-swe-rsi-online-v8',
             'check_policy': {'revision': '2', 'common_tasks': []},
         })
 
@@ -242,13 +242,40 @@ def test_online_report_rejects_common_task_policy_in_current_root(tmp_path):
     run = tmp_path/'run'
     run.mkdir()
     write(run/'configuration.json', {
-        'online_protocol': 'mini-swe-rsi-online-v7',
-        'protocol': 'mini-swe-rsi-online-v7',
+        'protocol': 'mini-swe-rsi-online-v8',
         'check_policy': {'revision': '2', 'common_tasks': []},
     })
-    write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v7', 'active_version': 'H0000'})
+    write(run/'online_state.json', {'protocol': 'mini-swe-rsi-online-v8', 'active_version': 'H0000'})
     with pytest.raises(ValueError, match='common_tasks is unsupported'):
         build_online_report(run)
+
+
+@pytest.mark.parametrize('layout', ['configuration', 'state'])
+def test_online_report_accepts_current_partial_failure_layouts(tmp_path, layout):
+    from mini_swe_rsi.report import build_online_report
+
+    run = tmp_path / layout
+    run.mkdir()
+    if layout == 'configuration':
+        write(run/'configuration.json', {'protocol': 'mini-swe-rsi-online-v8'})
+    else:
+        write(run/'online_state.json', {
+            'protocol': 'mini-swe-rsi-online-v8', 'active_version': 'H0000'})
+    report = build_online_report(run)
+    assert report['mode'] == 'online'
+
+
+@pytest.mark.parametrize('state', [
+    {'online_protocol': 'mini-swe-rsi-online-v8', 'active_version': 'H0000'},
+    {'protocol': 'mini-swe-rsi-online-v8', 'online_protocol': 'mini-swe-rsi-online-v8',
+     'active_version': 'H0000'},
+])
+def test_online_report_rejects_online_protocol_state_alias(tmp_path, state):
+    from mini_swe_rsi.report import build_online_report
+
+    write(tmp_path/'online_state.json', state)
+    with pytest.raises(ValueError, match='Unsupported online protocol'):
+        build_online_report(tmp_path)
 
 
 def test_cli_report_failure_is_not_silently_suppressed(tmp_path, monkeypatch):

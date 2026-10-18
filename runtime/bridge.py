@@ -8,7 +8,6 @@ import math
 import os
 import platform
 import sys
-import time
 import urllib.request
 from pathlib import Path
 
@@ -168,10 +167,14 @@ def classified_failure(exc, status):
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
 
-def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"),
+def improvement_prompt(parent, candidate, upstream=Path("/upstream/agent_main.py"),
                        budget=None, task_id=None,
                        round_id=None, version=None, feedback=None,
                        resume_state=None, resume_source_exists=None, workflow_module=None):
+    # The active parent is the sole external iteration anchor.  The upstream
+    # template still exposes best/current placeholders, so derive both from
+    # that one host-verified value inside this adapter.
+    best = current = parent
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
     # Preserve the upstream task intent; adapt tool terminology and execution identities.
@@ -189,9 +192,8 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
     text = text.replace('using the archive exploration tools available to you', 'using delegated archive analysis and permitted file inspection')
     text = text.replace(
         f'The agent code in this directory is the best performing in the sequence of agent iterations, and corresponds to agent iteration {best}.',
-        f'The code in /home/agent/workdir is the current unassessed candidate {candidate}, copied from selected parent agent_{parent}. '
-        f'The executing improver is agent_{best}; it may differ from the parent. '
-        'The parent is the selected starting version, not necessarily the best performing version.')
+        f'The code in /home/agent/workdir is the current unassessed candidate {candidate}, copied from the active parent agent_{parent}. '
+        f'The executing improver operates on that same active parent agent_{parent}.')
     text = text.replace('combine with the current best performing agent.', 'combine with the selected starting candidate.')
     text = text.replace('While you have the best performing agent in /home/agent/workdir,',
                         'While /home/agent/workdir contains the writable candidate copied from the selected parent,')
@@ -274,8 +276,6 @@ def validate_improvement_args(args):
         raise ValueError('Improvement requires explicit identities: ' + ', '.join(missing))
     if args.parent_iter < 0:
         raise ValueError('Improvement parent version must be non-negative')
-    if args.best_iter != args.parent_iter:
-        raise ValueError('Improvement requires parent and proposer to be the same version')
     expected_version = f'H{args.parent_iter:04d}'
     if args.online_version != expected_version:
         raise ValueError(f'Improvement version must equal {expected_version}')
@@ -331,7 +331,7 @@ def main(entry):
                 'round_id': args.round_id,
                 'version': args.online_version,
                 'parent': args.parent_iter,
-                'proposer': args.best_iter,
+                'proposer': args.parent_iter,
                 'candidate': args.candidate_id,
             }
             resume_authorization = load_resume_authorization(
@@ -375,18 +375,19 @@ def main(entry):
     (logs / 'activation.json').write_text(json.dumps(activation))
     if args.command == 'improve':
         feedback = Path(args.prompt_file).read_text() if args.prompt_file else None
-        task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id,
+        task = improvement_prompt(args.parent_iter, args.candidate_id,
                                   budget=budgets, task_id=args.task_id, round_id=args.round_id,
                                   version=args.online_version, feedback=feedback,
                                   workflow_module=workflow_module)
         if resume_authorization:
             task = resume_prompt(task, resume_authorization)
-        metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
+        metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.parent_iter,
                     'candidate': args.candidate_id, 'prompt_sha256': hashlib.sha256(task.encode()).hexdigest(),
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest(),
                     'relay_sha256':hashlib.sha256(Path(__file__).with_name('relay.py').read_bytes()).hexdigest(),
                     'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
+                    'source_hash_sha256':hashlib.sha256(Path(__file__).with_name('source_hash.py').read_bytes()).hexdigest(),
                     'template_manifest':templates,
                     'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}
         metadata.update(online=True, task_id=args.task_id, round_id=args.round_id,
@@ -398,7 +399,7 @@ def main(entry):
     else:
         task = Path(args.prompt_file).read_text()
     if args.command == 'improve':
-        identities = {'parent':args.parent_iter, 'proposer':args.best_iter, 'candidate':args.candidate_id,
+        identities = {'parent':args.parent_iter, 'proposer':args.parent_iter, 'candidate':args.candidate_id,
                       'workdir':args.workdir, 'public_archive':'/home/agent/archive',
                       'model':os.environ.get('RSI_MODEL'),
                       'source_execution_hash':workflow_module.execution_hash(args.workdir)}
@@ -473,7 +474,6 @@ def main(entry):
                                             resume_committee_cache=(resume_authorization['committee_cache_seed']
                                                                     if resume_authorization else None))
         environment.readonly = 'orchestrator'
-    start = time.time()
     try:
         result = agent.run(task, session_status=rpc('/status', {})) if workflow else agent.run(task)
     except Exception as exc:
@@ -486,8 +486,6 @@ def main(entry):
     (logs / 'result.json').write_text(json.dumps(result))
     trace = '\n\n'.join(str(m.get('content', '')) for m in agent.messages)
     (logs / 'trace.txt').write_text(trace)
-    (logs / 'execution_tree.txt').write_text(trace)
-    print(f'0|0|0|{time.time()-start:.3f}')
     if result.get('exit_status') != 'Submitted':
         raise SystemExit(1)
 
@@ -498,10 +496,8 @@ def build_parser():
     parser.add_argument('--prompt-file')
     parser.add_argument('--logdir', required=True)
     parser.add_argument('--workdir', default='/home/agent/workdir')
-    parser.add_argument('--best-iter', type=int, default=0)
     parser.add_argument('--parent-iter', type=int, required=False)
     parser.add_argument('--candidate-id')
-    parser.add_argument('--current-iter', type=int, default=0)
     parser.add_argument('--task-id')
     parser.add_argument('--round-id')
     parser.add_argument('--online-version')

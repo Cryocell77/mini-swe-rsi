@@ -2,6 +2,7 @@
 from mini_swe_rsi.context_budget import ContextBudget
 import json
 import os
+import re
 import time
 
 import pytest
@@ -141,6 +142,8 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
         assert read(tmp_path/'logs/result.json')['exit_status'] == 'ContextWindowExceededError'
         assert (tmp_path/'logs/trajectory.json').is_file()
         assert (tmp_path/'logs/trace.txt').is_file()
+        assert not (tmp_path/'logs/execution_tree.txt').exists()
+        assert not any(re.fullmatch(r'0\|0\|0\|\d+\.\d+', line) for line in output.splitlines())
         assert tree_hash(target) == frozen
     finally:
         driver.close()

@@ -329,7 +329,6 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
                 status, _ = driver.controller(
                     source, logs,
                     ["improve", "--workdir", "/home/agent/workdir",
-                     "--best-iter", str(index), "--current-iter", str(index),
                      "--parent-iter", str(index), "--candidate-id", f"P{index + 1:04d}",
                      "--task-id", "fixture-task", "--round-id", f"R{index + 1:04d}",
                      "--online-version", version, "--prompt-file", "/task.txt"],
@@ -507,6 +506,8 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
         # Actual task, orchestrator and delegated processes emit no monetary ABI.
         trajectories = list(root.rglob("trajectory.json"))
         assert trajectories
+        assert not list(root.rglob("execution_tree.txt"))
+        assert not list(root.rglob("check_plan_host_record.json"))
         assert any("roles" in path.parts for path in trajectories)
         for path in trajectories:
             trajectory = read(path)

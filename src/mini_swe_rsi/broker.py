@@ -18,7 +18,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .core import append_event, secrets, read, write
+from .core import append_event, secrets, read, read_regular_json, write
 from .context_budget import ContextBudget
 
 
@@ -39,6 +39,76 @@ DEFAULT_TRANSPORT_POLICY = {
     'pause_on_missing_usage': False,
     'pause_on_transport_error': False,
 }
+
+
+# Candidate job identity is host-owned.  The session digest is deliberately
+# kept out of the request payload: it binds the relay to the session that was
+# authorized by the host, but is not a model-visible identity field.
+CANDIDATE_JOB_METADATA_FIELDS = (
+    'job_id', 'task_id', 'round_id', 'candidate', 'parent_version',
+    'check_revision', 'stage', 'agent', 'role', 'session_token_sha256',
+)
+# Keeping this as an explicit tuple makes accidental exposure of the private
+# digest in a future payload change easy to review.
+CANDIDATE_PUBLIC_IDENTITY_FIELDS = (
+    'job_id', 'task_id', 'round_id', 'candidate', 'parent_version',
+    'check_revision', 'stage',
+)
+CANDIDATE_JOB_STATES = ('registered', 'running', 'completed', 'failed', 'interrupted')
+
+
+def validate_candidate_job_record(job_id, metadata, state):
+    """Validate one host candidate-job identity and persisted state.
+
+    This is deliberately side-effect free so the online recovery path can use
+    the same contract as the broker.  A valid record returns ``True``; invalid
+    records raise ``ValueError`` and must be rejected rather than retried.
+    """
+    if not isinstance(job_id, str) or not job_id or len(job_id) > 160:
+        raise ValueError('Invalid candidate job id')
+    if not isinstance(metadata, dict):
+        raise ValueError('Candidate job metadata is incomplete')
+    missing = [key for key in CANDIDATE_JOB_METADATA_FIELDS if key not in metadata]
+    if missing:
+        raise ValueError('Candidate job metadata is incomplete: ' + ','.join(missing))
+    if metadata.get('job_id') != job_id:
+        raise ValueError('Candidate job metadata job_id differs')
+    for key in CANDIDATE_JOB_METADATA_FIELDS[:-1]:
+        value = metadata.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError('Candidate job metadata field is invalid: ' + key)
+    session_hash = metadata.get('session_token_sha256')
+    if not isinstance(session_hash, str) or re.fullmatch(r'[0-9a-f]{64}', session_hash) is None:
+        raise ValueError('Candidate job session token hash is invalid')
+    if not isinstance(state, dict):
+        raise ValueError('Candidate job record is not an object')
+    if state.get('job_id') != job_id:
+        raise ValueError('Persisted candidate job id differs')
+    persisted_metadata = state.get('metadata')
+    if not isinstance(persisted_metadata, dict) or persisted_metadata != metadata:
+        raise ValueError('Persisted candidate job metadata differs')
+    status = state.get('status')
+    if status not in CANDIDATE_JOB_STATES:
+        raise ValueError('Unknown candidate job status')
+    if status == 'completed' and not isinstance(state.get('result'), dict):
+        raise ValueError('Completed candidate job record has no result')
+    result = state.get('result')
+    error = state.get('error')
+    # Registered/running records intentionally need no completion fields.  An
+    # explicit JSON null is harmless, but a non-null field belonging to a
+    # different state is a malformed replay cache.
+    if status != 'completed' and result is not None:
+        raise ValueError('Non-completed candidate job record has a result')
+    if status == 'completed' and error is not None:
+        raise ValueError('Completed candidate job record has an error')
+    if status in ('registered', 'running') and error is not None:
+        raise ValueError('Active candidate job record has an error')
+    if status in ('failed', 'interrupted'):
+        if (not isinstance(error, dict)
+                or not isinstance(error.get('type'), str) or not error['type']
+                or not isinstance(error.get('message'), str)):
+            raise ValueError('Failed candidate job record has no error')
+    return True
 
 
 def _transport_policy(root, supplied):
@@ -480,11 +550,16 @@ class Broker:
         restarted relay cannot silently point a job at another candidate.
         """
         self._raise_if_paused()
-        if not isinstance(job_id, str) or not job_id or len(job_id) > 160:
-            raise ValueError('Invalid candidate job id')
         if not callable(callback):
             raise TypeError('Candidate callback must be callable')
-        metadata = metadata or {}
+        # Keep the default for the paused path: callers that attempt a
+        # registration while transport is paused must receive TransportPaused
+        # before metadata validation.  Once unpaused, registration requires
+        # the complete host identity.
+        metadata = {} if metadata is None else metadata
+        validate_candidate_job_record(
+            job_id, metadata,
+            {'job_id': job_id, 'metadata': metadata, 'status': 'registered'})
         with self.candidate_lock:
             prior = self.candidate_jobs.get(job_id)
             if prior is not None:
@@ -492,23 +567,31 @@ class Broker:
                     raise ValueError('Candidate job identity changed')
                 return
             record = self.root / 'candidate_checks' / (job_id.replace('/', '_') + '.json')
-            prior_state = read(record) if record.exists() else {}
-            if prior_state and prior_state.get('metadata') not in (None, metadata):
-                raise ValueError('Candidate job identity changed in persisted state')
-            prior_status = prior_state.get('status')
-            prior_error = prior_state.get('error')
+            record_present = record.exists() or record.is_symlink()
+            prior_state = read_regular_json(record) if record_present else None
+            if record_present:
+                if prior_state is None:
+                    raise ValueError('Persisted candidate job record is not a regular object')
+                validate_candidate_job_record(job_id, metadata, prior_state)
+            prior_status = prior_state.get('status') if prior_state is not None else None
+            prior_error = prior_state.get('error') if prior_state is not None else None
             if prior_status == 'running':
                 prior_status = 'interrupted'
                 prior_error = {'type':'OnlineInterrupted',
                                'message':'Candidate check was interrupted before completion; use a new revision'}
+            prior_result = (prior_state.get('result')
+                            if prior_state is not None and prior_status == 'completed' else None)
             self.candidate_jobs[job_id] = {'callback': callback, 'metadata': metadata,
-                                           'result': prior_state.get('result'),
+                                           'result': prior_result,
                                            'error': prior_error, 'running': False,
                                            'record': record}
-            write(record, {'job_id': job_id, 'metadata': metadata,
-                           'status': ('completed' if prior_state.get('result') is not None else
-                                      prior_status or 'registered'),
-                           'result': prior_state.get('result'), 'error': prior_error})
+            status = ('completed' if prior_result is not None else prior_status or 'registered')
+            persisted = {'job_id': job_id, 'metadata': metadata, 'status': status}
+            if prior_result is not None:
+                persisted['result'] = prior_result
+            if prior_error is not None:
+                persisted['error'] = prior_error
+            write(record, persisted)
 
     def candidate_check(self, token, payload, agent='main', role='orchestrator'):
         """Execute or return a frozen candidate check through the broker."""
@@ -521,10 +604,11 @@ class Broker:
         if job is None:
             raise ModelError('Unknown candidate check job')
         self.check_session(self.sessions[token], model_request=False)
-        identity_keys = ('job_id', 'task_id', 'check_revision', 'round_id', 'candidate',
-                         'parent_version', 'stage')
-        bound = {k: job['metadata'][k] for k in identity_keys if k in job['metadata']}
+        identity_keys = CANDIDATE_PUBLIC_IDENTITY_FIELDS
+        bound = {k: job['metadata'][k] for k in identity_keys}
         requested = {k: payload[k] for k in identity_keys if k in payload}
+        if any(key not in identity_keys for key in payload):
+            raise ModelError('Candidate check payload contains private or unknown identity')
         # Every identity field registered by the host must be echoed by the
         # caller.  A caller cannot omit a bound stage/round/candidate field or
         # add an unregistered identity field and still reuse the job.
@@ -535,7 +619,7 @@ class Broker:
             if expected_identity is not None and expected_identity != actual:
                 raise ModelError('Candidate check execution identity differs from host registration')
         expected_session_hash = job['metadata'].get('session_token_sha256')
-        if expected_session_hash is not None and hashlib.sha256(token.encode()).hexdigest() != expected_session_hash:
+        if hashlib.sha256(token.encode()).hexdigest() != expected_session_hash:
             raise ModelError('Candidate check session differs from host registration')
         with self.candidate_lock:
             if job['result'] is not None:
@@ -546,7 +630,8 @@ class Broker:
                 return {'job_id': job_id, 'status': 'running',
                         'check_revision': job['metadata'].get('check_revision')}
             job['running'] = True
-            write(job['record'], {'job_id':job_id, 'metadata':job['metadata'], 'status':'running'})
+            running = {'job_id':job_id, 'metadata':job['metadata'], 'status':'running'}
+            write(job['record'], running)
         try:
             callback = job['callback']
             # The authenticated payload is the single production callback
@@ -557,8 +642,9 @@ class Broker:
                 raise ModelError('Candidate check returned an invalid result')
             with self.candidate_lock:
                 job['result'] = result
-                write(job['record'], {'job_id':job_id, 'metadata':job['metadata'],
-                                      'status':'completed', 'result':result})
+                completed = {'job_id':job_id, 'metadata':job['metadata'],
+                             'status':'completed', 'result':result}
+                write(job['record'], completed)
             event = {'kind':'candidate_check_complete', 'job_id':job_id,
                      'task_id':job['metadata'].get('task_id'),
                      'check_revision':job['metadata'].get('check_revision')}
@@ -567,8 +653,9 @@ class Broker:
         except Exception as exc:
             with self.candidate_lock:
                 job['error'] = {'type':type(exc).__name__, 'message':str(exc)}
-                write(job['record'], {'job_id':job_id, 'metadata':job['metadata'],
-                                      'status':'failed', 'error':job['error']})
+                failed = {'job_id':job_id, 'metadata':job['metadata'],
+                          'status':'failed', 'error':job['error']}
+                write(job['record'], failed)
             raise
         finally:
             with self.candidate_lock:

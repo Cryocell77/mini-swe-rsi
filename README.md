@@ -59,11 +59,15 @@ uv run mini-swe-rsi online --run runs/online
 
 已有模型工作流不能自动作为新会话重新开启。需要明确的宿主私有恢复授权时使用 `--resume-checkpoint PATH`；授权覆盖未完成的前五步和适用的未完成检查，累计调用与角色迭代继续计量。这是新模型上下文，不宣称原对话无缝续跑。
 
-当前在线合同为 `mini-swe-rsi-online-v7`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2/v3/v4/v5/v6 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
+当前在线合同为 `mini-swe-rsi-online-v8`，improvement 合同为 `sica-mini-improvement-v8`，检查政策 revision 2；协议身份只使用 `protocol`，不接受 `online_protocol` 或预留的 `common_tasks`。旧 v2/v3/v4/v5/v6/v7 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
 
 恢复要求完整的当前工作流状态和版本身份，任务结果仅从 `attempt_N` 目录读取。机制计划使用 `test_path`、`args`、`timeout_seconds`，宿主和容器各自应用同一规范化实现；旧 `entrypoint` 字段明确拒绝。
 
-角色结构化操作使用 `sica-workflow` 后直接跟原始 JSON 对象，JSON 不再外包 shell 引号。角色通过 `{"op":"submit","report":"完整报告"}` 提交，由宿主适配 mini 完成标记；受限角色的旧 echo/printf 提交已删除。标准 mini benchmark 提交和编辑角色的合法 shell 保持。
+宿主任务完成记录使用完整源码 `code_hash`，任务摘要必须绑定任务、轮次、版本、双摘要及所选 attempt。候选任务记录按状态验证完整身份；中断检查不会当作已完成缓存或自动重跑。完整源码摘要与执行摘要分别保留，源码哈希的纯实现由宿主和容器各自调用。
+
+角色结构化操作使用 `sica-workflow` 后直接跟原始 JSON 对象，JSON 不再外包 shell 引号。角色通过 `{"op":"submit","report":"完整报告正文"}` 提交，由宿主添加 mini 完成标记，报告不得自带标记前缀；受限角色的旧 echo/printf 提交已删除。标准 mini benchmark 提交和编辑角色的合法 shell 保持。改进启动只传一个父迭代值，执行者与改进者身份由活动父版本派生。
+
+文字轨迹保留 `trace.txt`，完整轨迹保留私有 `trajectory.json`；不再生成重复的 `execution_tree.txt`、`check_plan_host_record.json` 或旧 stdout 四列汇总。第三步声明、第五步冻结计划及宿主审计计划分别保留。报告不再输出固定的 `test_sealed` 字段。执行范围与验收见[当前版本精简计划](docs/online-rsi-current-only-simplification-plan.md)和[验收记录](docs/online-rsi-current-only-simplification-review.md)。
 
 ## 模型与服务
 

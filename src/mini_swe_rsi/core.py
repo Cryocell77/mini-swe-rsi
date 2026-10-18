@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
 import subprocess
 import time
 from pathlib import Path
@@ -27,14 +28,9 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def tree_hash(path):
-    h = hashlib.sha256()
-    for p in sorted(Path(path).rglob('*')):
-        if not p.is_file() or p.is_symlink() or '__pycache__' in p.parts:
-            continue
-        content = p.read_bytes()
-        h.update(str(p.relative_to(path)).encode() + b'\0' + content)
-    return h.hexdigest()
+_SOURCE_HASH = runpy.run_path(str(ROOT / 'runtime/source_hash.py'))
+tree_hash = _SOURCE_HASH['tree_hash']
+execution_hash = _SOURCE_HASH['execution_hash']
 
 
 def attempt_result_paths(root, filename='host_result.json'):
@@ -65,31 +61,19 @@ def read_regular_json(path):
     return value
 
 
-def result_matches_source(result, expected_hashes):
-    """Match a host result against a full or execution source digest."""
-    hashes = {result.get(key) for key in ('code_hash', 'full_source_hash', 'execution_hash')} - {None}
-    expected = set(expected_hashes) - {None}
-    return bool(hashes) and bool(hashes.intersection(expected))
+def result_matches_source(result, expected_hash, *, error_type=ValueError):
+    """Match a completed host record to its full source tree.
 
-
-def execution_hash(path):
-    """Hash the selected mini Harness runtime, including package resources."""
-    h = hashlib.sha256()
-    path = Path(path)
-    excluded_root = {'README.md', 'LICENSE.mini', 'description.txt', 'agent_change_log.md'}
-    for p in sorted(path.rglob('*')):
-        if not p.is_file() or p.is_symlink() or '__pycache__' in p.parts:
-            continue
-        relative = p.relative_to(path)
-        if relative.parts and relative.parts[0] != 'minisweagent' and p.name not in ('__init__.py', '__main__.py'):
-            continue
-        # These names are documentation files only at the archive root.  A
-        # package resource with the same basename can be loaded at runtime and
-        # must remain part of the immutable execution identity.
-        if len(relative.parts) == 1 and p.name in excluded_root:
-            continue
-        h.update(str(relative).encode() + b'\0' + p.read_bytes())
-    return h.hexdigest()
+    Durable task and candidate completion records have one source identity:
+    ``code_hash`` is the complete source tree digest.  Execution-only digests
+    and historical aliases are deliberately not accepted here; callers that
+    need the execution digest validate that separately. Invalid layouts raise;
+    a well-formed record from a different source returns False.
+    """
+    if (not isinstance(result, dict) or not isinstance(result.get('code_hash'), str)
+            or any(key in result for key in ('full_source_hash', 'execution_hash'))):
+        raise error_type('Host record has a non-canonical source identity')
+    return isinstance(expected_hash, str) and result['code_hash'] == expected_hash
 
 
 def command(args, timeout=60, **kwargs):
@@ -173,12 +157,13 @@ def improvement_contract():
     if actual != {n:v['sha256'] for n,v in expected.items()}:
         raise RuntimeError('Pinned workflow sources differ from upstream lock')
     from .budget_policy import policy_contract
-    return {'version': 'sica-mini-improvement-v7',
+    return {'version': 'sica-mini-improvement-v8',
             'limits': {'calls': None, 'seconds': None},
             'budget_policy': policy_contract(),
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
             'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
             'workflow_sha256': digest(ROOT/'runtime/workflow.py'),
+            'source_hash_sha256': digest(ROOT/'runtime/source_hash.py'),
             'check_plan_sha256': digest(ROOT/'runtime/check_plan.py'),
             'relay_sha256': digest(ROOT/'runtime/relay.py'),
             'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'vendor/sica_workflow').glob('*')) if p.is_file()}}

@@ -86,5 +86,6 @@ def test_online_report_tracks_tokens_without_monetary_fields(tmp_path):
     report = build_online_report(tmp_path)
     assert report['total_model_calls'] == 1 and report['total_tokens'] == 7
     assert report['token_accounting_complete']
+    assert 'test_sealed' not in report
     for key in ('cost_usd', 'cost_estimate', 'cost_threshold_exceeded', 'billing_mode'):
         assert key not in json.dumps(report)

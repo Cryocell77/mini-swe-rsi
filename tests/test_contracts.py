@@ -29,8 +29,8 @@ def test_improvement_prompt_keeps_upstream_task(monkeypatch):
     original = Path.read_text
     monkeypatch.setattr(Path, 'read_text', lambda self,*a,**kw: original(ROOT/'vendor/sica/agent_main.py')
                         if str(self)=='/upstream/agent_main.py' else original(self,*a,**kw))
-    prompt = bridge.improvement_prompt(2,3,1,'agent_4')
-    assert 'parent=agent_1; proposer=agent_2; candidate=agent_4' in prompt
+    prompt = bridge.improvement_prompt(1, 'agent_4')
+    assert 'parent=agent_1; proposer=agent_1; candidate=agent_4' in prompt
     assert 'meta improvement reasoning structure' in prompt
     assert 'description.txt' in prompt
     assert '/home/sandbox/workdir' not in prompt

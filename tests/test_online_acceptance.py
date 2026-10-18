@@ -7,6 +7,7 @@ path; these tests focus on persistence, phase custody, and broker semantics.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import threading
 import time
@@ -97,17 +98,15 @@ class FakeDriver:
         record = {"problem_id": task_id, "score": score, "tokens_used": 30,
                   "wall_time": 0.01}
         execution = {"result": result, "metrics": metrics,
-                     "code_hash": execution_hash(code)}
+                     "code_hash": tree_hash(code)}
         write(attempt / "task_execution.json", execution)
         write(attempt / "host_result.json", {"result": result, "metrics": metrics,
                                               "record": record, "grade": {"resolved": score},
-                                              "code_hash": tree_hash(code),
-                                              "execution_hash": execution_hash(code)})
+                                              "code_hash": tree_hash(code)})
         # The host writes the active version after the driver returns.  The
         # fixture leaves it unset so it cannot accidentally claim H0 when the
         # second generation executes the next task.
         for name, content in (("trace.txt", "public fixture trace\n"),
-                              ("execution_tree.txt", "public fixture execution tree\n"),
                               ("patch.diff", ""), ("answer.txt", "fixture\n")):
             (attempt / name).write_text(content)
         write(attempt / "activation.json", {"command": "benchmark", "fixture": True})
@@ -184,7 +183,7 @@ class FakeDriver:
         return 0, "fixture"
 
     def candidate_check(self, candidate, task_id, output, *, job_id=None,
-                        parent_record=None, check_revision="1", parent_code=None,
+                        parent_hash, check_revision="1", parent_code=None,
                         mechanism_plan=None):
         self.check_calls.append((str(candidate), task_id, str(output), job_id))
         output = Path(output)
@@ -196,10 +195,8 @@ class FakeDriver:
         write(attempt / "host_result.json", {"record": record,
                                               "metrics": {"calls": 1, "tokens": 12},
                                               "result": {"exit_status": "Submitted"},
-                                              "code_hash": tree_hash(candidate),
-                                              "execution_hash": execution_hash(candidate)})
-        write(attempt / "task_execution.json", {"code_hash": tree_hash(candidate),
-                                                 "execution_hash": execution_hash(candidate)})
+                                              "code_hash": tree_hash(candidate)})
+        write(attempt / "task_execution.json", {"code_hash": tree_hash(candidate)})
         write(attempt / "activation.json", {"command": "benchmark"})
         root = output.parents[2]
         write(root / "private/candidate_checks" / (str(job_id).replace('/', '_') + '.json'),
@@ -207,7 +204,7 @@ class FakeDriver:
                "check_revision": str(check_revision),
                "candidate_hash": tree_hash(candidate),
                "execution_hash": execution_hash(candidate),
-               "parent_hash": parent_record.get("code_hash") if parent_record else None,
+               "parent_hash": parent_hash,
                "record": record})
         return {"job_id": job_id, "task_id": task_id, "check_revision": str(check_revision),
                 "record": record, "metrics": {"calls": 1, "tokens": 12},
@@ -323,20 +320,26 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         return {"metrics": {"calls": 1, "tokens": 11}, "record": {"score": 1}}
 
     job_id = "candidate:R0001:P0001"
-    metadata = {"job_id": job_id, "task_id": "t1", "check_revision": "1",
-                "agent": "candidate-main", "role": "orchestrator"}
+    token1 = broker.session("candidate-1", seconds=30, calls=0)
+    metadata = {"job_id": job_id, "task_id": "t1", "round_id": "R0001",
+                "candidate": "P0001", "parent_version": "H0000",
+                "check_revision": "1", "stage": "candidate_check",
+                "agent": "candidate-main", "role": "orchestrator",
+                "session_token_sha256": hashlib.sha256(token1.encode()).hexdigest()}
+    public_payload = {key: metadata[key] for key in
+                      ("job_id", "task_id", "round_id", "candidate", "parent_version",
+                       "check_revision", "stage")}
     broker.register_candidate_job(job_id, callback, metadata)
     with pytest.raises(ValueError, match="identity changed"):
         broker.register_candidate_job(job_id, callback,
                                       {**metadata, "task_id": "other-task"})
-    token1 = broker.session("candidate-1", seconds=30, calls=0)
     token2 = broker.session("candidate-2", seconds=30, calls=0)
     with pytest.raises(ModelError, match="Unknown candidate check job"):
         broker.candidate_check(token1,
-                               {**metadata, "job_id": "candidate:R0001:P9999"},
+                               {**public_payload, "job_id": "candidate:R0001:P9999"},
                                agent="candidate-main", role="orchestrator")
     with pytest.raises(ModelError, match="identity differs"):
-        broker.candidate_check(token1, {**metadata, "task_id": "other-task"},
+        broker.candidate_check(token1, {**public_payload, "task_id": "other-task"},
                                agent="candidate-main", role="orchestrator")
     results = []
     errors = []
@@ -345,7 +348,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         try:
             request = urllib.request.Request(
                 f"http://127.0.0.1:{broker.port}/candidate_check",
-                data=json.dumps(metadata).encode(),
+                data=json.dumps(public_payload).encode(),
                 headers={"Content-Type": "application/json",
                          "Authorization": "Bearer " + token,
                          "X-RSI-Agent": "candidate-main",
@@ -362,7 +365,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
                 errors.append(exc)
 
     first = threading.Thread(target=request, args=(token1,))
-    second = threading.Thread(target=request, args=(token2,))
+    second = threading.Thread(target=request, args=(token1,))
     first.start()
     assert entered.wait(1)
     second.start()
@@ -378,7 +381,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         # designed to catch.
         assert len(calls) == 1, "callback ran more than once for an immutable job"
         assert not first.is_alive() and not second.is_alive()
-        result = broker.candidate_check(token2, metadata,
+        result = broker.candidate_check(token1, public_payload,
                                         agent="candidate-main", role="orchestrator")
         assert result["metrics"] == {"calls": 1, "tokens": 11}
         persisted = read(root / "candidate_checks" / (job_id.replace("/", "_") + ".json"))
@@ -387,7 +390,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         assert not errors or all("already running" in str(error) for error in errors)
         bad_auth = urllib.request.Request(
             f"http://127.0.0.1:{broker.port}/candidate_check",
-            data=json.dumps(metadata).encode(),
+            data=json.dumps(public_payload).encode(),
             headers={"Content-Type": "application/json",
                      "Authorization": "Bearer invalid-token",
                      "X-RSI-Agent": "candidate-main",
@@ -396,15 +399,17 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
             urllib.request.urlopen(bad_auth, timeout=3)
         assert denied.value.code in (401, 403)
         with pytest.raises(ModelError, match="execution identity"):
-            broker.candidate_check(token2, metadata, agent="other-agent", role="orchestrator")
+            broker.candidate_check(token1, public_payload, agent="other-agent", role="orchestrator")
         restarted = Broker(root, context=ContextBudget({"context_window": 32768,
                                                         "max_output_tokens": 2048}))
         restarted.model = "fixture"
         restarted.service_identity = {"ollama": {"cloud": False}}
         restarted.register_candidate_job(job_id, lambda: pytest.fail("replayed callback"), metadata)
+        assert restarted.candidate_jobs[job_id]["result"] == result
         token3 = restarted.session("candidate-restarted", seconds=30, calls=0)
-        assert restarted.candidate_check(token3, metadata,
-                                         agent="candidate-main", role="orchestrator") == result
+        with pytest.raises(ModelError, match="session differs"):
+            restarted.candidate_check(token3, public_payload,
+                                      agent="candidate-main", role="orchestrator")
         restarted.finish(token3)
         restarted.close()
         assert any(e.get("kind") == "candidate_check_complete" and
