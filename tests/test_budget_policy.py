@@ -216,6 +216,31 @@ def test_tool_scope_output_and_benchmark_token_accounting(broker, monkeypatch):
     assert broker.finish(token)['tokens'] == 7
 
 
+def test_budget_limits_keep_enforced_scopes_and_remove_unused_fileview_placeholders():
+    from mini_swe_rsi.budget_policy import policy_contract, sica_budget
+
+    limits = sica_budget(393216, 1048576)
+    assert set(limits) == {
+        'main_iterations', 'role_iterations', 'completion_max_requests',
+        'benchmark_wall_seconds', 'improvement_wall_seconds',
+        'tool_timeout_seconds', 'command_min_seconds', 'command_max_seconds',
+        'command_default_seconds', 'stage_output_inline_bytes',
+        'stage_output_max_bytes', 'stage_output_preview_bytes',
+        'model_max_output_tokens', 'context_max_tokens'}
+    assert limits['main_iterations'] == 500
+    assert limits['role_iterations'] == {
+        'archive_explorer': 500, 'software_developer': 1000,
+        'general_problem_solver': 500, 'reviewer': 500}
+    assert limits['completion_max_requests'] == 5
+    assert (limits['benchmark_wall_seconds'], limits['improvement_wall_seconds']) == (600, 0)
+    assert (limits['tool_timeout_seconds'], limits['command_min_seconds'],
+            limits['command_max_seconds'], limits['command_default_seconds']) == (600, 5, 1800, 600)
+    assert (limits['stage_output_inline_bytes'], limits['stage_output_max_bytes'],
+            limits['stage_output_preview_bytes']) == (300000, 8 * 1024 * 1024, 4096)
+    assert (limits['model_max_output_tokens'], limits['context_max_tokens']) == (393216, 1048576)
+    assert policy_contract()['version'] == 'sica-budget-scopes-v2'
+
+
 def test_pinned_upstream_budget_scopes_match_policy():
     import ast
     from mini_swe_rsi.core import ROOT, read, digest

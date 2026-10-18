@@ -81,4 +81,6 @@ RUN_DOCKER_TESTS=1 uv run pytest -q
 
 Docker 测试使用本地模拟模型，不调用 `.env` 推理服务，检查版本实际加载、在线继承、接任/拒绝/跳过、恢复、候选机制测试及隔离边界。
 
+后续 P1 清理收敛评分器为 `score` 操作，移除旧镜像构建入口；缺失任务镜像仍按冻结摘要恢复。另清理工作流无用赋值和未实现的 fileview 再生预算占位，实际资源限制保持。新增候选与执行顺序见[后续精简执行计划](docs/online-rsi-followup-simplification-plan.md)，本轮范围和验证见[三个 P1 项验收](docs/online-rsi-followup-p1-review.md)。
+
 已完成 P1、P2（批次 C、D）及批次 E 本轮选定的三项 P3：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列；事件完整落盘，结果读取、计量和公开过滤共享实现，独立身份与接任检查保留。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。完整数据／镜像校验及身份字段经评估保留。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1](docs/online-rsi-p1-review.md)、[批次 C](docs/online-rsi-phase-c-review.md)、[批次 D](docs/online-rsi-phase-d-review.md)与[批次 E](docs/online-rsi-phase-e-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。

@@ -22,9 +22,7 @@ def sica_budget(model_max_output_tokens, context_max_tokens):
             'stage_output_max_bytes': 8 * 1024 * 1024,
             'stage_output_preview_bytes': 4096,
             'model_max_output_tokens': model_max_output_tokens,
-            'context_max_tokens': context_max_tokens,
-            'fileview_regeneration_chars': 300000,
-            'fileview_regeneration_implemented': False}
+            'context_max_tokens': context_max_tokens}
 
 
 def policy_contract():

@@ -80,25 +80,6 @@ def isolate(client):
     return boundaries
 
 
-def prepare_image(client, spec):
-    from swebench.harness.docker_build import build_instance_images
-    if spec.is_remote_image:
-        try:
-            image = client.images.get(spec.instance_image_key)
-        except docker.errors.ImageNotFound:
-            image = client.images.pull(spec.instance_image_key, platform=spec.platform)
-    else:
-        _, failed = build_instance_images(client, [spec], max_workers=1)
-        if failed:
-            raise RuntimeError("Official image build failed; inspect logs/build_images")
-        image = client.images.get(spec.instance_image_key)
-    expected = "amd64" if spec.arch == "x86_64" else "arm64"
-    if image.attrs["Architecture"] != expected:
-        raise RuntimeError("Official task image architecture mismatch")
-    return {"image": spec.instance_image_key, "platform": spec.platform, "image_id": image.id,
-            "repo_digests": image.attrs.get("RepoDigests", []), "architecture": expected}
-
-
 def frozen_image(client, spec, frozen):
     if spec.instance_image_key != frozen['image']:
         raise RuntimeError('Official evaluator image recipe differs from frozen asset')
@@ -117,9 +98,13 @@ def frozen_image(client, spec, frozen):
 
 
 def main():
+    job = json.loads(Path(sys.argv[1]).read_text())
+    operation = job.get("operation")
+    if operation != "score":
+        raise ValueError(f"Unsupported evaluator operation: {operation!r}; only 'score' is supported")
+
     from swebench.harness.test_spec.test_spec import make_test_spec
     from swebench.harness.run_evaluation import run_instance
-    job = json.loads(Path(sys.argv[1]).read_text())
     root = Path(job["directory"]).resolve()
     root.mkdir(parents=True, exist_ok=True)
     os.chdir(root)
@@ -131,37 +116,32 @@ def main():
     client = docker.from_env()
     if 'frozen_image' in job:
         frozen_image(client, spec, job['frozen_image'])
-    if job["operation"] == "image":
-        result = prepare_image(client, spec)
-    elif job["operation"] == "score":
-        if not job['patch'].strip():
-            Path(job['result_file']).write_text(json.dumps({'completed': True, 'resolved': False,
-                'reason': 'empty_patch', 'container_boundaries': []}))
-            return
-        # Keep official patch application, tests and grading; restrict only container creation.
-        boundaries = isolate(client)
-        # The canonical evaluation runs fresh containers, independently of the solver container.
-        result = run_instance(spec, {"instance_id": row["instance_id"],
-                              "model_name_or_path": "mini-swe-rsi", "model_patch": job["patch"]},
-                              rm_image=False, force_rebuild=False, client=client,
-                              run_id=job["run_id"], timeout=job.get("timeout", 300))
-        reports = list((root / "logs/run_evaluation" / job["run_id"]).rglob("report.json"))
-        if not reports:
-            logs = list((root / "logs/run_evaluation" / job["run_id"]).rglob("run_instance.log"))
-            text = logs[0].read_text() if logs else ""
-            # The constant marker is written to test_output.txt, whereas the
-            # evaluator's exception text is written to run_instance.log.
-            outputs = list((root / 'logs/run_evaluation' / job['run_id']).rglob('test_output.txt'))
-            text += '\n' + '\n'.join(p.read_text(errors='replace') for p in outputs)
-            reason = grading_failure_reason(text)
-            result = {"completed": reason is not None, "resolved": False, "reason": reason,
-                      "error": None if reason else "Official evaluator produced no report"}
-        else:
-            report = json.loads(reports[0].read_text())
-            result = {"completed": True, "resolved": bool(report.get(row["instance_id"], {}).get("resolved", False))}
-        result["container_boundaries"] = boundaries
+    if not job['patch'].strip():
+        Path(job['result_file']).write_text(json.dumps({'completed': True, 'resolved': False,
+            'reason': 'empty_patch', 'container_boundaries': []}))
+        return
+    # Keep official patch application, tests and grading; restrict only container creation.
+    boundaries = isolate(client)
+    # The canonical evaluation runs fresh containers, independently of the solver container.
+    result = run_instance(spec, {"instance_id": row["instance_id"],
+                          "model_name_or_path": "mini-swe-rsi", "model_patch": job["patch"]},
+                          rm_image=False, force_rebuild=False, client=client,
+                          run_id=job["run_id"], timeout=job.get("timeout", 300))
+    reports = list((root / "logs/run_evaluation" / job["run_id"]).rglob("report.json"))
+    if not reports:
+        logs = list((root / "logs/run_evaluation" / job["run_id"]).rglob("run_instance.log"))
+        text = logs[0].read_text() if logs else ""
+        # The constant marker is written to test_output.txt, whereas the
+        # evaluator's exception text is written to run_instance.log.
+        outputs = list((root / 'logs/run_evaluation' / job['run_id']).rglob('test_output.txt'))
+        text += '\n' + '\n'.join(p.read_text(errors='replace') for p in outputs)
+        reason = grading_failure_reason(text)
+        result = {"completed": reason is not None, "resolved": False, "reason": reason,
+                  "error": None if reason else "Official evaluator produced no report"}
     else:
-        raise ValueError("Unknown evaluator operation")
+        report = json.loads(reports[0].read_text())
+        result = {"completed": True, "resolved": bool(report.get(row["instance_id"], {}).get("resolved", False))}
+    result["container_boundaries"] = boundaries
     Path(job["result_file"]).write_text(json.dumps(result))
 
 

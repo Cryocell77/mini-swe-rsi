@@ -489,7 +489,6 @@ class Workflow:
         call_step = call_index + 1 if isinstance(call_index, int) else None
         self.event(kind='role_start', role=role, identity=identity)
         try:
-            definition = self.roles[mapping[role]]
             values = {'analysis_focus':task, 'programming_instructions':task, 'problem_statement':task,
                       'specialisation':specialisation, 'context':context, 'proposal':task}
             if role == 'archive_explorer':
@@ -693,7 +692,7 @@ class Workflow:
         if op == 'committee':
             reviews = ''
             for i,(name,spec) in enumerate(self.specs.items()):
-                submission, role_identity = self._committee_review(
+                submission, _ = self._committee_review(
                     request['proposal'], request['context'], name, spec)
                 reviews += f"\n\nReviewer {i}'s review:\n" + submission
             return reviews
@@ -926,7 +925,6 @@ class Workflow:
                 requested_op = request.get('op')
                 if requested_op == 'submit':
                     return self._structured_submission(request)
-                op = self.aliases.get(requested_op, requested_op)
                 # Role comes from the actual executing environment, never JSON.
                 trusted_role = role or ('reviewer' if readonly is True else 'software_developer' if readonly == 'editor' else 'orchestrator')
                 return {'output':json.dumps(self.dispatch(request, trusted_role)), 'returncode':0}
