@@ -23,6 +23,7 @@ from mini_swe_rsi.online import OnlineError, OnlineLoop, execution_hash
 from mini_swe_rsi.driver import initial_code
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.core import ROOT
+from tests.event_helpers import broker_events
 
 
 _WORKFLOW_SPEC = importlib.util.spec_from_file_location("online_acceptance_workflow",
@@ -37,7 +38,7 @@ class FakeBroker:
     def __init__(self):
         self.sessions = []
         self.finished = []
-        self.jobs = {}
+        self.candidate_jobs = {}
 
     def budget_limits(self):
         return {"seconds": 600, "calls": 50, "main_iterations": 50,
@@ -58,16 +59,16 @@ class FakeBroker:
                 "unmetered_calls": 0}
 
     def register_candidate_job(self, job_id, callback, metadata=None):
-        if job_id in self.jobs and self.jobs[job_id]["metadata"] != (metadata or {}):
+        if job_id in self.candidate_jobs and self.candidate_jobs[job_id]["metadata"] != (metadata or {}):
             raise AssertionError("candidate job identity changed")
-        self.jobs.setdefault(job_id, {"callback": callback, "metadata": metadata or {},
+        self.candidate_jobs.setdefault(job_id, {"callback": callback, "metadata": metadata or {},
                                        "calls": 0, "result": None})
 
     def candidate_check(self, token, payload):
-        job = self.jobs[payload["job_id"]]
+        job = self.candidate_jobs[payload["job_id"]]
         job["calls"] += 1
         if job["result"] is None:
-            job["result"] = job["callback"]()
+            job["result"] = job["callback"](payload)
         return job["result"]
 
 
@@ -80,6 +81,7 @@ class FakeDriver:
         self.task_calls = []
         self.controller_calls = []
         self.check_calls = []
+        self.broker = None
 
     def task_retry(self, code, task_id, output):
         output = Path(output)
@@ -99,20 +101,18 @@ class FakeDriver:
         write(attempt / "task_execution.json", execution)
         write(attempt / "host_result.json", {"result": result, "metrics": metrics,
                                               "record": record, "grade": {"resolved": score},
-                                              "code_hash": execution_hash(code)})
+                                              "code_hash": tree_hash(code),
+                                              "execution_hash": execution_hash(code)})
         # The host writes the active version after the driver returns.  The
         # fixture leaves it unset so it cannot accidentally claim H0 when the
         # second generation executes the next task.
-        write(output / "execution_summary.json", {"task_id": task_id,
-                                                    "exit_status": "Submitted",
-                                                    "code_hash": execution_hash(code),
-                                                    "record": record,
-                                                    "attempt": "attempt_0"})
-        (output / "trace.txt").write_text("public fixture trace\n")
-        (output / "execution_tree.txt").write_text("public fixture execution tree\n")
-        (output / "patch.diff").write_text("")
-        (output / "answer.txt").write_text("fixture\n")
-        write(output / "activation.json", {"command": "benchmark", "fixture": True})
+        for name, content in (("trace.txt", "public fixture trace\n"),
+                              ("execution_tree.txt", "public fixture execution tree\n"),
+                              ("patch.diff", ""), ("answer.txt", "fixture\n")):
+            (attempt / name).write_text(content)
+        write(attempt / "activation.json", {"command": "benchmark", "fixture": True})
+        root = output.parents[1]
+        write(root / "private/task_grading" / output.relative_to(root) / "attempts.json", [])
         return record
 
     def controller(self, code, logs, command_args, token, *, target=None, prompt=None, **_):
@@ -155,6 +155,17 @@ class FakeDriver:
             # callback validation exercises the same path.
             write(logs / "check_plan_declared.json",
                   {"criterion": "current_task_failure_fixed"})
+            write(logs / "workflow_state.json", {"status": "improving",
+                                                   "completed_steps": 4,
+                                                   "active": {"index": 4}})
+            if self.broker is not None:
+                round_id = command_args[command_args.index("--round-id") + 1]
+                proposal_id = command_args[command_args.index("--candidate-id") + 1]
+                self.broker.candidate_check(token, {
+                    "job_id": f"candidate:{round_id}:{proposal_id}",
+                    "task_id": feedback_task, "round_id": round_id,
+                    "candidate": proposal_id, "parent_version": version,
+                    "stage": "candidate_check", "check_revision": "1"})
             write(logs / "workflow_state.json", {"status": "completed",
                                                    "completed_steps": 7,
                                                    "active": None})
@@ -173,17 +184,31 @@ class FakeDriver:
         return 0, "fixture"
 
     def candidate_check(self, candidate, task_id, output, *, job_id=None,
-                        parent_record=None, check_revision="1"):
+                        parent_record=None, check_revision="1", parent_code=None,
+                        mechanism_plan=None):
         self.check_calls.append((str(candidate), task_id, str(output), job_id))
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
         score = 1.0 if (Path(candidate) / "minisweagent" / "online_fixture_marker.py").exists() else 0.0
         record = {"problem_id": task_id, "score": score, "tokens_used": 12,
                   "wall_time": 0.01}
-        write(output / "host_result.json", {"record": record,
+        attempt = output / "attempt_0"
+        write(attempt / "host_result.json", {"record": record,
                                               "metrics": {"calls": 1, "tokens": 12},
                                               "result": {"exit_status": "Submitted"},
-                                              "code_hash": execution_hash(candidate)})
+                                              "code_hash": tree_hash(candidate),
+                                              "execution_hash": execution_hash(candidate)})
+        write(attempt / "task_execution.json", {"code_hash": tree_hash(candidate),
+                                                 "execution_hash": execution_hash(candidate)})
+        write(attempt / "activation.json", {"command": "benchmark"})
+        root = output.parents[2]
+        write(root / "private/candidate_checks" / (str(job_id).replace('/', '_') + '.json'),
+              {"job_id": job_id, "task_id": task_id,
+               "check_revision": str(check_revision),
+               "candidate_hash": tree_hash(candidate),
+               "execution_hash": execution_hash(candidate),
+               "parent_hash": parent_record.get("code_hash") if parent_record else None,
+               "record": record})
         return {"job_id": job_id, "task_id": task_id, "check_revision": str(check_revision),
                 "record": record, "metrics": {"calls": 1, "tokens": 12},
                 "execution_status": "Submitted"}
@@ -197,8 +222,10 @@ def initial_tree(tmp_path):
 
 
 def make_loop(tmp_path, initial_tree, driver, broker=None, tasks=("t1", "t2")):
+    broker = broker or FakeBroker()
+    driver.broker = broker
     return OnlineLoop(tmp_path / "run", tasks, driver=driver,
-                      broker=broker or FakeBroker(), active_code=initial_tree,
+                      broker=broker, active_code=initial_tree,
                       model_identity={"model": "fixture"}, service_identity={"endpoint": "fixture"})
 
 
@@ -288,7 +315,8 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
     entered = threading.Event()
     release = threading.Event()
 
-    def callback():
+    def callback(payload):
+        assert payload['job_id'] == job_id
         calls.append(time.time())
         entered.set()
         assert release.wait(2)
@@ -380,7 +408,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
         restarted.finish(token3)
         restarted.close()
         assert any(e.get("kind") == "candidate_check_complete" and
-                   e.get("job_id") == job_id for e in broker.events)
+                   e.get("job_id") == job_id for e in broker_events(broker))
     finally:
         broker.finish(token1)
         broker.finish(token2)

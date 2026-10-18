@@ -87,4 +87,4 @@ RUN_DOCKER_TESTS=1 uv run pytest -q
 
 Docker 测试使用本地模拟模型，不调用 `.env` 推理服务，检查版本实际加载、在线继承、接任/拒绝/跳过、恢复、候选机制测试及隔离边界。
 
-已完成 P1 与批次 C：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。批次 D、E 尚未实施。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1 精简验收](docs/online-rsi-p1-review.md)与[批次 C 验收](docs/online-rsi-phase-c-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。
+已完成 P1 与 P2（批次 C、D）：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列；事件完整落盘，结果读取、计量和公开过滤共享实现，独立身份与接任检查保留。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。批次 E 尚未实施。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1 精简验收](docs/online-rsi-p1-review.md)、[批次 C 验收](docs/online-rsi-phase-c-review.md)与[批次 D 验收](docs/online-rsi-phase-d-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。

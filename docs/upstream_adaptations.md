@@ -139,3 +139,9 @@ Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型diges
 移除 Workflow 的模式参数与分支及 bridge 的 `--online` 开关，原在线诊断、写权限、候选检查和恢复授权无条件执行。保留审计元数据的 `online=true` 事实字段。容器入口在模型初始化前验证完整在线身份，benchmark 仍供首次作答和独立复测使用。
 
 删除旧 Budget、阶段/24 小时时钟和开发题前缀机制；Broker、Driver 仅执行各自真实任务/请求/工具期限，容器字段改为 `session_remaining_seconds`，无期限为 null/None。唯一任务冻结来自 `task_limit` 与 `online_task_selection.json`。带旧预算或前缀选择产物的运行明确拒绝，不自动迁移。协议版本保持不变，控制源码摘要继续阻止跨实现恢复。保留原生限额、同模型、独立评分、真实用量与未知消耗。验收见 [online-rsi-phase-c-review.md](online-rsi-phase-c-review.md)。
+
+## 2026-10-18 批次 D：重复实现与冗余清理
+
+移除未消费的 behavioral 摘要和 Broker 内存事件列表，事件审计继续完整落盘；正常与错误回复共享有效用量和费用累计，迟到回复保持独立规则。任务结果排序、正规对象读取及摘要匹配统一，但反馈、评分、候选启动、私有证据和接任门槛仍在各边界执行。
+
+报告与公开归档共享递归过滤，不扩大各自白名单；新增 helper 纳入控制摘要。宿主和容器分别复用本次加载的 workflow，保留独立身份核验及活动归档配置加载。测试接口按生产证据合同统一，删除类身份绕过。固定上游原文、锁、角色权限、七步和原生限额保持，不引入批次 E 的兼容性清理。实施与验收见 [online-rsi-phase-d-review.md](online-rsi-phase-d-review.md)。

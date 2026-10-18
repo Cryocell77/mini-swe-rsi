@@ -7,6 +7,7 @@ import urllib.error
 import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
+from tests.event_helpers import broker_events
 
 
 @pytest.fixture
@@ -73,7 +74,7 @@ def test_http_status_retained_without_remote_body_or_credentials(proxy):
     token = broker.session('proposal:fixture', seconds=None)
     with pytest.raises(ModelError, match='HTTPError'):
         broker.complete(token, {'messages': [{'role': 'user', 'content': 'fixture'}]})
-    event = broker.events[-1]
+    event = broker_events(broker)[-1]
     assert event['http_status'] == 429 and 'private' not in str(event)
     assert broker.sessions[token]['unmetered_calls'] == 1
 

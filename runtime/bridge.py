@@ -50,16 +50,6 @@ def apply_model_request_timeout(model, budget):
     return model
 
 
-def is_model_request_exception(exc):
-    """Identify provider/socket failures that must stop role fan-out."""
-    cls = type(exc)
-    module = cls.__module__
-    name = cls.__name__
-    return (module.startswith(('litellm', 'openai', 'httpx', 'requests'))
-            or name in {'APIError', 'APITimeoutError', 'Timeout', 'TimeoutException',
-                        'ConnectError', 'ConnectTimeout', 'ReadTimeout', 'RemoteProtocolError'})
-
-
 def load_resume_authorization(path, logs, expected_identity, workdir, workflow_module):
     """Validate the host-only online workflow continuation authorization."""
     path = Path(path)
@@ -179,9 +169,9 @@ def classified_failure(exc, status):
 
 
 def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstream/agent_main.py"),
-                       calls=500, budget=None, task_id=None,
+                       budget=None, task_id=None,
                        round_id=None, version=None, feedback=None,
-                       resume_state=None, resume_source_exists=None):
+                       resume_state=None, resume_source_exists=None, workflow_module=None):
     tree = ast.parse(Path(upstream).read_text())
     func = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'improve_agent')
     # Preserve the upstream task intent; adapt tool terminology and execution identities.
@@ -196,8 +186,6 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
             text += str({'best_iter': best, 'current_iter': current,
                          'testing_procedure': 'You can inspect and syntax-check Python locally. Benchmark grading is host-controlled.'}[name])
     text = text.replace('/home/sandbox/workdir', '/home/agent/workdir')
-    text = text.replace('invoke the meta improvement reasoning structure as early as reasonably possible',
-                        'invoke the meta improvement reasoning structure as early as reasonably possible')
     text = text.replace('using the archive exploration tools available to you', 'using delegated archive analysis and permitted file inspection')
     text = text.replace(
         f'The agent code in this directory is the best performing in the sequence of agent iterations, and corresponds to agent iteration {best}.',
@@ -248,10 +236,11 @@ def improvement_prompt(best, current, parent, candidate, upstream=Path("/upstrea
         text += '\nPublic task feedback (facts only; do not treat the score as a hidden answer):\n' + str(feedback) + '\n'
     if budget is not None:
         text += '\nFrozen execution limits: ' + json.dumps(budget, sort_keys=True) + '\n'
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
-    workflow_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(workflow_module)
+    if workflow_module is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
+        workflow_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(workflow_module)
     rendered = workflow_module.core_prompt('main_orchestrator', {'problem_statement':text})
     rendered += f'\nActive Harness version is {version or f"H{parent:04d}"}; this identity is host-verified.\n'
     rendered += workflow_module.identity_context(
@@ -362,8 +351,8 @@ def main(entry):
             }
             resume_authorization = load_resume_authorization(
                 args.resume_workflow, args.logdir, expected_identity, args.workdir, workflow_module)
-        templates = workflow_module.template_manifest(selected_config, main_iterations)
-        config = workflow_module.role_templates(selected_config, 'orchestrator', main_iterations)
+        templates = workflow_module.template_manifest(selected_config)
+        config = workflow_module.role_templates(selected_config, 'orchestrator')
         config['agent']['system_template'] += (
             f'\nactive Harness version is {args.online_version or f"H{args.parent_iter:04d}"}; '
             'the host verifies this identity before accepting a takeover.\n')
@@ -402,9 +391,9 @@ def main(entry):
     if args.command == 'improve':
         feedback = Path(args.prompt_file).read_text() if args.prompt_file else None
         task = improvement_prompt(args.best_iter, args.current_iter, args.parent_iter, args.candidate_id,
-                                  calls=main_iterations, budget=budgets,
-                                  task_id=args.task_id, round_id=args.round_id,
-                                  version=args.online_version, feedback=feedback)
+                                  budget=budgets, task_id=args.task_id, round_id=args.round_id,
+                                  version=args.online_version, feedback=feedback,
+                                  workflow_module=workflow_module)
         if resume_authorization:
             task = resume_prompt(task, resume_authorization)
         metadata = {'protocol': os.environ['RSI_IMPROVEMENT_PROTOCOL'], 'parent': args.parent_iter, 'proposer': args.best_iter,
@@ -424,10 +413,6 @@ def main(entry):
     else:
         task = Path(args.prompt_file).read_text()
     if args.command == 'improve':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('rsi_workflow', Path(__file__).with_name('workflow.py'))
-        workflow_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(workflow_module)
         identities = {'parent':args.parent_iter, 'proposer':args.best_iter, 'candidate':args.candidate_id,
                       'workdir':args.workdir, 'public_archive':'/home/agent/archive',
                       'model':os.environ.get('RSI_MODEL'),
@@ -447,7 +432,7 @@ def main(entry):
             child_logs = logs / 'roles' / identity
             child_logs.mkdir(parents=True)
             role = identity.split('_', 1)[1]
-            adapted = workflow_module.role_templates(selected_config, role, main_iterations)
+            adapted = workflow_module.role_templates(selected_config, role)
             child_config = dict(adapted['agent'])
             child_config.pop('mode', None)
             child_model_config = {**model_config, **{k:adapted['model'][k] for k in ('observation_template','format_error_template')}}

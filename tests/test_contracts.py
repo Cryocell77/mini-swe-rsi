@@ -6,16 +6,16 @@ from mini_swe_rsi.core import ROOT, tree_hash
 from mini_swe_rsi.driver import validate_code
 
 
-def test_comments_are_not_behavior_and_symlinks_rejected(tmp_path):
+def test_full_source_hash_includes_comments_and_symlinks_rejected(tmp_path):
     code = tmp_path/'minisweagent/agents'
     code.mkdir(parents=True)
     p = code/'default.py'
     p.write_text('x = 1\n')
-    before = tree_hash(tmp_path, True)
+    before = tree_hash(tmp_path)
     p.write_text('# comment only\nx = 1\n')
-    assert tree_hash(tmp_path, True) == before
+    assert tree_hash(tmp_path) != before
     p.write_text('x = 2\n')
-    assert tree_hash(tmp_path, True) != before
+    assert tree_hash(tmp_path) != before
     (code/'escape').symlink_to('/etc/passwd')
     with pytest.raises(ValueError):
         validate_code(tmp_path)

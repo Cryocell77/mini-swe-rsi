@@ -96,7 +96,7 @@ def tool_aliases(source=SOURCE):
     return aliases
 
 
-def instructions(role="orchestrator", calls=500):
+def instructions(role="orchestrator"):
     text = '''SICA callable transport: for structured operations, emit one normal mini bash action whose entire command is
 sica-workflow {"op":"..."}
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
@@ -193,7 +193,7 @@ def role_capabilities(role, source=SOURCE):
     return {'operations':ops, 'delegates':delegates}
 
 
-def role_templates(config, role, calls=500):
+def role_templates(config, role):
     """Improve-only adapter, derived from the actually selected archived config.
 
     Keep the archived text action formatting/parser vocabulary. Replace generic
@@ -201,11 +201,13 @@ def role_templates(config, role, calls=500):
     """
     adapted = copy.deepcopy(config)
     original_system = config['agent']['system_template']
+    roles = definitions()[2]
     # mini's parser accepts one text action; restricted roles cannot use shell composition.
     formatting = (original_system if role in ('software_developer','general_problem_solver')
                   else original_system.replace(' (or commands connected with && or ||)', ''))
-    adapted['agent']['system_template'] = (definitions()[2][ROLE_MAP[role]]['SYSTEM_PROMPT']
-        + '\n' + definitions()[2][ROLE_MAP[role]]['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role, calls))
+    role_definition = roles[ROLE_MAP[role]]
+    adapted['agent']['system_template'] = (role_definition['SYSTEM_PROMPT']
+        + '\n' + role_definition['AGENT_DESCRIPTION'] + '\n' + formatting + '\n' + instructions(role))
     adapted['agent']['instance_template'] = '{{task}}\nShared session at role start: {{session_status}}'
     example = 'sica-workflow {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":40}'
     submission_example = 'sica-workflow {"op":"submit","report":"<full non-empty report>"}'
@@ -226,7 +228,7 @@ def role_templates(config, role, calls=500):
     return adapted
 
 
-def template_manifest(config, calls=500):
+def template_manifest(config):
     fields = {'agent':('system_template','instance_template'),
               'model':('observation_template','format_error_template')}
     def selected(value):
@@ -234,7 +236,7 @@ def template_manifest(config, calls=500):
     def sha(value):
         return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     return {'selected_config_templates_sha256':sha(selected(config)),
-            'roles':{role:sha(selected(role_templates(config,role,calls))) for role in ROLE_MAP}}
+            'roles':{role:sha(selected(role_templates(config,role))) for role in ROLE_MAP}}
 
 
 def identity_context(identities, active_stage):

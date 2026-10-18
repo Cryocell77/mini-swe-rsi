@@ -6,6 +6,7 @@ import time
 import pytest
 
 from mini_swe_rsi.broker import Broker, ModelError
+from tests.event_helpers import broker_events
 
 
 def test_model_and_limits_are_host_owned(tmp_path, monkeypatch):
@@ -110,7 +111,7 @@ def test_normalized_text_messages_match_budget_and_wire(tmp_path, monkeypatch):
         broker.complete(token, {'messages':messages})
         wire = received[0]['messages']
         assert set(wire[0]) == {'role','content','reasoning_content'}
-        event = broker.events[-1]
+        event = broker_events(broker)[-1]
         assert event['messages'] == wire
         assert event['normalized_characters'] == len(json.dumps(wire, ensure_ascii=False))
         assert event['original_characters'] > 60000 > event['normalized_characters']
@@ -140,7 +141,7 @@ def test_service_actual_prompt_over_budget_is_metered_but_never_returned(tmp_pat
     try:
         with pytest.raises(ModelError, match='ContextLimitExceeded'):
             broker.complete(token, {'messages':[{'role':'user','content':'short'}]})
-        event = broker.events[-1]
+        event = broker_events(broker)[-1]
         assert event['context_budget_basis'] == 'service_prompt_tokens'
         assert event['service_prompt_minus_host_estimate'] > 0
         assert 'agent_response' not in event
@@ -165,8 +166,9 @@ def test_missing_or_invalid_service_prompt_usage_cannot_bypass_budget(tmp_path, 
     try:
         with pytest.raises(ModelError, match='token accounting unavailable'):
             broker.complete(token, {'messages':[]})
-        assert broker.events[-1]['response']['usage'] == usage
-        assert 'agent_response' not in broker.events[-1]
+        event = broker_events(broker)[-1]
+        assert event['response']['usage'] == usage
+        assert 'agent_response' not in event
         assert broker.finish(token)['unmetered_calls'] == 1
     finally:
         broker.close()

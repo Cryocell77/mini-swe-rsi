@@ -23,7 +23,7 @@ def test_grading_recovery_keeps_same_answer_and_respects_persistent_retry_cap(tm
     write(output/'task_execution.json', {'result': {'exit_status': 'Submitted'},
         'metrics': {'tokens': 100, 'cached_tokens': 80, 'calls': 10},
         'agent_seconds': 2, 'started': 1, 'patch_base_commit': 'fixture',
-        'code_hash': tree_hash(code), 'behavioral_hash': tree_hash(code, True)})
+        'code_hash': tree_hash(code)})
     (output/'patch.diff').write_text('same model-produced patch')
     calls = []
     def score(pid, patch, directory):

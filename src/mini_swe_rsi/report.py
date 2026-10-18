@@ -5,13 +5,9 @@ from collections import Counter
 from pathlib import Path
 
 from .core import read, write
+from .public_filter import public_value as _public_report_value
 
 
-_PRIVATE_REPORT_KEYS = {
-    'api_key', 'openai_api_key', 'rsi_token', 'authorization', 'password',
-    'secret', 'credentials', 'raw_response', 'messages', 'prompt',
-    'grade', 'evidence_path', 'private', 'session_token',
-}
 _ONLINE_PROTOCOL = 'mini-swe-rsi-online-v2'
 _LEGACY_MARKERS = (
     'baseline.json', 'preflight.json', 'gates.json', 'champions.json',
@@ -19,19 +15,6 @@ _LEGACY_MARKERS = (
     'results', 'probes', 'private/final',
     'budget.json', 'execution_scope.json', 'dev_selection.json',
 )
-
-
-def _public_report_value(value, key=''):
-    """Copy report data while dropping credentials and grader internals."""
-    lowered = key.lower()
-    if lowered in _PRIVATE_REPORT_KEYS or lowered.endswith('_api_key'):
-        return '[redacted]'
-    if isinstance(value, dict):
-        return {name: _public_report_value(item, name) for name, item in value.items()
-                if name.lower() not in _PRIVATE_REPORT_KEYS and not name.lower().endswith('_api_key')}
-    if isinstance(value, list):
-        return [_public_report_value(item, key) for item in value]
-    return value
 
 
 def _ensure_online_root(root):

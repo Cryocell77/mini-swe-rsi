@@ -8,6 +8,7 @@ import pytest
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget
 from mini_swe_rsi.core import secrets
+from tests.event_helpers import broker_events
 
 
 CAPS = dict(id='deepseek-flash', context_window=1048576, max_output_tokens=393216,
@@ -161,7 +162,8 @@ def test_prefix_continuation_is_one_iteration_and_aggregates_usage(broker):
     assert result['usage']['prompt_cache_hit_tokens']==6
     metrics=broker.finish(token)
     assert metrics['calls']==2 and metrics['iterations']=={'main':1} and metrics['cached_tokens']==6
-    assert [e['logical_completion_final'] for e in broker.events]==[False,True]
+    model_events = [e for e in broker_events(broker) if e.get('kind') == 'model_call']
+    assert [e['logical_completion_final'] for e in model_events]==[False,True]
 
 
 def test_five_total_requests_never_returns_incomplete_action(broker):
@@ -170,7 +172,7 @@ def test_five_total_requests_never_returns_incomplete_action(broker):
     with pytest.raises(ModelError,match='ContinuationLimitExceeded'):
         broker.complete(token,{'messages':[]})
     assert len(requests)==5 and broker.sessions[token]['calls']==5
-    assert not any('agent_response' in e for e in broker.events)
+    assert not any('agent_response' in e for e in broker_events(broker))
 
 
 def test_no_fake_continuation_on_unsupported_provider(broker):
@@ -187,7 +189,7 @@ def test_no_old_context_cap_and_usage_is_authoritative(broker):
     requests=endpoint(broker,iter([reply(usage={'total_tokens':40002,'prompt_tokens':40000,'completion_tokens':2})]))
     broker.complete(token,{'messages':[{'role':'user','content':'x '*40000}]})
     assert len(requests)==1
-    assert broker.events[-1]['host_prompt_tokens_estimate'] is None
+    assert broker_events(broker)[-1]['host_prompt_tokens_estimate'] is None
     token=broker.session('over-capacity')
     endpoint(broker,iter([reply(usage={'total_tokens':1048578,'prompt_tokens':1048576,'completion_tokens':2})]))
     with pytest.raises(ModelError,match='ContextLimitExceeded'):
@@ -279,3 +281,36 @@ def test_bad_cache_usage_retains_charged_tokens_and_conservative_cost(broker):
     usage=broker.finish(token)
     assert usage['calls']==1 and usage['tokens']==7 and usage['unmetered_calls']==0
     assert usage['cost_upper_bound_usd']>0
+
+
+@pytest.mark.parametrize('cache_override', [
+    {'prompt_cache_hit_tokens': None},
+    {'prompt_tokens_details': ['invalid-cache-details']},
+])
+def test_explicit_invalid_cache_usage_is_not_treated_as_omitted(broker, cache_override):
+    token = broker.session('invalid-cache-field')
+    usage = {'total_tokens': 7, 'prompt_tokens': 5, 'completion_tokens': 2}
+    usage.update(cache_override)
+    endpoint(broker, iter([reply(usage=usage)]))
+    with pytest.raises(ModelError, match='Invalid cached token usage'):
+        broker.complete(token, {'messages': []})
+    metrics = broker.finish(token)
+    assert metrics['tokens'] == 7 and metrics['cached_tokens'] == 0
+    assert metrics['unmetered_calls'] == 0
+    assert broker_events(broker)[-1]['cache_usage_invalid'] is True
+
+
+def test_error_completion_uses_common_usage_and_cache_accounting(broker):
+    token = broker.session('error-cache-accounting')
+    usage = {'total_tokens': 7, 'prompt_tokens': 5, 'completion_tokens': 2,
+             'prompt_cache_hit_tokens': None}
+    endpoint(broker, iter([{'error': {'type': 'server_error', 'message': 'private'},
+                           'usage': usage}]))
+    with pytest.raises(ModelError, match='Upstream completion error'):
+        broker.complete(token, {'messages': []})
+    metrics = broker.finish(token)
+    assert metrics['tokens'] == 7 and metrics['cached_tokens'] == 0
+    assert metrics['unmetered_calls'] == 0 and metrics['cost_upper_bound_usd'] > 0
+    event = broker_events(broker)[-1]
+    assert event['transport_fault'] == 'upstream_error'
+    assert event['usage'] == usage and event['cache_usage_invalid'] is True

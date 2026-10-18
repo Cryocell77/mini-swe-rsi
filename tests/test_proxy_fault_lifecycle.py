@@ -11,6 +11,7 @@ import pytest
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget
 from mini_swe_rsi.core import read, write
+from tests.event_helpers import broker_events
 
 
 def _response(*, usage=None, choices=None, error=None):
@@ -127,7 +128,7 @@ def test_missing_usage_and_error_completion_pause_without_exposing_error_object(
             marker = read(broker.transport_pause_path)
             assert marker['reason'] == reason
             assert 'private body' not in (broker.root / 'events.jsonl').read_text()
-            assert 'agent_response' not in broker.events[-1]
+            assert 'agent_response' not in broker_events(broker)[-1]
         finally:
             broker.close()
             broker.transport_pause_path.unlink(missing_ok=True)
@@ -151,10 +152,10 @@ def test_late_response_is_usage_ledger_only_and_never_reaches_agent(make_broker)
             broker.complete(token, payload)
         release.set()
         deadline = time.time() + 1
-        while not any(event.get('kind') == 'late_model_response' for event in broker.events):
+        while not any(event.get('kind') == 'late_model_response' for event in broker_events(broker)):
             assert time.time() < deadline
             time.sleep(.01)
-        late = next(event for event in broker.events if event.get('kind') == 'late_model_response')
+        late = next(event for event in broker_events(broker) if event.get('kind') == 'late_model_response')
         assert late['returned_to_agent'] is False
         assert late['usage'] == {'total_tokens': 8, 'prompt_tokens': 5, 'completion_tokens': 3}
         assert 'agent_response' not in late

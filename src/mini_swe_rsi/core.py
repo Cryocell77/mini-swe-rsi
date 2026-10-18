@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -28,26 +27,52 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def tree_hash(path, behavioral=False):
+def tree_hash(path):
     h = hashlib.sha256()
     for p in sorted(Path(path).rglob('*')):
         if not p.is_file() or p.is_symlink() or '__pycache__' in p.parts:
             continue
         content = p.read_bytes()
-        if behavioral and p.suffix == '.py':
-            import ast
-            try:
-                content = ast.dump(ast.parse(content), include_attributes=False).encode()
-            except SyntaxError:
-                pass
-        elif behavioral and p.suffix in ('.yaml', '.yml'):
-            import yaml
-            try:
-                content = json.dumps(yaml.safe_load(content), sort_keys=True).encode()
-            except (ValueError, yaml.YAMLError):
-                pass
         h.update(str(p.relative_to(path)).encode() + b'\0' + content)
     return h.hexdigest()
+
+
+def attempt_result_paths(root, filename='host_result.json'):
+    """Return durable task-result paths in retry order.
+
+    Both the task and candidate-check paths may contain a top-level result from
+    older runs or one result per retry.  Keep the ordering and filesystem
+    boundary in one place; callers still decide which result fields establish
+    scoring, activation, or takeover authority.
+    """
+    root = Path(root)
+    attempts = sorted(
+        (p for p in root.glob('attempt_*') if p.is_dir() and not p.is_symlink()),
+        key=lambda p: (
+            int(p.name.split('_', 1)[1])
+            if p.name.split('_', 1)[1].isdigit() else 10**9,
+            p.name,
+        ),
+    )
+    return [p / filename for p in attempts] + [root / filename]
+
+
+def read_regular_json(path):
+    """Read a durable JSON record only when it is a regular, non-link file."""
+    path = Path(path)
+    if not path.exists() or not path.is_file() or path.is_symlink():
+        return None
+    value = read(path)
+    if not isinstance(value, dict):
+        raise ValueError(f'JSON record is not an object: {path}')
+    return value
+
+
+def result_matches_source(result, expected_hashes):
+    """Match a host result against a full or execution source digest."""
+    hashes = {result.get(key) for key in ('code_hash', 'full_source_hash', 'execution_hash')} - {None}
+    expected = set(expected_hashes) - {None}
+    return bool(hashes) and bool(hashes.intersection(expected))
 
 
 def execution_hash(path):

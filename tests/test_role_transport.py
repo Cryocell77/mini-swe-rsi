@@ -14,6 +14,7 @@ from jinja2 import Template
 
 from mini_swe_rsi.core import ROOT, improvement_contract
 from mini_swe_rsi.broker import Broker, ModelError
+from tests.event_helpers import broker_events
 
 w = runpy.run_path(str(ROOT/'runtime/workflow.py'))
 bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
@@ -147,5 +148,6 @@ def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypat
         with pytest.raises(ModelError,match='TimeExceeded'):broker.tool(token,{'command':'touch x'})
         assert broker.status(token)['terminal_reason']=='TimeExceeded'
         assert broker.status(token)['calls']==0 and broker.sessions[token]['tool_calls']==0
-        assert broker.events[-1]['kind']=='tool_rejection' and not broker.events[-1]['actual_call']
+        event = broker_events(broker)[-1]
+        assert event['kind']=='tool_rejection' and not event['actual_call']
     finally:broker.close()

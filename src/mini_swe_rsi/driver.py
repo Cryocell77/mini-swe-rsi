@@ -4,14 +4,13 @@ import json
 import math
 import runpy
 import hashlib
-import os
 import shutil
 import subprocess
-import sys
 import threading
 import tempfile
 import time
 import uuid
+from types import SimpleNamespace
 from pathlib import Path
 
 import docker
@@ -19,7 +18,9 @@ import requests
 import yaml
 
 from .archive_view import online_archive_view
-from .core import ROOT, append_event, command, digest, read, tree_hash, execution_hash, write, improvement_contract
+from .core import (ROOT, append_event, attempt_result_paths, command, digest,
+                   execution_hash, read, read_regular_json, result_matches_source,
+                   tree_hash, write, improvement_contract)
 
 
 def session_remaining(deadline):
@@ -216,9 +217,9 @@ class Driver:
                 if frozen_contract != contract:
                     raise RuntimeError('Frozen improvement task contract changed before launch')
             execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
-            shared_calls = execution_limits['main_iterations']
+            workflow_module = SimpleNamespace(**runpy.run_path(str(ROOT/'runtime/workflow.py')))
             render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-            render_kwargs = {'calls':shared_calls, 'budget':execution_limits}
+            render_kwargs = {'budget':execution_limits, 'workflow_module':workflow_module}
             render_kwargs.update(task_id=task_id, round_id=round_id, version=version)
             if prompt is not None and Path(prompt).exists():
                 render_kwargs['feedback'] = Path(prompt).read_text()
@@ -226,9 +227,8 @@ class Driver:
                               ROOT/'vendor/sica/agent_main.py', **render_kwargs)
             if resume is not None:
                 rendered = runpy.run_path(str(ROOT/'runtime/bridge.py'))['resume_prompt'](rendered, resume)
-            template_manifest = runpy.run_path(str(ROOT/'runtime/workflow.py'))['template_manifest']
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
-            task_identity = {'template_manifest':template_manifest(selected_config, shared_calls), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
+            task_identity = {'template_manifest':workflow_module.template_manifest(selected_config), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
                              'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
                              'renderer_sha256': contract['renderer_sha256'],
                              'upstream_task_sha256': contract['upstream_task_sha256'],
@@ -281,7 +281,6 @@ class Driver:
                'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
         if task_identity:
             env['RSI_IMPROVEMENT_PROTOCOL'] = task_identity['protocol']
-            env['RSI_IMPROVEMENT_CALLS'] = str(shared_calls)
         args = ['python', '-m', module, *command_args, '--logdir', '/logs']
         c = self.client.containers.run(self.image.id, args, detach=True, volumes=mounts,
                 network=self.network.name, environment=env, cap_drop=['ALL'],
@@ -296,7 +295,7 @@ class Driver:
                 self.broker.sessions[token]['stage_tools'] = StageTools(
                     self, logs, target, view if archive is not None else None, self.root/'tool_outputs')
         append_event(self.root, dict(kind='agent_launch', code=str(Path(code).resolve()),
-                     code_hash=tree_hash(code), behavioral_hash=tree_hash(code, True),
+                     code_hash=tree_hash(code),
                      module=module, image_id=self.image.id, container_id=c.id,
                      command=command_args[0], improvement_task=task_identity, archive=str(archive) if archive else None,
                      mounts=[{'destination': m['Destination'], 'read_write': m['RW']} for m in c.attrs['Mounts']],
@@ -429,7 +428,7 @@ class Driver:
         write(output/'metrics.json', metrics)
         write(output/'task_execution.json', {'result': result, 'metrics': metrics,
               'agent_seconds': agent_seconds, 'started': start, 'patch_base_commit': base,
-              'code_hash': tree_hash(code), 'behavioral_hash': tree_hash(code, True)})
+              'code_hash': tree_hash(code)})
         return self.finish_task(task_id, output, grading_namespace=grading_namespace)
 
     def finish_task(self, task_id, output, *, grading_namespace='grading'):
@@ -446,8 +445,9 @@ class Driver:
         grade = None
         for item in attempts:
             result_file = Path(item['directory'])/'result.json'
-            if result_file.exists() and read(result_file).get('completed'):
-                grade = read(result_file)
+            saved_grade = read_regular_json(result_file)
+            if saved_grade is not None and saved_grade.get('completed'):
+                grade = saved_grade
                 break
         while grade is None and len(attempts) < 2:
             directory = self.root/'private'/grading_namespace/uuid.uuid4().hex
@@ -468,20 +468,26 @@ class Driver:
         write(output / 'host_result.json', {'result': result, 'metrics': metrics, 'grade': grade,
               'record': record, 'total_seconds': time.time()-saved['started'],
               'patch_base_commit': saved['patch_base_commit'],
-              'code_hash': saved['code_hash'], 'behavioral_hash': saved['behavioral_hash']})
+              'code_hash': saved['code_hash']})
         return record
 
     def task_retry(self, code, task_id, output, *, grading_namespace='grading'):
         for attempt in range(2):
             attempt_dir = Path(output)/f'attempt_{attempt}'
+            if attempt_dir.is_symlink() or (attempt_dir.exists() and not attempt_dir.is_dir()):
+                raise GradingUnavailable('Task attempt is not a regular directory')
             if attempt_dir.exists():
                 if (attempt_dir/'host_result.json').exists():
-                    prior = read(attempt_dir/'host_result.json')
+                    prior = read_regular_json(attempt_dir/'host_result.json')
+                    if prior is None:
+                        raise GradingUnavailable('Completed task result is not a regular host record')
                     if prior.get('code_hash') != tree_hash(code):
                         raise GradingUnavailable('Completed task source changed; refusing mixed-version results')
                     return prior['record']
                 if (attempt_dir/'task_execution.json').exists():
-                    saved = read(attempt_dir/'task_execution.json')
+                    saved = read_regular_json(attempt_dir/'task_execution.json')
+                    if saved is None:
+                        raise GradingUnavailable('Saved task execution is not a regular host record')
                     if saved['code_hash'] != tree_hash(code):
                         raise GradingUnavailable('Saved task source changed before grading recovery')
                     return self.finish_task(task_id, attempt_dir,
@@ -567,8 +573,7 @@ class Driver:
                     pass
                 self.running.remove(container)
 
-    def mechanism_check(self, parent, candidate, plan, output, *, job_id=None,
-                        check_revision='1'):
+    def mechanism_check(self, parent, candidate, plan, output):
         """Run one frozen mechanism test against parent and candidate.
 
         The test file is copied from the candidate before either process starts,
@@ -641,13 +646,16 @@ class Driver:
             raise InfrastructureError('Candidate source changed during independent check')
         # task_retry may return the second infrastructure attempt. Use its
         # matching durable record rather than attributing an absent first result.
-        host = output / 'host_result.json'
-        for attempt in range(2):
-            path = output / f'attempt_{attempt}' / 'host_result.json'
-            if path.exists() and read(path).get('record') == result:
-                host = path
+        host = evidence = None
+        for path in attempt_result_paths(output):
+            evidence_candidate = read_regular_json(path)
+            if (evidence_candidate is not None
+                    and evidence_candidate.get('record') == result
+                    and result_matches_source(evidence_candidate, {before, execution_before})):
+                host, evidence = path, evidence_candidate
                 break
-        evidence = read(host) if host.exists() else {}
+        if evidence is None:
+            raise InfrastructureError('Candidate check has no matching completed host result')
         private = {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
                    'candidate_hash':after, 'execution_hash':execution_after,
                    'parent_hash':parent_record.get('code_hash') if parent_record else None,
@@ -664,8 +672,7 @@ class Driver:
             if parent_code is None:
                 raise InfrastructureError('Mechanism check requires the active parent source')
             mechanism = self.mechanism_check(parent_code, candidate, mechanism_plan,
-                                             output / 'mechanism', job_id=job_id,
-                                             check_revision=check_revision)
+                                             output / 'mechanism')
             private['mechanism_check'] = mechanism
             if job_id:
                 write(private_path, private)

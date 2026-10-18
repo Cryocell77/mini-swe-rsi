@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mini_swe_rsi.core import ROOT, digest, read, tree_hash, write
+from mini_swe_rsi.core import ROOT, digest, execution_hash as driver_execution_hash, read, tree_hash, write
 from mini_swe_rsi.recovery import load_workflow_authorization, restore_session_accounting
 
 spec = importlib.util.spec_from_file_location('host_resume_workflow', ROOT/'runtime/workflow.py')
@@ -182,7 +182,9 @@ def test_candidate_check_uses_second_attempt_evidence(tmp_path, monkeypatch):
     record={'score':1.0,'problem_id':'t1'}
     write(output/'attempt_1/host_result.json', {
         'record':record,'result':{'exit_status':'Submitted'},
-        'grade':{'resolved':True},'metrics':{'calls':7}})
+            'grade':{'resolved':True},'metrics':{'calls':7},
+            'code_hash':tree_hash(code),
+            'execution_hash':driver_execution_hash(code)})
     monkeypatch.setattr(module,'validate_code',lambda _:None)
     driver=object.__new__(Driver);driver.root=tmp_path
     monkeypatch.setattr(driver,'task_retry',lambda *a,**k:record)

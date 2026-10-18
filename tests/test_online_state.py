@@ -10,18 +10,18 @@ from pathlib import Path
 
 import pytest
 
-from mini_swe_rsi.core import read, write
+from mini_swe_rsi.core import read, tree_hash, write
 from mini_swe_rsi.driver import initial_code
 from mini_swe_rsi.online import OnlineError, OnlineInterrupted, OnlineLoop, execution_hash
 
 
 class Broker:
     def __init__(self):
-        self.jobs = {}
+        self.candidate_jobs = {}
         self.sessions = []
 
     def register_candidate_job(self, job_id, callback, metadata=None):
-        self.jobs.setdefault(job_id, {'callback': callback, 'metadata': metadata or {}, 'result': None})
+        self.candidate_jobs.setdefault(job_id, {'callback': callback, 'metadata': metadata or {}, 'result': None})
 
     def session(self, label, **kwargs):
         token = f't{len(self.sessions)}'
@@ -32,9 +32,9 @@ class Broker:
         return {'calls': 0, 'tokens': 0}
 
     def candidate_check(self, token, payload):
-        job = self.jobs[payload['job_id']]
+        job = self.candidate_jobs[payload['job_id']]
         if job['result'] is None:
-            job['result'] = job['callback']()
+            job['result'] = job['callback'](payload)
         return job['result']
 
 
@@ -44,6 +44,7 @@ class Driver:
         self.diagnostic_tamper = diagnostic_tamper
         self.controller_calls = []
         self.check_calls = []
+        self.broker = None
 
     def task_retry(self, code, task_id, output):
         output = Path(output)
@@ -54,17 +55,23 @@ class Driver:
             execution['code_hash'] = 'wrong'
         write(output / 'attempt_0/task_execution.json', execution)
         write(output / 'attempt_0/host_result.json', {**execution, 'record': record})
+        write(output / 'attempt_0/activation.json', {'command': 'benchmark'})
+        root = output.parents[1]
+        write(root / 'private/task_grading' / output.relative_to(root) / 'attempts.json', [])
         for name, value in {'trace.txt': 'trace', 'execution_tree.txt': 'tree',
                             'patch.diff': '', 'answer.txt': 'answer'}.items():
-            (output / name).write_text(value)
-        write(output / 'activation.json', {'command': 'benchmark'})
+            (output / 'attempt_0' / name).write_text(value)
         return record
 
     def controller(self, code, logs, args, token, **kwargs):
         self.controller_calls.append((Path(code), tuple(args)))
+        command_args = args
+        feedback = read(kwargs['prompt'])
+        feedback_task = feedback['task_id']
+        version = 'H0000'
         target = Path(kwargs['target'])
         (target / 'minisweagent/state_marker.py').write_text('MARKER = 1\n')
-        refs = read(kwargs['prompt'])['evidence_refs']
+        refs = feedback['evidence_refs']
         reports = {'1': {'report': 'failure', 'evidence_refs': refs,
                          'identity': '001_archive_explorer'},
                    '2': {'report': 'mechanism', 'evidence_refs': refs,
@@ -93,7 +100,7 @@ class Driver:
                 'result': {'exit_status': 'Submitted', 'submission': 'archive retry'},
             })
         write(Path(logs) / 'diagnosis.json', {
-            'task_id': read(kwargs['prompt'])['task_id'], 'round_id': 'R0001',
+            'task_id': feedback_task, 'round_id': 'R0001',
             'executor': 'H0000', 'proposer': 'H0000', 'parent': 'H0000',
             'decision': 'improve', 'reason': 'fixture', 'evidence_refs': refs,
             'reports': reports,
@@ -103,20 +110,50 @@ class Driver:
         write(Path(logs) / 'check_plan_declared.json', {
             'revision': '1', 'criterion': 'current_task_failure_fixed',
         })
+        if self.broker is not None:
+            write(Path(logs) / 'workflow_state.json', {
+                'status': 'improving', 'completed_steps': 4,
+                'active': {'index': 4},
+            })
+            round_id = command_args[command_args.index('--round-id') + 1]
+            candidate = command_args[command_args.index('--candidate-id') + 1]
+            payload = {'job_id': f'candidate:{round_id}:{candidate}',
+                       'task_id': feedback_task, 'round_id': round_id,
+                       'candidate': candidate, 'parent_version': version,
+                       'stage': 'candidate_check', 'check_revision': '1'}
+            self.broker.candidate_check(token, payload)
         write(Path(logs) / 'workflow_state.json', {
             'status': 'completed', 'completed_steps': 7, 'active': None,
         })
         return 0, ''
 
-    def candidate_check(self, candidate, task_id, output, **kwargs):
-        self.check_calls.append((Path(candidate), kwargs))
+    def candidate_check(self, candidate, task_id, output, *, job_id=None,
+                        parent_record=None, check_revision='1', parent_code=None,
+                        mechanism_plan=None):
+        self.check_calls.append((Path(candidate), {
+            'job_id': job_id, 'parent_record': parent_record,
+            'check_revision': check_revision, 'parent_code': parent_code,
+            'mechanism_plan': mechanism_plan,
+        }))
         record = {'problem_id': task_id, 'score': 1.0}
-        write(Path(output) / 'host_result.json', {
-            'record': record, 'code_hash': execution_hash(candidate),
+        output = Path(output)
+        attempt = output / 'attempt_0'
+        write(attempt / 'host_result.json', {
+            'record': record, 'code_hash': tree_hash(candidate),
+            'execution_hash': execution_hash(candidate),
             'result': {'exit_status': 'Submitted'},
         })
-        return {'job_id': kwargs.get('job_id'), 'task_id': task_id,
-                'check_revision': kwargs.get('check_revision', '1'),
+        write(attempt / 'task_execution.json', {'code_hash': tree_hash(candidate),
+                                                'execution_hash': execution_hash(candidate)})
+        write(attempt / 'activation.json', {'command': 'benchmark'})
+        root = output.parents[2]
+        write(root / 'private/candidate_checks' / (str(job_id).replace('/', '_') + '.json'),
+              {'job_id': job_id, 'task_id': task_id, 'check_revision': str(check_revision),
+               'candidate_hash': tree_hash(candidate), 'execution_hash': execution_hash(candidate),
+               'parent_hash': parent_record.get('code_hash') if parent_record else None,
+               'record': record})
+        return {'job_id': job_id, 'task_id': task_id,
+                'check_revision': str(check_revision),
                 'execution_status': 'Submitted'}
 
 
@@ -198,8 +235,11 @@ class TerminalProcessDriver(Driver):
 def make_loop(tmp_path, driver=None, broker=None):
     source = tmp_path / 'source'
     initial_code(source)
-    return OnlineLoop(tmp_path / 'run', ('t1',), driver=driver or Driver(),
-                      broker=broker or Broker(), active_code=source,
+    driver = driver or Driver()
+    broker = broker or Broker()
+    driver.broker = broker
+    return OnlineLoop(tmp_path / 'run', ('t1',), driver=driver,
+                      broker=broker, active_code=source,
                       model_identity={'model': 'fixture'},
                       service_identity={'endpoint': 'fixture'})
 
@@ -208,8 +248,8 @@ def test_callback_is_registered_before_check_and_uses_active_parent(tmp_path):
     driver, broker = Driver(), Broker()
     loop = make_loop(tmp_path, driver, broker)
     assert loop.run_once() == 'H0001'
-    assert list(broker.jobs) == ['candidate:R0001:P0001']
-    metadata = broker.jobs['candidate:R0001:P0001']['metadata']
+    assert list(broker.candidate_jobs) == ['candidate:R0001:P0001']
+    metadata = broker.candidate_jobs['candidate:R0001:P0001']['metadata']
     assert metadata['parent_version'] == 'H0000'
     assert metadata['candidate'] == 'P0001'
     assert len(metadata['session_token_sha256']) == 64
@@ -291,7 +331,7 @@ def test_existing_workflow_state_blocks_new_model_process_without_mutation(tmp_p
     assert driver.controller_calls == []
     assert driver.check_calls == []
     assert broker.sessions == []
-    assert broker.jobs == {}
+    assert broker.candidate_jobs == {}
 
 
 def test_interrupted_recovery_refuses_reopening_existing_workflow_state(tmp_path):
@@ -320,7 +360,7 @@ def test_interrupted_recovery_refuses_reopening_existing_workflow_state(tmp_path
     assert driver.controller_calls == []
     assert driver.check_calls == []
     assert broker.sessions == []
-    assert broker.jobs == {}
+    assert broker.candidate_jobs == {}
 
 
 def test_incomplete_diagnosis_does_not_allocate_proposal(tmp_path):
@@ -332,7 +372,7 @@ def test_incomplete_diagnosis_does_not_allocate_proposal(tmp_path):
     assert decision['status'] == 'diagnosis_failed'
     assert decision['proposal'] is None
     assert loop.state['next_proposal'] == 1
-    assert not broker.jobs
+    assert not broker.candidate_jobs
 
 
 def test_incomplete_improve_rejects_candidate_and_consumes_proposal(tmp_path):

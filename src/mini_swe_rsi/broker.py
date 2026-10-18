@@ -5,7 +5,6 @@ import json
 import math
 import copy
 import hashlib
-import inspect
 import re
 import secrets as random_secrets
 import subprocess
@@ -252,7 +251,6 @@ class Broker:
         self._active_request_meta = None
         self.candidate_lock = threading.RLock()
         self.sessions = {}
-        self.events = []
         # Candidate checks are registered by the host before a container can
         # request them.  A remote client supplies only the opaque job id and
         # frozen check parameters; it can never choose a host path or task.
@@ -327,6 +325,47 @@ class Broker:
         return (isinstance(usage, dict)
                 and all(type(usage.get(key)) is int and usage[key] >= 0 for key in keys))
 
+    def _account_usage(self, session, usage, aggregate, event):
+        """Account one valid provider usage record and return cache details.
+
+        Error completions and successful completions share this path so every
+        billable response updates the session ledger identically.  ``event``
+        receives the original usage object and cost evidence; an invalid cache
+        count is retained as a charged-token record while cost accounting uses
+        the conservative zero-cache bound.
+        """
+        if 'prompt_cache_hit_tokens' in usage:
+            # An explicit null is a provider accounting error; it must not be
+            # treated as an omitted cache field.
+            cached = usage['prompt_cache_hit_tokens']
+        else:
+            details = usage.get('prompt_tokens_details')
+            if details:
+                # Truthy non-mappings used to fail while reading ``.get``;
+                # retain the conservative invalid-cache result explicitly.
+                cached = details.get('cached_tokens', 0) if isinstance(details, dict) else None
+            else:
+                cached = 0
+        cache_valid = type(cached) is int and 0 <= cached <= usage['prompt_tokens']
+        if not cache_valid:
+            cached = 0
+            event['cache_usage_invalid'] = True
+        for key in aggregate:
+            aggregate[key] += usage[key]
+        for key in ('prompt_tokens', 'completion_tokens'):
+            session[key] += usage[key]
+        session['tokens'] += usage['total_tokens']
+        session['cached_tokens'] += cached
+        event['usage'] = usage
+        if getattr(self, 'pricing', None):
+            price = self.pricing
+            cost = ((usage['prompt_tokens'] - cached) * price['input_per_million']
+                    + cached * price['cached_input_per_million']
+                    + usage['completion_tokens'] * price['output_per_million']) / 1e6
+            session['cost_upper_bound_usd'] += cost
+            event['cost_upper_bound_usd'] = cost
+        return cache_valid, cached
+
     def _pause_enabled(self, category, status=None):
         policy = self.transport_policy
         if category == 'http_status':
@@ -364,7 +403,6 @@ class Broker:
         self.transport_pause = marker
         self.pause_event.set()
         pause_event = {'kind': 'transport_pause', **marker}
-        self.events.append(pause_event)
         append_event(self.root, pause_event)
 
     @staticmethod
@@ -438,7 +476,6 @@ class Broker:
             late['usage_error'] = 'missing_or_invalid'
         if metrics is not None:
             late['metrics'] = metrics
-        self.events.append(late)
         append_event(self.root, late)
 
     def _finish_inflight(self, token):
@@ -525,12 +562,10 @@ class Broker:
             write(job['record'], {'job_id':job_id, 'metadata':job['metadata'], 'status':'running'})
         try:
             callback = job['callback']
-            # Existing host callbacks are zero-argument closures.  Online
-            # step 3 may additionally freeze a mechanism plan in the request;
-            # pass the authenticated payload only to callbacks that opt into
-            # that argument, keeping the legacy callback contract intact.
-            accepts_payload = bool(inspect.signature(callback).parameters)
-            result = callback(payload) if accepts_payload else callback()
+            # The authenticated payload is the single production callback
+            # contract.  It contains the frozen identity and check plan that
+            # the host registered for this job.
+            result = callback(payload)
             if not isinstance(result, dict):
                 raise ModelError('Candidate check returned an invalid result')
             with self.candidate_lock:
@@ -540,7 +575,6 @@ class Broker:
             event = {'kind':'candidate_check_complete', 'job_id':job_id,
                      'task_id':job['metadata'].get('task_id'),
                      'check_revision':job['metadata'].get('check_revision')}
-            self.events.append(event)
             append_event(self.root, event)
             return result
         except Exception as exc:
@@ -792,7 +826,6 @@ class Broker:
         event = dict(kind=kind, label=s['label'], reason=reason,
                      basis=basis, calls=s['calls'], actual_call=False)
         s['rejected_calls'].append({'reason':reason, 'basis':basis, 'calls':s['calls']})
-        self.events.append(event)
         append_event(self.root, event)
         raise ModelError(reason)
 
@@ -941,54 +974,19 @@ class Broker:
                     usage = result.get('usage', {})
                     if response_fault is not None:
                         event['transport_fault'] = response_fault
-                        if not isinstance(usage,dict) or any(type(usage.get(k)) is not int or usage[k]<0 for k in aggregate_usage):
+                        if not self._valid_usage(usage):
                             event['missing_usage'] = True
                         else:
                             # A provider can attach billable usage to an
                             # error completion.  Record valid counts without
                             # ever handing the failed response to the agent.
-                            cached = usage.get('prompt_cache_hit_tokens',
-                                               (usage.get('prompt_tokens_details') or {}).get('cached_tokens', 0))
-                            if not (type(cached) is int and 0 <= cached <= usage['prompt_tokens']):
-                                cached = 0
-                                event['cache_usage_invalid'] = True
-                            for key in aggregate_usage:
-                                aggregate_usage[key] += usage[key]
-                            for key in ('prompt_tokens', 'completion_tokens'):
-                                s[key] += usage[key]
-                            s['tokens'] += usage['total_tokens']
-                            s['cached_tokens'] += cached
-                            event['usage'] = usage
-                            if getattr(self, 'pricing', None):
-                                price = self.pricing
-                                cost = ((usage['prompt_tokens'] - cached) * price['input_per_million']
-                                        + cached * price['cached_input_per_million']
-                                        + usage['completion_tokens'] * price['output_per_million']) / 1e6
-                                s['cost_upper_bound_usd'] += cost
-                                event['cost_upper_bound_usd'] = cost
+                            self._account_usage(s, usage, aggregate_usage, event)
                         raise ModelError('Upstream completion error')
-                    if not isinstance(usage,dict) or any(type(usage.get(k)) is not int or usage[k]<0 for k in aggregate_usage):
+                    if not self._valid_usage(usage):
                         event['transport_fault'] = 'missing_usage'
                         raise ModelError('Endpoint omitted usage; token accounting unavailable')
-                    cached = usage.get('prompt_cache_hit_tokens', (usage.get('prompt_tokens_details') or {}).get('cached_tokens',0))
-                    cache_valid = type(cached) is int and 0 <= cached <= usage['prompt_tokens']
-                    if not cache_valid:
-                        cached = 0  # Conservative cost bound; retain the valid charged token counts.
-                        event['cache_usage_invalid'] = True
-                    for key in aggregate_usage:
-                        aggregate_usage[key] += usage[key]
-                    for key in ('prompt_tokens','completion_tokens'):
-                        s[key] += usage[key]
-                    s['tokens'] += usage['total_tokens']
-                    s['cached_tokens'] += cached
+                    cache_valid, cached = self._account_usage(s, usage, aggregate_usage, event)
                     aggregate_cached += cached
-                    event['usage'] = usage
-                    if getattr(self,'pricing',None):
-                        price = self.pricing
-                        cost = ((usage['prompt_tokens']-cached)*price['input_per_million'] + cached*price['cached_input_per_million']
-                                + usage['completion_tokens']*price['output_per_million']) / 1e6
-                        s['cost_upper_bound_usd'] += cost
-                        event['cost_upper_bound_usd'] = cost
                     if not cache_valid:
                         raise ModelError('Invalid cached token usage')
                     estimate = measurement['host_prompt_tokens_estimate']
@@ -1082,7 +1080,6 @@ class Broker:
                     raise ModelError(reason) from None
                 finally:
                     event['seconds'] = time.time()-start
-                    self.events.append(event)
                     append_event(self.root,event)
 
     def stage_boundary(self, token):

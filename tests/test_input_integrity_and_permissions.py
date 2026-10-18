@@ -9,6 +9,7 @@ import pytest
 from mini_swe_rsi.broker import Broker, ModelError
 from mini_swe_rsi.context_budget import ContextBudget, LOCK_PATH
 from mini_swe_rsi.core import ROOT, read
+from tests.event_helpers import broker_events
 
 spec = importlib.util.spec_from_file_location('permission_fixture', ROOT/'runtime/workflow.py')
 w = importlib.util.module_from_spec(spec)
@@ -90,9 +91,10 @@ def test_silent_input_loss_retains_usage_but_never_returns_action(audited_broker
     metrics=b.finish(token)
     assert metrics['tokens']==110 and metrics['calls']==1 and metrics['unmetered_calls']==0
     assert wire[0]['messages']==messages and wire[0]['max_tokens']==65535
-    assert b.events[-1]['input_integrity']['status']=='failed'
-    assert 'agent_response' not in b.events[-1]
-    assert b.events[-1]['wire_messages_sha256']==hashlib.sha256(json.dumps(messages,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    event = broker_events(b)[-1]
+    assert event['input_integrity']['status']=='failed'
+    assert 'agent_response' not in event
+    assert event['wire_messages_sha256']==hashlib.sha256(json.dumps(messages,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def test_verified_tokenizer_required_and_framing_is_not_claimed_exact(audited_broker):

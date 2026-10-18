@@ -122,3 +122,7 @@
 ## 2026-10-17 批次 C 与 DSH 委派
 
 用户要求用已运行的 DeepSeek Harness Desktop 作子 agent，指定 DeepSeek-V4.1-Flash / High，实施文档批次 C；主 agent 独立审查、测试验收后提交符合现有格式的 commit。用户另明确授权最小桥接配置：当前仓库白名单及必要文件读写/测试工具。通过现有 Desktop 插件创建独立项目子工作区，未启动第二套 Harness；结果整合回当前项目。先单独提交已验收 P1 补修 `f6f3bd9`，批次 C 另行提交。不推进 D/E，不启动新的真实 RSI 实验。记录见 [online-rsi-phase-c-review.md](online-rsi-phase-c-review.md)。
+
+## 2026-10-18 批次 D 委派
+
+用户授权按精简指南推进批次 D（P2-3/P2-4），子 agent 使用 GPT-5.6 Luna / High，在当前工作区实施；主 agent 独立审查、测试验收后提交符合现有格式的 commit。本次不沿用批次 C 的 DSH 模型要求，不推进批次 E、不启动新的真实模型实验。变更与验收记录见 [online-rsi-phase-d-review.md](online-rsi-phase-d-review.md)。

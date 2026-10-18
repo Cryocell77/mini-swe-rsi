@@ -4,6 +4,7 @@ import json
 import hashlib
 
 from .core import digest, read, write
+from .public_filter import public_value
 
 def online_archive_view(source, destination):
     """Create a read-only public view of completed online evidence.
@@ -67,29 +68,13 @@ def online_archive_view(source, destination):
     manifest = {str(p.relative_to(source)):digest(p) for p in files}
     marker = destination.parent/(destination.name + '.manifest.json')
 
-    private_keys = {'api_key', 'openai_api_key', 'rsi_token', 'authorization',
-                    'password', 'secret', 'credentials', 'raw_response',
-                    'messages', 'prompt', 'grade', 'evidence_path', 'private',
-                    'session_token'}
-
-    def public_json(value, key=''):
-        lowered = key.lower()
-        if lowered in private_keys or lowered.endswith('_api_key'):
-            return '[redacted]'
-        if isinstance(value, dict):
-            return {name:public_json(item, name) for name,item in value.items()
-                    if name.lower() not in private_keys and not name.lower().endswith('_api_key')}
-        if isinstance(value, list):
-            return [public_json(item, key) for item in value]
-        return value
-
     def public_decision(value):
         if not isinstance(value, dict):
             return value
         allowed = ('round_id', 'task_id', 'proposal', 'version', 'parent_version',
                    'decision', 'status', 'reason', 'completed_steps', 'active',
                    'skipped_steps', 'diagnosis', 'candidate_check', 'acceptance')
-        return public_json({key:value[key] for key in allowed if key in value})
+        return public_value({key:value[key] for key in allowed if key in value})
 
     def public_workflow(value):
         if not isinstance(value, dict):
@@ -98,7 +83,7 @@ def online_archive_view(source, destination):
         result = {key:value[key] for key in allowed if key in value}
         summary = value.get('execution_summary')
         if isinstance(summary, dict):
-            result['execution_summary'] = public_json({key:summary[key] for key in (
+            result['execution_summary'] = public_value({key:summary[key] for key in (
                 'round_id', 'proposal', 'process_status', 'candidate_check',
                 'acceptance') if key in summary})
         return result
@@ -111,9 +96,9 @@ def online_archive_view(source, destination):
                 payload['check'] = {key:check[key] for key in
                     ('score', 'passed', 'execution_status', 'candidate_hash',
                      'execution_hash', 'parent_hash') if key in check}
-            return (json.dumps(public_json(payload), ensure_ascii=False, indent=2) + '\n').encode()
+            return (json.dumps(public_value(payload), ensure_ascii=False, indent=2) + '\n').encode()
         if item.name in ('configuration.json', 'online_state.json'):
-            value = public_json(read(item))
+            value = public_value(read(item))
             # The online control contract contains the complete future task
             # order.  Historical role context may expose only tasks with a
             # durable public feedback record.
@@ -121,7 +106,7 @@ def online_archive_view(source, destination):
                 value['tasks'] = occurred_tasks
             return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
         if item.name == 'public_feedback.json':
-            return (json.dumps(public_json(read(item)), ensure_ascii=False, indent=2) + '\n').encode()
+            return (json.dumps(public_value(read(item)), ensure_ascii=False, indent=2) + '\n').encode()
         if item.name == 'online_workflow_result.json':
             return (json.dumps(public_workflow(read(item)), ensure_ascii=False, indent=2) + '\n').encode()
         if item.parent.name == 'decisions' and item.name.startswith('R'):
