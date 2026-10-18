@@ -1,7 +1,6 @@
 """Offline tests for the retained online SICA workflow transport."""
 import importlib.util
 import json
-import shlex
 
 import pytest
 
@@ -15,7 +14,7 @@ FEEDBACK = {'task_id': 'task', 'round_id': 'R0001',
 
 
 def command(request):
-    return {'command': 'sica-workflow ' + shlex.quote(json.dumps(request))}
+    return {'command': 'sica-workflow ' + json.dumps(request, ensure_ascii=False)}
 
 
 def test_pinned_fields_and_core_prompts():

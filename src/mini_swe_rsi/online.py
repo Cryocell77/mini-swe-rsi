@@ -183,7 +183,7 @@ class OnlineLoop:
                    'online_contract.py')]
         files += [ROOT/'upstream.lock.json']
         files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
-                  ('mini-no-billing.patch', 'mini-no-billing.json')]
+                  ('mini-no-billing.patch', 'mini-no-billing.json', 'mini-online-slim.json')]
         files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
         return {'improvement': improvement_contract(),
                 'files': {str(p.relative_to(ROOT)): digest(p) for p in files if p.is_file()}}

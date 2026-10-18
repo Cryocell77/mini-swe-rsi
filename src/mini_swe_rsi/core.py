@@ -173,7 +173,7 @@ def improvement_contract():
     if actual != {n:v['sha256'] for n,v in expected.items()}:
         raise RuntimeError('Pinned workflow sources differ from upstream lock')
     from .budget_policy import policy_contract
-    return {'version': 'sica-mini-improvement-v6',
+    return {'version': 'sica-mini-improvement-v7',
             'limits': {'calls': None, 'seconds': None},
             'budget_policy': policy_contract(),
             'renderer_sha256': digest(ROOT/'runtime/bridge.py'),

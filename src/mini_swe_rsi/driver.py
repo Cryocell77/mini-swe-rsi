@@ -96,13 +96,15 @@ def _seed_metadata(destination):
     (destination / '__init__.py').write_text('')
     (destination / '__main__.py').write_text('from bridge import main\nmain(__file__)\n')
     shutil.copy(ROOT / '.upstream/mini/LICENSE.md', destination / 'LICENSE.mini')
-    (destination / 'agent_change_log.md').write_text('# H0\nPinned mini-swe-agent with reproducible accounting removal; no evolved strategies.\n')
-    (destination / 'description.txt').write_text('H0: pinned mini-swe-agent without monetary accounting, fixed model and host execution adapter.\n')
+    (destination / 'agent_change_log.md').write_text('# H0\nPinned mini-swe-agent with reproducible accounting removal and online package trimming; no evolved strategies.\n')
+    (destination / 'description.txt').write_text('H0: online mini-swe-agent without monetary accounting or standalone runners, fixed model and host execution adapter.\n')
     (destination / 'README.md').write_text(
         '# Archived mini-swe-agent\nEditable implementation: minisweagent/. '
         'Text action configuration: minisweagent/config/mini_textbased.yaml. '
         'The host provides the same model and fixed resource limits to every version. '
         'benchmark/improve entrypoints use the immutable bridge. '
+        'Standalone minisweagent CLI, batch runners and benchmark configs are excluded. '
+        'Agent, model, environment and config APIs remain available for offline tests. '
         'No grader, reference patches or held-out evaluations are accessible. '
         'Dependency installation is not available inside isolated runs.\n')
 

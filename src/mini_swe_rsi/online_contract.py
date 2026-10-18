@@ -1,6 +1,6 @@
 """Shared online identity and policy checks; reporting may omit a policy."""
 
-ONLINE_PROTOCOL = 'mini-swe-rsi-online-v6'
+ONLINE_PROTOCOL = 'mini-swe-rsi-online-v7'
 CHECK_POLICY_REVISION = '2'
 
 

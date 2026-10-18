@@ -1,6 +1,10 @@
 # 上游适配与证据边界
 
-## 最新补充：后续 P2 精简（2026-10-18）
+## 最新补充：后续 P3 精简（2026-10-19）
+
+新生成 H0 在应用原计费删除补丁后，依据可校验清单移除独立 mini CLI、`run/` 和 `config/benchmarks/`，其余模块与补丁后基点逐字一致。候选仍可使用保留的 mini API 做离线测试；已有候选不重裁剪。角色结构化传输统一原始 JSON，受限角色不再接受 echo/printf 提交，标准 mini benchmark 提交保留。在线与 improvement 合同升 v7，固定原始上游、计费补丁与依赖锁不变。见[P3 验收](online-rsi-followup-p3-review.md)。
+
+## 后续 P2 精简（2026-10-18）
 
 在线协议升级为 v6，恢复仅接受完整当前状态／身份和 `attempt_N` 结果布局。协议与机制计划校验共享实现，但宿主、容器及离线报告保留各自的调用与错误边界。正常执行与恢复共用摘要和决策构造；恢复仍核对持久证据，未发布决策前的合法身份写入窗口保留。固定 mini 原始包、生成 Harness 的计费删除补丁、SICA 原文和依赖锁未修改，mini 附带组件裁剪仍属未实施 P3。见[执行计划](online-rsi-followup-simplification-plan.md)及[P2 验收](online-rsi-followup-p2-review.md)。
 

@@ -1,7 +1,7 @@
 # 在线 RSI 框架代码精简指南
 
 日期：2026-10-16
-后续执行：全项目复查后的新增 P1/P2/P3 候选及验收标准见[后续精简执行计划](online-rsi-followup-simplification-plan.md)。三个 P1 项已完成，见[P1 验收](online-rsi-followup-p1-review.md)；用户随后授权的四个 P2 项已完成，见[P2 验收](online-rsi-followup-p2-review.md)。当前在线协议 v6，旧 v2～v5 运行保留并使用对应 Git 版本读取；后续 P3 不自动推进。
+后续执行：全项目复查后的新增 P1/P2/P3 候选及验收标准见[后续精简执行计划](online-rsi-followup-simplification-plan.md)。三个 P1 项、四个 P2 项及随后授权的两个 P3 项已完成，见[P1 验收](online-rsi-followup-p1-review.md)、[P2 验收](online-rsi-followup-p2-review.md)和[P3 验收](online-rsi-followup-p3-review.md)。当前在线协议 v7，旧 v2～v6 运行保留并使用对应 Git 版本读取。
 最新补充：用户于 2026-10-18 要求删除全部自有及实际 Harness 的计费实现，覆盖本文历史批次的费用保留要求。实际 H0 使用经校验的删除补丁，原始上游保留作来源证据；当前在线合同 v5、资源政策 v2；主 agent 审查及 360 项全量测试（含 Docker，0 跳过）已通过，详见[Harness 计费删除验收](online-rsi-harness-accounting-removal-review.md)。
 
 状态（更新至 2026-10-18）：P1（批次 A、B）及 P2（批次 C、D）已完成。批次 C 通过 314 项、批次 D 通过 323 项全量测试。批次 E 已完成本轮选定的三项 P3，通过主 agent 审查和 343 项全量测试（含 Docker，0 跳过）；数据／镜像与身份表达两项经评估保留现状。

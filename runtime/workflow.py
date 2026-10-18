@@ -8,7 +8,6 @@ import json
 import hashlib
 import copy
 import runpy
-import shlex
 import uuid
 from pathlib import Path
 
@@ -100,14 +99,15 @@ def tool_aliases(source=SOURCE):
 def instructions(role="orchestrator"):
     text = '''SICA callable transport: for structured operations, emit one normal mini bash action whose entire command is
 sica-workflow {"op":"..."}
+Use one raw JSON object directly after sica-workflow, without shell quoting.
 Operations: {"op":"invoke"}, {"op":"state"}, {"op":"complete","invocation_id":"...","tool":"<current completion tool>","success":true},
 {"op":"submit","report":"<full non-empty report>"},
 {"op":"delegate","role":"archive_explorer|software_developer|general_problem_solver","task":"complete self-contained instructions"},
 {"op":"committee","context":"goals and evidence","proposal":"full design"}.
-Use sica-workflow only for structured operations. For final submission, prefer the structured submit operation with the complete non-empty report text; the host adds the mini completion sentinel. Do not wrap printf or another shell command inside sica-workflow. Arbitrary bash is unavailable to restricted roles. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and have no additional global/stage deadline.
+Use sica-workflow only for structured operations. Every role finishes with the structured submit operation and its complete non-empty report; the host adds the mini completion sentinel. Arbitrary bash is unavailable to restricted roles; editing roles may use normal mini bash only during their allowed editing steps. As the orchestrator, invoke meta_improvement_reasoning_structure as early as reasonably possible. Only the current completion tool is callable. Stage success is your declaration, not host verification. Each invocation has an independent iteration allowance: orchestrator/archive_explorer/general_problem_solver/reviewer 500, software_developer 1000. One iteration permits up to five actual provider requests. All roles use the same model and have no additional global/stage deadline.
 Read-only inspection operations: {"op":"read","path":"/home/agent/workdir/README.md","start_line":1,"end_line":200}, {"op":"list","path":"/home/agent/archive"}, {"op":"search","path":"/home/agent/workdir","pattern":"literal text"}.
 Structured read uses inclusive 1-based start_line/end_line (default whole file); returned paths identify the actual resolved evidence source. Never append shell pipes to a structured command.
-Compatibility: online public file views use these read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The legacy printf submission remains accepted for compatibility, but do not put printf inside sica-workflow. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
+Compatibility: online public file views use these read/list/search operations; editing and local tests use normal mini bash in editing roles. Original return_result/submit_answer map to the structured submit operation. The old echo/printf sentinel forms are unsupported. Original python -m workdir.agent end-to-end example is unavailable: there is no hidden model endpoint; delegate an explicit test task through this transport and shared broker, or run offline tests. Independent benchmark grading remains host-controlled. Web research tools are unavailable. Original role system instructions and step strings follow unchanged; these transport mappings resolve old tool names.'''
     if role != 'orchestrator':
         start = text.index('Operations:')
         stop = text.index('Read-only inspection operations:')
@@ -218,14 +218,14 @@ def role_templates(config, role):
         "<exception>{{output.exception_info}}</exception>\n<output>{{output.output}}</output>\n"
         "{% if output.returncode != 0 %}" + operation_error_guidance + example
         + " Only /home/agent/workdir and /home/agent/archive are inspection roots. "
-          "Use one JSON argument; do not append shell pipes or redirects. For final submission use " + submission_example + ".{% endif %}\n"
+          "Use one JSON argument as one raw JSON object; do not shell-quote it or append shell pipes or redirects. For final submission use " + submission_example + ".{% endif %}\n"
         "Shared session: {{output.session_status | default({})}}")
     adapted['model']['format_error_template'] = ("Format error: {{error | default('incomplete action')}}. "
         "Return exactly one complete mswea_bash_command block, with a THOUGHT before it. "
         "Use one structured command, for example:\n```mswea_bash_command\n" + example + "\n```\n"
         "Do not append shell pipes or redirects to structured commands. For final submission use this structured command: "
         'sica-workflow {"op":"submit","report":"<full non-empty report>"}. '
-        "Do not wrap printf inside sica-workflow.")
+        "The JSON must be raw and directly follow sica-workflow; shell-quoted JSON and echo/printf submissions are unsupported.")
     return adapted
 
 
@@ -898,19 +898,24 @@ class Workflow:
             if command.startswith('sica-workflow'):
                 prefix = 'sica-workflow'
                 if len(command) == len(prefix) or not command[len(prefix)].isspace():
-                    raise ValueError('Expected one JSON argument')
+                    raise ValueError(
+                        'Expected one raw JSON object directly after sica-workflow; '
+                        'shell-quoted JSON and wrapper commands are unsupported')
                 raw_argument = command[len(prefix):].lstrip()
-                if raw_argument.startswith('{'):
-                    # Raw JSON is preferred. Parsing starts after the transport
-                    # prefix, so JSON string contents never pass through a shell
-                    # tokenizer or execute shell syntax.
+                if not raw_argument.startswith('{'):
+                    raise ValueError(
+                        'Expected one raw JSON object directly after sica-workflow; '
+                        'shell-quoted JSON and wrapper commands are unsupported')
+                # Parse only the raw JSON object after the transport prefix.
+                # JSON string contents never pass through a shell tokenizer or
+                # execute shell syntax.
+                try:
                     request = json.loads(raw_argument)
-                else:
-                    # Preserve compatibility with the original quoted-JSON form.
-                    parts = shlex.split(command)
-                    if len(parts) != 2 or parts[0] != prefix:
-                        raise ValueError('Expected one JSON argument')
-                    request = json.loads(parts[1])
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        'Expected one valid raw JSON object directly after '
+                        'sica-workflow; shell-quoted JSON and wrapper commands '
+                        'are unsupported') from exc
                 if type(request) is not dict:
                     raise ValueError('Expected one JSON object')
                 requested_op = request.get('op')
@@ -919,14 +924,10 @@ class Workflow:
                 # Role comes from the actual executing environment, never JSON.
                 trusted_role = role or ('reviewer' if readonly is True else 'software_developer' if readonly == 'editor' else 'orchestrator')
                 return {'output':json.dumps(self.dispatch(request, trusted_role)), 'returncode':0}
-            parts = shlex.split(command)
             if readonly and readonly != 'editor':
-                if len(parts) >= 2 and parts[0] == 'echo' and parts[1] == 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT' and not any(p in (';', '&&', '||', '|', '>', '<') for p in parts[2:]):
-                    return {'output':' '.join(parts[1:])+'\n','returncode':0}
-                # Parse the official printf submission without running a shell.
-                if len(parts) == 3 and parts[0] == 'printf' and parts[1] == '%s\\n' and parts[2].startswith('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n'):
-                    return {'output':parts[2]+'\n','returncode':0}
-                raise ValueError('Role permits only structured workflow operations or exact submission')
+                raise ValueError(
+                    'Role permits only sica-workflow followed by one raw JSON object; '
+                    'use {"op":"submit","report":"<full non-empty report>"} to finish')
             if not self.active or self.active['index'] not in (3, 4, 5, 6):
                 raise ValueError('Shell is unavailable outside steps 4-7; only step 4 permits source edits')
             self.assert_stage_source()

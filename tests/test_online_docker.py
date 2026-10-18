@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import shutil
 import threading
 import time
@@ -30,7 +29,7 @@ from mini_swe_rsi.online import OnlineLoop, execution_hash
 
 
 class FixtureModel:
-    """A fake OpenAI text endpoint returning only a final mini action."""
+    """A fake OpenAI text endpoint returning a structured improve submission."""
 
     def __init__(self):
         self.requests = []
@@ -44,6 +43,10 @@ class FixtureModel:
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length))
                 fixture.requests.append(payload)
+                action = ('sica-workflow ' +
+                          json.dumps({'op': 'submit',
+                                      'report': 'Deterministic improvement fixture completed.'},
+                                     ensure_ascii=False, separators=(',', ':')))
                 response = {
                     "id": "fixture-completion",
                     "object": "chat.completion",
@@ -52,9 +55,7 @@ class FixtureModel:
                     "choices": [{"index": 0, "finish_reason": "stop", "message": {
                         "role": "assistant",
                         "content": "THOUGHT: finish this deterministic fixture.\n"
-                                   "```mswea_bash_command\n"
-                                   "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n"
-                                   "```"}}],
+                                   "```mswea_bash_command\n" + action + "\n```"}}],
                     "usage": {"prompt_tokens": 20, "completion_tokens": 10,
                               "total_tokens": 30}}
                 data = json.dumps(response).encode()
@@ -215,7 +216,8 @@ class OnlineWorkflowModel:
                                           "failure_modes": [], "effective_mechanisms": ["fixture"],
                                           "improvement_opportunities": [], "evidence_refs": [evidence]})
             else:
-                command = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+                command = self._workflow({"op": "submit",
+                                          "report": "Fixture workflow completed without an improvement."})
         else:
             operations = {
                 1: {"op": "delegate", "role": "archive_explorer", "task": "report fixture failure evidence"},
@@ -255,7 +257,8 @@ class OnlineWorkflowModel:
                 15: {"op": self._completion_tool(text), "success": True},
             }
             command = (self._workflow(operations[turn]) if turn in operations
-                       else "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT")
+                       else self._workflow({"op": "submit",
+                                            "report": f"Complete improvement workflow for {round_id}."}))
         return self._action(command)
 
     def close(self):

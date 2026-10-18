@@ -17,8 +17,7 @@ spec.loader.exec_module(w)
 
 
 def command(req):
-    import shlex
-    return {'command':'sica-workflow '+shlex.quote(json.dumps(req))}
+    return {'command': 'sica-workflow ' + json.dumps(req, ensure_ascii=False)}
 
 
 def test_online_role_boundaries_and_archive_overview_permissions(tmp_path):

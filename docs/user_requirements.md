@@ -1,6 +1,10 @@
 # 已确认约束
 
-## 2026-10-18 后续精简 P2（最新范围）
+## 2026-10-18 后续精简 P3（最新范围）
+
+用户授权执行[后续精简计划](online-rsi-followup-simplification-plan.md)两个 P3 项。GPT-5.6 Luna / High 子 agent 分工实现，主 agent 审查、测试、验收后提交本地 `refactor: ...` commit，不推送。裁剪仅针对新生成 H0 的独立 CLI／runner／benchmark 配置，保留其余 mini API 和固定原始上游、计费补丁、锁、历史运行与已有候选。角色结构化操作统一原始 JSON 和 submit/report；保留标准 mini benchmark 提交、合法编辑 shell、完整报告、七步状态机及恢复／计量／隔离。在线和 improvement 合同升 v7，不迁移旧运行，不启动额外真实模型实验。
+
+## 2026-10-18 后续精简 P2（已完成范围）
 
 用户追加授权执行[后续精简计划](online-rsi-followup-simplification-plan.md)全部四个 P2 项：当前恢复状态格式、身份与 attempt 结果布局、共享合同和机制计划规范化、正常与恢复的结果构造。子 agent 使用 GPT-5.6 Luna / High，主 agent 独立审查、测试、验收通过后提交本地 `refactor: ...` commit，不推送。新在线协议 v6，不迁移旧运行；保留真实中断恢复、各端独立验证、角色权限与累计消耗，P3、mini 包、计费补丁、锁、固定上游、数据、历史产物和 `.env` 不动，不启动额外真实模型实验。
 

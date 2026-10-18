@@ -1,6 +1,5 @@
 import importlib.util
 import json
-import shlex
 import sys
 
 import pytest
@@ -21,10 +20,6 @@ PUBLIC_FEEDBACK = {'task_id': 'task', 'round_id': 'R0001', 'evidence_refs': []}
 
 
 def command(request):
-    return {'command': 'sica-workflow ' + shlex.quote(json.dumps(request, ensure_ascii=False))}
-
-
-def raw_command(request):
     return {'command': 'sica-workflow ' + json.dumps(request, ensure_ascii=False)}
 
 
@@ -76,7 +71,7 @@ def test_raw_json_submission_reaches_mini_without_shell_tokenization(tmp_path):
         'unicode: café 🚀\n'
     )
 
-    output = flow.execute(raw_command({'op': 'submit', 'report': report}), True, 'reviewer')
+    output = flow.execute(command({'op': 'submit', 'report': report}), True, 'reviewer')
 
     expected = w.FINAL_OUTPUT_SENTINEL + '\n' + report + '\n'
     assert output == {'output': expected, 'returncode': 0}
@@ -88,16 +83,62 @@ def test_raw_json_submission_reaches_mini_without_shell_tokenization(tmp_path):
 def test_raw_json_transport_also_handles_structured_workflow_operations(tmp_path):
     flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
 
-    output = flow.execute(raw_command({'op': 'invoke'}), role='orchestrator')
+    output = flow.execute(command({'op': 'invoke'}), role='orchestrator')
 
     assert output['returncode'] == 0
     assert flow.active is not None
     assert flow.current()['index'] == 0
 
 
+@pytest.mark.parametrize('readonly,role', [(True, 'reviewer'), ('orchestrator', 'orchestrator')])
+@pytest.mark.parametrize('legacy_command', [
+    'echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT',
+    "printf '%s\\n' 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\ncomplete'",
+    "sica-workflow '{\"op\":\"submit\",\"report\":\"complete\"}'",
+])
+def test_removed_legacy_submission_forms_cannot_trigger_mini_submitted(
+        tmp_path, readonly, role, legacy_command):
+    """Legacy shell submission paths must fail before mini sees completion."""
+    flow = w.Workflow(tmp_path / role, lambda *args: None, feedback=PUBLIC_FEEDBACK)
+
+    output = flow.execute({'command': legacy_command}, readonly, role)
+
+    assert output['returncode'] == 1
+    # A returncode of zero with the sentinel would make LocalEnvironment raise
+    # Submitted; rejected transport output must never enter that path.
+    LocalEnvironment()._check_finished(output)
+    assert flow.active is None and flow.completed_steps == 0
+
+
+@pytest.mark.parametrize('readonly,role', [(True, 'reviewer'), ('orchestrator', 'orchestrator')])
+@pytest.mark.parametrize('wrapper', ['quoted', 'echo', 'printf'])
+def test_shell_wrapped_json_and_sentinel_wrappers_are_rejected_without_side_effect(
+        tmp_path, readonly, role, wrapper):
+    """The workflow boundary accepts only one raw JSON object.
+
+    These are common legacy model emissions.  Keep the marker outside the
+    JSON so a shell implementation would create it; the transport must reject
+    the whole action before any shell interpretation can occur.
+    """
+    flow = w.Workflow(tmp_path / role, lambda *args: None, feedback=PUBLIC_FEEDBACK)
+    payload = json.dumps({'op': 'submit', 'report': 'complete'}, ensure_ascii=False)
+    if wrapper == 'quoted':
+        command_text = "sica-workflow '" + payload + "'"
+    elif wrapper == 'echo':
+        command_text = 'sica-workflow echo ' + payload
+    else:
+        command_text = "sica-workflow printf '%s\\n' " + payload
+    marker = tmp_path / f'{wrapper}-{role}-executed'
+    output = flow.execute({'command': command_text + f'; touch {marker}'}, readonly, role)
+
+    assert output['returncode'] == 1
+    assert not marker.exists()
+    assert flow.active is None and flow.completed_steps == 0
+
+
 def test_raw_json_trailing_shell_syntax_is_rejected_without_execution(tmp_path):
     flow = w.Workflow(tmp_path, lambda *args: None, feedback=PUBLIC_FEEDBACK)
-    command_text = raw_command({'op': 'submit', 'report': 'complete'})['command']
+    command_text = command({'op': 'submit', 'report': 'complete'})['command']
 
     output = flow.execute({'command': command_text + ' ; printf hacked'}, True, 'reviewer')
 

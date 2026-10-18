@@ -1,4 +1,4 @@
-"""Reproducible source patch for the initial Harness; never patch evolved code."""
+"""Reproducible patch and trimming for H0; never rewrite evolved code."""
 import subprocess
 
 from .core import ROOT, digest, read
@@ -6,6 +6,39 @@ from .core import ROOT, digest, read
 
 SEED_PATCH = ROOT/'src/mini_swe_rsi/assets/mini-no-billing.patch'
 SEED_MANIFEST = ROOT/'src/mini_swe_rsi/assets/mini-no-billing.json'
+SLIM_MANIFEST = ROOT/'src/mini_swe_rsi/assets/mini-online-slim.json'
+
+
+def apply_seed_trim(package, upstream, billing_files):
+    """Remove only the audited standalone runner and benchmark paths."""
+    manifest = read(SLIM_MANIFEST)
+    expected = {name: billing_files.get(name, {}).get('after', sha)
+                for name, sha in upstream['files'].items()
+                if name == '__main__.py'
+                or name.startswith('run/')
+                or name.startswith('config/benchmarks/')}
+    if (not isinstance(manifest, dict) or manifest.get('version') != 'mini-online-slim-v1'
+            or manifest.get('upstream_commit') != upstream['commit']
+            or manifest.get('removed_files') != expected):
+        raise RuntimeError('Slim Harness manifest identity or removal list mismatch')
+    for name, expected_hash in expected.items():
+        target = package/name
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError('Slim Harness removal input missing: ' + name)
+        if digest(target) != expected_hash:
+            raise RuntimeError('Slim Harness removal input mismatch: ' + name)
+
+    # All inputs are checked before any unlink, so a bad manifest or source
+    # cannot leave a partially trimmed package in the published destination.
+    for name in expected:
+        (package/name).unlink()
+    for root_name in ('run', 'config/benchmarks'):
+        root = package/root_name
+        if root.exists():
+            for path in sorted(root.rglob('*'), key=lambda p: len(p.parts), reverse=True):
+                if path.is_dir() and not path.is_symlink():
+                    path.rmdir()
+            root.rmdir()
 
 
 def apply_seed_patch(package):
@@ -35,3 +68,4 @@ def apply_seed_patch(package):
     for name, hashes in files.items():
         if digest(package/name) != hashes['after']:
             raise RuntimeError('Initial Harness patch output mismatch: ' + name)
+    apply_seed_trim(package, upstream, files)
