@@ -839,7 +839,7 @@ class Broker:
         if s['cost_limit_usd'] is not None:
             local_ollama = getattr(self, 'service_identity', {}).get('ollama', {}).get('cloud') is False
             subscription = getattr(self, 'service_identity', {}).get('billing_contract', {}).get('mode') == 'subscription'
-            if not getattr(self, 'pricing', None) and self.context.provider and not local_ollama and not subscription:
+            if not getattr(self, 'pricing', None) and not local_ollama and not subscription:
                 self.reject(s, 'Benchmark pricing contract unavailable', 'pricing_contract')
             if s['cost_upper_bound_usd'] >= s['cost_limit_usd']:
                 self.reject(s, 'CostExceeded', 'published_peak_cost_upper_bound',kind=kind)
@@ -992,7 +992,7 @@ class Broker:
                     estimate = measurement['host_prompt_tokens_estimate']
                     if estimate is not None:
                         event['service_prompt_minus_host_estimate'] = usage['prompt_tokens'] - estimate
-                    if self.context.provider and self.context.tokenizer is not None:
+                    if self.context.tokenizer is not None:
                         # A generous framing tolerance avoids pretending to know
                         # provider serialization. Gross missing text fails closed.
                         gap = measurement['host_text_tokens'] - usage['prompt_tokens']
@@ -1003,8 +1003,7 @@ class Broker:
                         if gap > allowance:
                             s['terminal_reason'] = 'InputIntegrityError'
                             raise ModelError('InputIntegrityError')
-                    combined = (usage['prompt_tokens'] + usage['completion_tokens'] if self.context.provider
-                                else usage['prompt_tokens'] + measurement['reserved_output_tokens'])
+                    combined = usage['prompt_tokens'] + usage['completion_tokens']
                     if combined > measurement['total_token_budget']:
                         event.update(context_budget_basis='service_prompt_tokens',
                             response_adaptation='not returned: service usage exceeded frozen capacity')

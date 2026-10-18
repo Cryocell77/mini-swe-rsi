@@ -194,3 +194,22 @@ def test_benchmark_entry_rejects_resume_authorization_without_model_setup(tmp_pa
     bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
     assert bridge['validate_improvement_args'](
         SimpleNamespace(command='benchmark', resume_workflow=None)) is None
+
+
+@pytest.mark.parametrize(('option', 'value'), [
+    ('--timeout', '10'),
+    ('--cost-threshold', '3'),
+    ('--resume', None),
+    ('--res', None),
+])
+def test_bridge_rejects_removed_or_abbreviated_options_before_model_setup(
+        tmp_path, monkeypatch, option, value):
+    argv = ['benchmark', '--logdir', str(tmp_path / 'logs'),
+            '--prompt-file', '/task.txt', option]
+    if value is not None:
+        argv.append(value)
+    main = _bridge_entry(monkeypatch, argv)
+    with pytest.raises(SystemExit) as exc:
+        main(str(tmp_path / 'missing-entry'))
+    assert exc.value.code == 2
+    assert not (tmp_path / 'logs').exists()

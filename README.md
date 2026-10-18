@@ -56,14 +56,14 @@ uv run mini-swe-rsi online --run runs/online --task-limit 3 --billing-mode subsc
 ## 恢复与版本身份
 
 ```bash
-uv run mini-swe-rsi online --run runs/online --resume
+uv run mini-swe-rsi online --run runs/online
 ```
 
-运行会校验冻结的题目、源码、模型、服务、计费和控制代码身份。已完成任务及不可变决策可在持久化边界恢复；评分基础设施故障只补评原补丁，不再次生成任务答案。
+重新运行相同 `--run` 会校验冻结的题目、源码、模型、服务、计费和控制代码身份，并沿持久化边界恢复。旧的无效 `--resume` 参数已删除。已完成任务及不可变决策不会重复执行；评分基础设施故障只补评原补丁，不再次生成任务答案。
 
 已有模型工作流不能自动作为新会话重新开启。需要明确的宿主私有恢复授权时使用 `--resume-checkpoint PATH`；授权覆盖未完成的前五步和适用的未完成检查，累计调用与角色迭代继续计量。这是新模型上下文，不宣称原对话无缝续跑。
 
-P1 改变控制代码摘要，旧在线运行不能直接恢复到精简后的实现。历史运行保留对应 Git 版本和产物；使用新运行目录，不放宽摘要验证或重写历史记录。
+当前在线合同为 `mini-swe-rsi-online-v3`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
 
 ## 模型与服务
 
@@ -74,7 +74,7 @@ P1 改变控制代码摘要，旧在线运行不能直接恢复到精简后的�
 - SenseNova 映射其目录容量；仅完整、明确的全零费率可记为服务声明的零费率。
 - 本地 Qoder / WorkBuddy 在标准目录缺容量时使用认证扩展目录。未知费用保持未知，仅按已支持的合同运行，不猜测价格。
 
-无匹配本地 tokenizer 时由服务执行 context 上限，宿主审核真实 usage，不把字符数当作 token。非支持 prefix 的服务截断回复显式失败，不执行未完成动作。服务故障暂停、未知用量和迟到回复继续保留审计。
+上下文预算要求明确的服务能力，不再提供隐式 32768/2048 模式。无匹配本地 tokenizer 时由服务执行 context 上限，宿主审核真实 usage，不把字符数当作 token。非支持 prefix 的服务截断回复显式失败，不执行未完成动作。服务故障暂停、未知用量和迟到回复继续保留审计。
 
 在线改进阶段的 shell 输出超过 300,000 字节时完整落盘，返回明确索引和预览；超过 8 MiB 时终止工具沙箱并保存带摘要的不完整前缀。日志只读挂载供按需读取。这是本地工具资源保护，不是 token 估计或实验总时限；benchmark 输出处理保持原样。离线 agent 循环测试必须有明确退出及有限步数。详见 [第 5 步修复验收](docs/step5-loop-fix-validation.md)。
 
@@ -87,4 +87,4 @@ RUN_DOCKER_TESTS=1 uv run pytest -q
 
 Docker 测试使用本地模拟模型，不调用 `.env` 推理服务，检查版本实际加载、在线继承、接任/拒绝/跳过、恢复、候选机制测试及隔离边界。
 
-已完成 P1 与 P2（批次 C、D）：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列；事件完整落盘，结果读取、计量和公开过滤共享实现，独立身份与接任检查保留。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。批次 E 尚未实施。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1 精简验收](docs/online-rsi-p1-review.md)、[批次 C 验收](docs/online-rsi-phase-c-review.md)与[批次 D 验收](docs/online-rsi-phase-d-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。
+已完成 P1、P2（批次 C、D）及批次 E 本轮选定的三项 P3：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列；事件完整落盘，结果读取、计量和公开过滤共享实现，独立身份与接任检查保留。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。完整数据／镜像校验及身份字段经评估保留。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1](docs/online-rsi-p1-review.md)、[批次 C](docs/online-rsi-phase-c-review.md)、[批次 D](docs/online-rsi-phase-d-review.md)与[批次 E](docs/online-rsi-phase-e-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。

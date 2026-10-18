@@ -256,8 +256,16 @@ def test_callback_is_registered_before_check_and_uses_active_parent(tmp_path):
     assert driver.controller_calls[0][1][driver.controller_calls[0][1].index('--parent-iter') + 1] == '0'
     assert driver.check_calls[0][0].as_posix().endswith('P0001/agent_code')
     snapshot = read(loop.root / 'rounds/R0001/candidate_check.json')
+    assert 'common_tasks' not in read(loop.root / 'rounds/R0001/check_plan.json')
     assert 'grade' not in json.dumps(snapshot)
     assert 'evidence_path' not in json.dumps(snapshot)
+
+
+def test_candidate_public_result_rejects_reserved_common_tasks_field():
+    from mini_swe_rsi.online import CandidateRejected, OnlineLoop
+
+    with pytest.raises(CandidateRejected, match='common_tasks is unsupported'):
+        OnlineLoop._public_check({'common_tasks': []})
 
 
 def test_host_hash_mismatch_cannot_become_feedback(tmp_path):

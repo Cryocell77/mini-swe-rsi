@@ -71,7 +71,25 @@ def freeze_task_selection(data, root, task_limit=None):
 class OnlineLoop:
     """Run a fixed task sequence against one active Harness version at a time."""
 
-    protocol = 'mini-swe-rsi-online-v2'
+    protocol = 'mini-swe-rsi-online-v3'
+
+    @classmethod
+    def _validate_contract(cls, contract):
+        if not isinstance(contract, dict):
+            raise OnlineError('Online contract must be an object')
+        protocol_keys = ('protocol', 'online_protocol')
+        if (not any(key in contract for key in protocol_keys)
+                or any(contract.get(key, cls.protocol) != cls.protocol for key in protocol_keys)):
+            raise OnlineError(f'Unsupported online protocol; only {cls.protocol} is accepted')
+        if 'common_tasks' in contract:
+            raise OnlineError('Online contract common_tasks is unsupported')
+        policy = contract.get('check_policy')
+        if not isinstance(policy, dict):
+            raise OnlineError('Online check policy must be an object')
+        if 'common_tasks' in policy:
+            raise OnlineError('Online check policy common_tasks is unsupported')
+        if policy.get('revision') != '2':
+            raise OnlineError('Online check policy revision is unsupported')
 
     def __init__(self, root, tasks, driver=None, broker=None, active_code=None,
                  model_identity=None, service_identity=None, contract=None, resume_checkpoint=None):
@@ -88,11 +106,11 @@ class OnlineLoop:
             'protocol': self.protocol,
             'tasks': list(self.tasks),
             'check_policy': {
-                'revision': '1',
-                'common_tasks': [],
+                'revision': '2',
                 'criterion': 'current_task_failure_fixed_or_mechanism_parent_failed_candidate_passed',
             },
         }
+        self._validate_contract(self.contract)
         self.control_manifest = self._control_manifest()
         self._improvement_token = None
         self._load_or_initialize(active_code)
@@ -109,9 +127,9 @@ class OnlineLoop:
                 raise OnlineError(
                     f'Legacy run artifact {name} is unsupported; start a new online run directory')
         existing_config = root/'configuration.json'
-        if existing_config.exists() and read(existing_config).get('protocol') != cls.protocol:
-            raise OnlineError('Existing native run cannot be resumed as online')
         existing_contract = read(existing_config) if existing_config.exists() else {}
+        if existing_config.exists():
+            cls._validate_contract(existing_contract)
         if task_limit is None and 'task_limit' in existing_contract:
             task_limit = existing_contract.get('task_limit')
         data = Data(data_path) if data_path else Data()
@@ -141,7 +159,7 @@ class OnlineLoop:
                 'task_limit': task_limit,
                 'improvement_task': improvement_contract(),
                 'check_policy': {
-                    'revision': '1', 'common_tasks': [],
+                    'revision': '2',
                     'criterion': 'current_task_failure_fixed_or_mechanism_parent_failed_candidate_passed',
                 },
             }
@@ -178,6 +196,7 @@ class OnlineLoop:
                  ROOT/'runtime/relay.py', ROOT/'vendor/sica/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
+                   'context_budget.py',
                    'public_filter.py','recovery.py','stage_tools.py','tool_output.py')]
         files += [ROOT/'upstream.lock.json']
         files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
@@ -191,6 +210,7 @@ class OnlineLoop:
         had_config = config_path.exists()
         if had_config:
             saved = read(config_path)
+            self._validate_contract(saved)
             expected_improvement = self.contract.get('improvement_task') or improvement_contract()
             for key, value in (('protocol', self.protocol), ('online_protocol', self.protocol), ('tasks', list(self.tasks)),
                                ('control_manifest', self.control_manifest),
@@ -626,7 +646,7 @@ class OnlineLoop:
                 'criterion_options': ['current_task_failure_fixed',
                                       'mechanism_parent_failed_candidate_passed'],
                 'criterion_source': 'diagnosis',
-                'task_id': task_id, 'common_tasks': self.contract['check_policy'].get('common_tasks', [])}
+                'task_id': task_id}
         write(round_dir/'check_plan.json', plan)
         prompt_path = round_dir/f'{task_id}_feedback.json'
         write(prompt_path, feedback)
@@ -665,6 +685,8 @@ class OnlineLoop:
             if not declared_path.exists() or not declared_path.is_file() or declared_path.is_symlink():
                 raise CandidateRejected('Candidate check requested without a frozen step-3 check plan')
             declared_plan = read(declared_path)
+            if isinstance(declared_plan, dict) and 'common_tasks' in declared_plan:
+                raise CandidateRejected('Step-3 check_plan common_tasks is unsupported')
             options = {'current_task_failure_fixed',
                        'mechanism_parent_failed_candidate_passed'}
             if (not isinstance(declared_plan, dict)
@@ -863,10 +885,12 @@ class OnlineLoop:
     def _public_check(result):
         # A driver may return private grade structures and host paths.  Keep a
         # tiny allowlist for model-visible/public snapshots.
+        if 'common_tasks' in result:
+            raise CandidateRejected('Candidate check common_tasks is unsupported')
         out = {}
         for key in ('job_id','task_id','check_revision','round_id','candidate','parent_version',
                     'candidate_hash','execution_hash','parent_hash','execution_status','metrics',
-                    'score','passed','record','mechanism_check','common_tasks'):
+                    'score','passed','record','mechanism_check'):
             if key in result:
                 value = result[key]
                 if key == 'record' and isinstance(value, dict):
@@ -880,6 +904,10 @@ class OnlineLoop:
 
     def _acceptance(self, candidate, feedback, snapshot, plan=None):
         check = snapshot.get('check', {})
+        if isinstance(check, dict) and 'common_tasks' in check:
+            raise OnlineError('Candidate check common_tasks is unsupported')
+        if isinstance(plan, dict) and 'common_tasks' in plan:
+            raise OnlineError('Candidate check plan common_tasks is unsupported')
         record = check.get('record', {}) if isinstance(check, dict) else {}
         parent_score = feedback.get('record', {}).get('score')
         candidate_score = record.get('score', check.get('score'))
@@ -891,27 +919,10 @@ class OnlineLoop:
         current_fixed = score_known and parent_score < 1 and candidate_score >= 1
         mech = check.get('mechanism_check') if isinstance(check, dict) else None
         mechanism = isinstance(mech, dict) and mech.get('parent_failed') is True and mech.get('candidate_passed') is True
-        common_ok = True
-        common = check.get('common_tasks', {}) if isinstance(check, dict) else {}
-        required_common = (plan or {}).get('common_tasks', self.contract['check_policy'].get('common_tasks', []))
-        if required_common:
-            common_ok = isinstance(common, dict) and set(common) >= set(required_common)
-            if common_ok:
-                for task_id in required_common:
-                    pair = common[task_id]
-                    if isinstance(pair, dict):
-                        common_ok = common_ok and _finite_number(pair.get('parent')) and _finite_number(pair.get('candidate')) and pair['candidate'] >= pair['parent']
-                    else:
-                        common_ok = common_ok and _finite_number(pair)
-        elif common:
-            common_ok = isinstance(common, dict) and all(
-                isinstance(v, dict) and _finite_number(v.get('parent'))
-                and _finite_number(v.get('candidate')) and v['candidate'] >= v['parent']
-                for v in common.values())
         selected = (plan or {}).get('criterion')
         criterion_passed = current_fixed if selected == 'current_task_failure_fixed' else mechanism if selected == 'mechanism_parent_failed_candidate_passed' else False
         non_regression = score_known and candidate_score >= parent_score
-        passed = bool(source_changed and exec_changed and checked_match and common_ok and non_regression and criterion_passed)
+        passed = bool(source_changed and exec_changed and checked_match and non_regression and criterion_passed)
         return {'passed': passed, 'source_changed': source_changed, 'execution_changed': exec_changed,
                 'checked_execution_matches': checked_match, 'score_known': score_known,
                 'non_regression': non_regression,
@@ -1303,6 +1314,9 @@ class OnlineLoop:
                 snapshot = read(check_path)
                 plan = read(plan_path)
                 frozen_plan = read(frozen_plan_path)
+                if (isinstance(plan, dict) and 'common_tasks' in plan) or (
+                        isinstance(frozen_plan, dict) and 'common_tasks' in frozen_plan):
+                    raise OnlineError('Persisted candidate check plan common_tasks is unsupported')
                 if any(frozen_plan.get(key) != plan.get(key)
                        for key in ('criterion','mechanism_plan','revision')):
                     raise OnlineError('Frozen candidate check plan differs from step-3 declaration')
@@ -1433,21 +1447,28 @@ class OnlineLoop:
         declared_plan = read(declared_path) if declared_path.exists() else None
         frozen_path = round_dir/'check_plan_frozen.json'
         frozen_plan = read(frozen_path) if frozen_path.exists() else None
+        unsupported_common = (
+            isinstance(declared_plan, dict) and 'common_tasks' in declared_plan) or (
+            isinstance(frozen_plan, dict) and 'common_tasks' in frozen_plan)
         options = set(plan.get('criterion_options', ()))
         # Every driver invokes the authenticated callback under the same
         # frozen step-3 and step-5 plan contract.
-        if (not isinstance(declared_plan, dict)
+        if (unsupported_common or not isinstance(declared_plan, dict)
                 or declared_plan.get('criterion') not in options
                 or (not isinstance(frozen_plan, dict)
                     or any(frozen_plan.get(key) != declared_plan.get(key)
                            for key in ('criterion','mechanism_plan','revision')))):
             workflow['metrics'] = self._finish_improvement_session()
             write(round_dir/'online_workflow_result.json', workflow)
-            self._discard_unrequested_candidate_job(round_id, proposal_id)
+            self._discard_unrequested_candidate_job(round_id, proposal_id,
+                                                    tolerate_completed=unsupported_common)
+            reason = ('Step-3 check plan common_tasks is unsupported'
+                      if unsupported_common else
+                      'Step-3 acceptance criterion is missing or invalid')
             decision = {'round_id': round_id, 'task_id': feedback['task_id'],
                         'proposal': proposal_id, 'parent_version': self.active_version,
                         'decision': 'rejected', 'status': 'incomplete',
-                        'reason': 'Step-3 acceptance criterion is missing or invalid',
+                        'reason': reason,
                         'diagnosis': diagnosis, 'completed_steps': workflow.get('completed_steps', 7),
                         'acceptance': {'passed': False, 'criterion_declared': False}}
             return self._commit_round(feedback, decision)

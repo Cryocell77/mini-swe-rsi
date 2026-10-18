@@ -1,11 +1,20 @@
 import copy
+import json
 
 import pytest
 
 from mini_swe_rsi.broker import adapt_response
-from mini_swe_rsi.context_budget import ContextBudget, OUTPUT_TOKENS, TOTAL_TOKENS
+from mini_swe_rsi.context_budget import ContextBudget
+
+
+CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
 
 ACTION = '```mswea_bash_command\necho hello\n```'
+
+
+def test_context_requires_explicit_provider_capabilities():
+    with pytest.raises(TypeError, match='Explicit provider capabilities'):
+        ContextBudget(None)
 
 
 def response(reasoning=ACTION, content='', finish='stop', **extra):
@@ -34,13 +43,22 @@ def test_ambiguous_reasoning_is_never_promoted(raw):
 
 
 def test_actual_qwen_tokenizer_budget_boundary_and_multilingual():
-    context = ContextBudget()
+    context = ContextBudget(CAPABILITIES)
+    from mini_swe_rsi.core import read
+    from mini_swe_rsi.context_budget import LOCK_PATH
+    context.enable_verified_text_audit(read(LOCK_PATH))
     measurement = context.measure([{'role': 'user', 'content': '中文 mixed text'}])
     assert measurement['host_text_tokens'] == len(context.tokenizer.encode('中文 mixed text', add_special_tokens=False).ids)
-    limit = TOTAL_TOKENS - OUTPUT_TOKENS
+    # Provider capacity is enforced against actual prompt plus completion
+    # usage; the pre-request estimate only requires one token of room.
+    limit = CAPABILITIES['context_window'] - 1
     assert context.fits({'host_prompt_tokens_estimate': limit})
     assert not context.fits({'host_prompt_tokens_estimate': limit + 1})
-    assert context.measure([{'role':'assistant', 'content':'', 'reasoning_content':'思考'}])['host_text_tokens'] > 0
+    reasoning_measurement = context.measure([{'role':'assistant', 'content':'', 'reasoning_content':'思考'}])
+    # The verified Ollama audit covers provider-bound content only; replayed
+    # reasoning_content is deliberately excluded from the provider prompt estimate.
+    assert reasoning_measurement['host_text_tokens'] == 0
+    assert reasoning_measurement['host_text_characters'] == 2
     # Long compressible text is no longer rejected by a character surrogate.
     assert context.fits(context.measure([{'role':'user', 'content':'x' * 100000}]))
     assert not context.fits(context.measure([{'role':'user', 'content':'x ' * 32768}]))
@@ -48,14 +66,18 @@ def test_actual_qwen_tokenizer_budget_boundary_and_multilingual():
 
 def test_missing_or_corrupt_tokenizer_never_falls_back(tmp_path, monkeypatch):
     import mini_swe_rsi.context_budget as module
-    from mini_swe_rsi.core import write, improvement_contract
-    lock = tmp_path/'lock.json'
-    monkeypatch.setattr(module, 'LOCK_PATH', lock)
+    import importlib.metadata
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    context = module.ContextBudget(CAPABILITIES)
+    identity = {'library_version': importlib.metadata.version('tokenizers'),
+                'file': 'missing.json', 'sha256': 'bad'}
     with pytest.raises(FileNotFoundError):
-        module.ContextBudget()
-    write(lock, {'library_version':'wrong', 'file':'missing', 'sha256':'bad'})
+        context.enable_verified_text_audit(identity)
+    (tmp_path/'missing.json').write_text('not a tokenizer')
     with pytest.raises(RuntimeError, match='library version mismatch'):
-        module.ContextBudget()
+        context.enable_verified_text_audit({**identity, 'library_version': 'wrong'})
+    with pytest.raises(RuntimeError, match='file digest mismatch'):
+        context.enable_verified_text_audit(identity)
 
 
 def test_only_action_extracted_from_thought_prose_and_raw_reasoning_alias():

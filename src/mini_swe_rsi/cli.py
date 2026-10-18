@@ -9,18 +9,7 @@ from .core import write
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Pinned online mini-swe-agent RSI runs')
-    parser.add_argument('command', choices=['online', 'report'])
-    parser.add_argument('--run', type=Path, required=True)
-    parser.add_argument('--data', type=Path)
-    parser.add_argument('--resume', action='store_true',
-                        help='Resume the persisted online task/round cursor')
-    parser.add_argument('--resume-checkpoint', type=Path,
-                        help='Explicit host-private authorization for pre-check online workflow restoration')
-    parser.add_argument('--billing-mode', choices=['subscription'],
-                        help='Freeze the authenticated subscription billing contract for online mode')
-    parser.add_argument('--task-limit', type=int,
-                        help='Freeze an explicit online development-prefix length (for example 3 or 20)')
+    parser = build_parser()
     args = parser.parse_args()
     root = args.run.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -70,6 +59,21 @@ def main():
                     # contract is written; preserve that original error.
                     if active_error is None:
                         raise
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description='Pinned online mini-swe-agent RSI runs', allow_abbrev=False)
+    parser.add_argument('command', choices=['online', 'report'])
+    parser.add_argument('--run', type=Path, required=True)
+    parser.add_argument('--data', type=Path)
+    parser.add_argument('--resume-checkpoint', type=Path,
+                        help='Explicit host-private authorization for pre-check online workflow restoration')
+    parser.add_argument('--billing-mode', choices=['subscription'],
+                        help='Freeze the authenticated subscription billing contract for online mode')
+    parser.add_argument('--task-limit', type=int,
+                        help='Freeze an explicit online development-prefix length (for example 3 or 20)')
+    return parser
 
 
 if __name__ == '__main__':

@@ -282,22 +282,7 @@ def validate_improvement_args(args):
 
 
 def main(entry):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['benchmark', 'improve'])
-    parser.add_argument('--prompt-file')
-    parser.add_argument('--logdir', required=True)
-    parser.add_argument('--workdir', default='/home/agent/workdir')
-    parser.add_argument('--best-iter', type=int, default=0)
-    parser.add_argument('--parent-iter', type=int, required=False)
-    parser.add_argument('--candidate-id')
-    parser.add_argument('--current-iter', type=int, default=0)
-    parser.add_argument('--timeout', type=int, default=600)
-    parser.add_argument('--cost-threshold', default=3)
-    parser.add_argument('--task-id')
-    parser.add_argument('--round-id')
-    parser.add_argument('--online-version')
-    parser.add_argument('--resume-workflow', type=Path,
-                        help='Host-authorized online workflow continuation file')
+    parser = build_parser()
     args = parser.parse_args()
     validate_improvement_args(args)
     budgets = budget_config()
@@ -505,3 +490,21 @@ def main(entry):
     print(f'0|0|0|{time.time()-start:.3f}')
     if result.get('exit_status') != 'Submitted':
         raise SystemExit(1)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument('command', choices=['benchmark', 'improve'])
+    parser.add_argument('--prompt-file')
+    parser.add_argument('--logdir', required=True)
+    parser.add_argument('--workdir', default='/home/agent/workdir')
+    parser.add_argument('--best-iter', type=int, default=0)
+    parser.add_argument('--parent-iter', type=int, required=False)
+    parser.add_argument('--candidate-id')
+    parser.add_argument('--current-iter', type=int, default=0)
+    parser.add_argument('--task-id')
+    parser.add_argument('--round-id')
+    parser.add_argument('--online-version')
+    parser.add_argument('--resume-workflow', type=Path,
+                        help='Host-authorized online workflow continuation file')
+    return parser

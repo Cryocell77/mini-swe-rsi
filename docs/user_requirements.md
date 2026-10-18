@@ -126,3 +126,7 @@
 ## 2026-10-18 批次 D 委派
 
 用户授权按精简指南推进批次 D（P2-3/P2-4），子 agent 使用 GPT-5.6 Luna / High，在当前工作区实施；主 agent 独立审查、测试验收后提交符合现有格式的 commit。本次不沿用批次 C 的 DSH 模型要求，不推进批次 E、不启动新的真实模型实验。变更与验收记录见 [online-rsi-phase-d-review.md](online-rsi-phase-d-review.md)。
+
+## 2026-10-18 批次 E 委派
+
+用户要求按精简指南推进批次 E，子 agent 使用 GPT-5.6 Luna / High；由主 agent 审查、测试验收后提交符合现有格式的 commit，随后要求继续当前工作。本批按文档选择历史上下文预算、共同任务预留逻辑和无效参数三项，完整数据／镜像校验及身份字段经评估保留。在线合同采用新版本并明确拒绝旧运行，不改写历史产物，不启动真实模型实验。取舍及验收见 [online-rsi-phase-e-review.md](online-rsi-phase-e-review.md)。

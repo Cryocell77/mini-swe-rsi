@@ -1,5 +1,5 @@
 """Improve-only transport regressions, including the fourth-run observed failures."""
-from mini_swe_rsi.context_budget import ContextBudget
+from mini_swe_rsi.context_budget import ContextBudget, LOCK_PATH
 import importlib.util
 import io
 import json
@@ -12,12 +12,14 @@ import pytest
 import yaml
 from jinja2 import Template
 
-from mini_swe_rsi.core import ROOT, improvement_contract
+from mini_swe_rsi.core import ROOT, improvement_contract, read
 from mini_swe_rsi.broker import Broker, ModelError
 from tests.event_helpers import broker_events
 
 w = runpy.run_path(str(ROOT/'runtime/workflow.py'))
 bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+
+CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
 
 
 def selected():
@@ -81,7 +83,9 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
 
 def test_status_rejections_and_generic_error_do_not_inherit_old_terminal_reason(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    broker=Broker(tmp_path,context=ContextBudget());broker.model='fixture'
+    context = ContextBudget(CAPABILITIES)
+    context.enable_verified_text_audit(read(LOCK_PATH))
+    broker=Broker(tmp_path,context=context);broker.model='fixture'
     token=broker.session('roles',calls=1)
     def status(auth=token):
         req=urllib.request.Request(f'http://127.0.0.1:{broker.port}/status',data=b'{}',headers={'Authorization':'Bearer '+auth})
@@ -140,7 +144,8 @@ def test_actual_fourth_run_actions_are_rejected_without_rewriting(tmp_path):
 
 def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
-    broker=Broker(tmp_path,context=ContextBudget())
+    broker=Broker(tmp_path,context=ContextBudget(CAPABILITIES))
+    broker.service_identity = {'ollama': {'cloud': False, 'verified': True}}
     token=broker.session('editor',solver='fixture')
     monkeypatch.setattr('mini_swe_rsi.broker.subprocess.run',lambda *a,**kw:pytest.fail('expired command executed'))
     try:

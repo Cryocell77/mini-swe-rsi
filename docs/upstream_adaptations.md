@@ -145,3 +145,9 @@ Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型diges
 移除未消费的 behavioral 摘要和 Broker 内存事件列表，事件审计继续完整落盘；正常与错误回复共享有效用量和费用累计，迟到回复保持独立规则。任务结果排序、正规对象读取及摘要匹配统一，但反馈、评分、候选启动、私有证据和接任门槛仍在各边界执行。
 
 报告与公开归档共享递归过滤，不扩大各自白名单；新增 helper 纳入控制摘要。宿主和容器分别复用本次加载的 workflow，保留独立身份核验及活动归档配置加载。测试接口按生产证据合同统一，删除类身份绕过。固定上游原文、锁、角色权限、七步和原生限额保持，不引入批次 E 的兼容性清理。实施与验收见 [online-rsi-phase-d-review.md](online-rsi-phase-d-review.md)。
+
+## 2026-10-18 批次 E：可选兼容路径收敛
+
+ContextBudget 只接收显式 provider 能力，删除历史隐式容量分支；认证服务容量、实际 usage、Qwen tokenizer 核验与内容审计继续执行原有 provider 语义。移除未启用的共同任务验收路径，候选仍须当前题不退化并满足声明的修复／机制标准。在线合同改为 `mini-swe-rsi-online-v3`、检查政策 revision 2，拒绝旧 v2 及共同任务字段，不迁移或重标历史产物；七步 improvement 协议仍为 v6。
+
+删除无效 `--resume` 与 bridge `--timeout/--cost-threshold`，禁用参数缩写；持久化边界恢复、明确工作流授权以及真实期限和费用合同保留。完整数据／镜像校验、身份字段、上游原文和锁文件保持。取舍与验收见 [online-rsi-phase-e-review.md](online-rsi-phase-e-review.md)。

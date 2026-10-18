@@ -14,6 +14,9 @@ from mini_swe_rsi.core import read, write
 from tests.event_helpers import broker_events
 
 
+CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
+
+
 def _response(*, usage=None, choices=None, error=None):
     value = {'choices': [] if choices is None else choices}
     if usage is not None:
@@ -32,7 +35,7 @@ def make_broker(tmp_path, monkeypatch):
     })
 
     def factory(policy):
-        broker = Broker(tmp_path, context=ContextBudget(), transport_policy=policy)
+        broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES), transport_policy=policy)
         broker.model = 'fixed'
         return broker
 
