@@ -56,6 +56,8 @@ def test_remote_identity_never_uses_qwen_tokenizer(broker):
     assert broker.context.contract['total_tokens'] == 1048576
     assert broker.budget_limits()['model_max_output_tokens'] == 393216
     assert broker.identity()['weights_verifiable'] is False
+    for record in (broker.budget_limits(), broker.service_identity):
+        assert not any('cost' in key or 'billing' in key or 'pricing' in key for key in record)
     broker.remote = lambda path:{'data':[{'id':'deepseek-flash'}]}
     with pytest.raises(ModelError,match='advertise valid'):
         broker.identity()
@@ -82,7 +84,7 @@ def ollama_broker(tmp_path, monkeypatch):
     instance.close()
 
 
-def test_ollama_alias_capabilities_and_unknown_local_cost(ollama_broker):
+def test_ollama_alias_capabilities_and_token_usage(ollama_broker):
     broker, data, shown = ollama_broker
     identity = broker.identity()
     assert identity['requested']=='qwen35-4b-agent' and identity['model']=='qwen35-4b-agent:latest'
@@ -90,13 +92,12 @@ def test_ollama_alias_capabilities_and_unknown_local_cost(ollama_broker):
     assert broker.context.contract['total_tokens']==65536
     assert broker.budget_limits()['model_max_output_tokens']==65535
     assert broker.service_identity['ollama']['num_predict']==-1
-    assert not broker.budget_limits()['cost_threshold_enforced']
     token = broker.session('task:fixture',solver='fixture')
     requests = endpoint(broker,iter([reply()]))
     broker.complete(token,{'messages':[{'role':'user','content':'task'}]})
     assert requests[0][1]['model']=='qwen35-4b-agent:latest'
     assert requests[0][1]['max_tokens']==65535
-    assert not broker.finish(token)['cost_accounting_available']
+    assert broker.finish(token)['tokens'] == 7
 
 
 def test_ollama_finite_output_and_invalid_or_cloud_metadata(ollama_broker):
@@ -197,7 +198,7 @@ def test_no_old_context_cap_and_usage_is_authoritative(broker):
     assert broker.finish(token)['tokens']==1048578
 
 
-def test_tool_scope_output_and_benchmark_cost_guard(broker, monkeypatch):
+def test_tool_scope_output_and_benchmark_token_accounting(broker, monkeypatch):
     token=broker.session('benchmark',solver='fixture')
     calls=[]
     def run(args, **kwargs):
@@ -210,10 +211,9 @@ def test_tool_scope_output_and_benchmark_cost_guard(broker, monkeypatch):
     assert 600 < calls[0][1] <= 605
     with pytest.raises(ModelError,match='between 5 and 1800'):
         broker.tool(token,{'command':'fixture','generous_expected_duration':1})
-    broker.sessions[token]['cost_upper_bound_usd']=3.01
-    with pytest.raises(ModelError,match='CostExceeded'):
-        broker.complete(token,{'messages':[]})
-    assert broker.sessions[token]['calls']==0
+    endpoint(broker, iter([reply()]))
+    broker.complete(token, {'messages': []})
+    assert broker.finish(token)['tokens'] == 7
 
 
 def test_pinned_upstream_budget_scopes_match_policy():
@@ -272,7 +272,7 @@ def test_model_total_deadline_does_not_wait_on_keepalive_transport(broker):
         release.set()
 
 
-def test_bad_cache_usage_retains_charged_tokens_and_conservative_cost(broker):
+def test_bad_cache_usage_retains_valid_tokens(broker):
     token=broker.session('bad-cache')
     endpoint(broker,iter([reply(usage={'total_tokens':7,'prompt_tokens':5,'completion_tokens':2,
                                     'prompt_cache_hit_tokens':999})]))
@@ -280,7 +280,7 @@ def test_bad_cache_usage_retains_charged_tokens_and_conservative_cost(broker):
         broker.complete(token,{'messages':[]})
     usage=broker.finish(token)
     assert usage['calls']==1 and usage['tokens']==7 and usage['unmetered_calls']==0
-    assert usage['cost_upper_bound_usd']>0
+    assert usage['cached_tokens'] == 0
 
 
 @pytest.mark.parametrize('cache_override', [
@@ -310,7 +310,7 @@ def test_error_completion_uses_common_usage_and_cache_accounting(broker):
         broker.complete(token, {'messages': []})
     metrics = broker.finish(token)
     assert metrics['tokens'] == 7 and metrics['cached_tokens'] == 0
-    assert metrics['unmetered_calls'] == 0 and metrics['cost_upper_bound_usd'] > 0
+    assert metrics['unmetered_calls'] == 0
     event = broker_events(broker)[-1]
     assert event['transport_fault'] == 'upstream_error'
     assert event['usage'] == usage and event['cache_usage_invalid'] is True

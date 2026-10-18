@@ -1,4 +1,4 @@
-"""Frozen host estimate; endpoint prompt usage remains the billing authority."""
+"""Frozen host estimate; endpoint prompt usage remains authoritative."""
 from __future__ import annotations
 
 import hashlib

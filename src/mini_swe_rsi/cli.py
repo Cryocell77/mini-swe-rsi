@@ -34,7 +34,7 @@ def main():
             if args.command == 'online':
                 from .online import OnlineLoop
                 online_kwargs = {key:value for key, value in (
-                    ('billing_mode', args.billing_mode), ('task_limit', args.task_limit),
+                    ('task_limit', args.task_limit),
                     ('resume_checkpoint', args.resume_checkpoint))
                     if value is not None}
                 loop = OnlineLoop.from_environment(root, args.data, **online_kwargs)
@@ -69,8 +69,6 @@ def build_parser():
     parser.add_argument('--data', type=Path)
     parser.add_argument('--resume-checkpoint', type=Path,
                         help='Explicit host-private authorization for pre-check online workflow restoration')
-    parser.add_argument('--billing-mode', choices=['subscription'],
-                        help='Freeze the authenticated subscription billing contract for online mode')
     parser.add_argument('--task-limit', type=int,
                         help='Freeze an explicit online development-prefix length (for example 3 or 20)')
     return parser

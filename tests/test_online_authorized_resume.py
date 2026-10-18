@@ -61,7 +61,7 @@ def test_resume_cannot_use_an_unbound_or_changed_state_file(tmp_path):
 
 def test_accounting_restore_cannot_reset_deadline_or_allowances():
     broker=SimpleNamespace(sessions={'token':{'deadline':123,'max_calls':None,
-                                             'cost_limit_usd':None,'inflight':False}})
+                                             'inflight':False}})
     data={key:1 for key in ('calls','tokens','prompt_tokens','completion_tokens',
                             'cached_tokens','tool_calls','unmetered_calls')}
     data.update(iterations={'main':62,'018_software_developer':10},errors=['InfrastructureInterrupted'],

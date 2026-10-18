@@ -41,3 +41,12 @@ def test_cli_run_relies_on_persisted_cursor_without_resume_argument(tmp_path, mo
 
     assert seen['kwargs'] == {}
     assert 'resume' not in seen['kwargs']
+
+
+@pytest.mark.parametrize('option', ['--billing-mode', '--billing'])
+def test_removed_billing_mode_is_rejected(option):
+    from mini_swe_rsi.cli import build_parser
+
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(['online', '--run', '/tmp/online', option, 'subscription'])
+    assert exc.value.code == 2

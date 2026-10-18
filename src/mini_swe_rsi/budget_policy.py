@@ -24,12 +24,9 @@ def sica_budget(model_max_output_tokens, context_max_tokens):
             'model_max_output_tokens': model_max_output_tokens,
             'context_max_tokens': context_max_tokens,
             'fileview_regeneration_chars': 300000,
-            'fileview_regeneration_implemented': False,
-            'benchmark_cost_threshold_usd': 3,
-            'cost_threshold_enforced': False,
-            'cost_limitation': 'No frozen provider pricing contract; monetary threshold not reproduced'}
+            'fileview_regeneration_implemented': False}
 
 
 def policy_contract():
-    return {'version': 'sica-budget-scopes-v1', 'sha256': digest(ROOT/'src/mini_swe_rsi/budget_policy.py'),
+    return {'version': 'sica-budget-scopes-v2', 'sha256': digest(ROOT/'src/mini_swe_rsi/budget_policy.py'),
             'upstream_sources':read(ROOT/'upstream.lock.json')['sica']['budget_files']}

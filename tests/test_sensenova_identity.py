@@ -1,4 +1,4 @@
-"""Authenticated catalog mapping and conservative tariff handling; no inference."""
+"""Authenticated catalog capacity mapping; tariff metadata is ignored."""
 import copy
 
 import pytest
@@ -26,7 +26,6 @@ def test_catalog_maps_capacities_and_freezes_actual_service_declarations(catalog
     assert identity['max_tokens'] == 131072 and broker.context.contract['total_tokens'] == 1048576
     assert broker.context.tokenizer is None and not broker.context.contract['pre_request_estimate_enforced']
     assert broker.prefix_protocol is None
-    assert broker.budget_limits()['cost_threshold_enforced']
     frozen = copy.deepcopy(broker.service_identity)
     assert broker.identity() == identity and broker.service_identity == frozen
     model['quantization'] = 'different'
@@ -47,12 +46,14 @@ def test_missing_invalid_and_conflicting_capacities_reject(catalog_broker, chang
 @pytest.mark.parametrize('tariff', [None, {}, {'prompt': '0'},
     dict.fromkeys(('prompt', 'completion', 'input_cache_read', 'image', 'request'), '0.1'),
     {**dict.fromkeys(('prompt', 'completion', 'input_cache_read', 'image', 'request'), '0'), 'extra_charge': '1'}])
-def test_unknown_paid_or_extra_tariff_cannot_bypass_benchmark_guard(catalog_broker, tariff):
+def test_tariff_metadata_does_not_affect_identity_or_benchmark(catalog_broker, tariff):
     broker, model = catalog_broker
+    broker.identity()
+    frozen = copy.deepcopy(broker.service_identity)
     model['pricing'] = tariff
     broker.identity()
-    assert broker.pricing is None
+    assert broker.service_identity == frozen
+    assert 'pricing' not in broker.service_identity['sensenova_catalog']
     token = broker.session('task:fixture', solver='fixture')
-    with pytest.raises(ModelError, match='pricing contract unavailable'):
-        broker.check_session(broker.sessions[token])
+    broker.check_session(broker.sessions[token])
     assert broker.sessions[token]['calls'] == 0

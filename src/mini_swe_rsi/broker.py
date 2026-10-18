@@ -215,7 +215,7 @@ def adapt_response(response):
     return returned, 'promoted single complete reasoning action; removed action from ' + ','.join(fields) + '; format=' + kind
 
 class Broker:
-    def __init__(self, root, context=None, billing_mode=None, transport_policy=None):
+    def __init__(self, root, context=None, transport_policy=None):
         self.root = root
         self.context = context if context is not None else None
         self.transport_policy = _transport_policy(root, transport_policy)
@@ -238,10 +238,6 @@ class Broker:
         if self.transport_pause is not None:
             self.pause_event.set()
         self.config = secrets()
-        if billing_mode is not None:
-            if billing_mode != 'subscription':
-                raise ValueError('Only the explicit subscription billing mode is supported')
-            self.config['RSI_BILLING_MODE'] = billing_mode
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.lock = threading.Lock()
         # The host still serializes model/tool work, while this separate
@@ -296,7 +292,7 @@ class Broker:
                         out['error']['message'] = 'exceed context limit: frozen model context capacity (ContextLimitExceeded)'
                     elif str(exc) == 'InputIntegrityError':
                         out['error'].update(type='invalid_request_error', code='input_integrity_failed')
-                    elif str(exc) in ('TimeExceeded', 'LimitsExceeded','CostExceeded'):
+                    elif str(exc) in ('TimeExceeded', 'LimitsExceeded'):
                         out['error'].update(type='permission_error', code='budget_exhausted')
                         status = 403
                 data = json.dumps(out).encode()
@@ -328,11 +324,9 @@ class Broker:
     def _account_usage(self, session, usage, aggregate, event):
         """Account one valid provider usage record and return cache details.
 
-        Error completions and successful completions share this path so every
-        billable response updates the session ledger identically.  ``event``
-        receives the original usage object and cost evidence; an invalid cache
-        count is retained as a charged-token record while cost accounting uses
-        the conservative zero-cache bound.
+        Error and successful completions share the same token ledger. ``event``
+        retains the original usage; invalid cache counts are flagged and excluded
+        from cached-token totals without discarding valid prompt/output usage.
         """
         if 'prompt_cache_hit_tokens' in usage:
             # An explicit null is a provider accounting error; it must not be
@@ -357,13 +351,6 @@ class Broker:
         session['tokens'] += usage['total_tokens']
         session['cached_tokens'] += cached
         event['usage'] = usage
-        if getattr(self, 'pricing', None):
-            price = self.pricing
-            cost = ((usage['prompt_tokens'] - cached) * price['input_per_million']
-                    + cached * price['cached_input_per_million']
-                    + usage['completion_tokens'] * price['output_per_million']) / 1e6
-            session['cost_upper_bound_usd'] += cost
-            event['cost_upper_bound_usd'] = cost
         return cache_valid, cached
 
     def _pause_enabled(self, category, status=None):
@@ -666,7 +653,7 @@ class Broker:
         catalog = None
         if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'token.sensenova.cn':
             catalog = {key: selected.get(key) for key in ('context_length', 'max_output_length',
-                'supported_features', 'supported_sampling_parameters', 'quantization', 'pricing')}
+                'supported_features', 'supported_sampling_parameters', 'quantization')}
             for standard, native_key in (('context_window', 'context_length'),
                                          ('max_output_tokens', 'max_output_length')):
                 value = catalog[native_key]
@@ -693,7 +680,7 @@ class Broker:
             except Exception as exc:
                 raise ModelError('Ollama model metadata unavailable: ' + type(exc).__name__) from None
             if shown.get('remote_model') or shown.get('remote_host') or ':cloud' in selected['id']:
-                raise ModelError('Ollama cloud model requires an explicit capacity/pricing contract')
+                raise ModelError('Ollama cloud model cannot be verified through local native metadata')
             parameters = shown.get('parameters', '')
             match = re.search(r'^num_ctx\s+(\d+)\s*$', parameters, re.MULTILINE)
             info = shown.get('model_info', {})
@@ -725,38 +712,16 @@ class Broker:
         self.context = ContextBudget(selected)
         official = urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'api.deepseek.com'
         self.prefix_protocol = 'deepseek-beta' if official and self.model.startswith('deepseek-') else None
-        self.pricing = ({'source':'https://api-docs.deepseek.com/quick_start/pricing/',
-                         'checked_date':'2026-10-12', 'basis':'published peak rates; conservative cost upper bound',
-                         'cached_input_per_million':.006, 'input_per_million':.3,
-                         'output_per_million':1.2}
-                        if official and self.model == 'deepseek-flash' else None)
-        if catalog is not None:
-            tariff = catalog['pricing']
-            # Only explicit all-zero rates are unambiguous without currency/unit
-            # documentation. Never infer paid rates or ignore extra charge fields.
-            required = {'prompt', 'completion', 'input_cache_read', 'image', 'request'}
-            if (isinstance(tariff, dict) and set(tariff) == required
-                    and all(type(value) in (str, int, float) and str(value) in ('0', '0.0')
-                            for value in tariff.values())):
-                self.pricing = {'source': 'authenticated SenseNova /models pricing',
-                    'basis': 'explicit all-zero service tariff; not an independently verified invoice',
-                    'cached_input_per_million': 0.0, 'input_per_million': 0.0, 'output_per_million': 0.0}
         self.service_identity = {'capacity_source':'authenticated /models',
             'context_window':selected['context_window'], 'max_output_tokens':selected['max_output_tokens'],
             'owned_by':selected.get('owned_by'), 'api_capabilities':selected.get('api_capabilities'),
-            'prefix_protocol':self.prefix_protocol, 'pricing':self.pricing}
+            'prefix_protocol':self.prefix_protocol}
         if catalog is not None:
             self.service_identity.update(capacity_source='authenticated SenseNova /models field mapping',
                                          sensenova_catalog=catalog)
         if proxy_catalog is not None:
             self.service_identity.update(capacity_source='authenticated loopback proxy /models?client_version=pi',
                 proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
-        if self.config.get('RSI_BILLING_MODE'):
-            if self.config['RSI_BILLING_MODE'] != 'subscription' or proxy_catalog is None:
-                raise ModelError('Subscription contract requires the verified local proxy catalog')
-            self.service_identity['billing_contract'] = {'mode': 'subscription',
-                'source': 'explicit subscription billing mode',
-                'usd_token_tariff_available': False, 'benchmark_usd_threshold_reproduced': False}
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
             if architecture == 'qwen35':
@@ -777,10 +742,7 @@ class Broker:
         if self.context is None:
             raise ModelError('Model identity/capabilities must be frozen before use')
         from .budget_policy import sica_budget
-        limits = sica_budget(self.context.contract['output_tokens'], self.context.contract['total_tokens'])
-        if getattr(self, 'pricing', None):
-            limits.update(cost_threshold_enforced=True, cost_limitation=None, pricing=self.pricing)
-        return limits
+        return sica_budget(self.context.contract['output_tokens'], self.context.contract['total_tokens'])
 
     def session(self, label, solver=None, seconds=600, calls=None):
         token = random_secrets.token_hex(32)
@@ -792,8 +754,6 @@ class Broker:
         self.sessions[token] = dict(label=label, solver=solver, calls=0, tokens=0,
                                     cwd='/testbed', started=time.time(), iterations={},
                                     prompt_tokens=0, completion_tokens=0, cached_tokens=0,
-                                    cost_upper_bound_usd=0.0, cost_limit_usd=3 if solver else None,
-                                    cost_accounting_available=bool(getattr(self, 'pricing', None)),
                                     unmetered_calls=0,
                                     deadline=deadline,
                                     max_calls=calls, tool_calls=0, errors=[], terminal_reason=None,
@@ -836,13 +796,6 @@ class Broker:
             self.reject(s, 'TimeExceeded', 'session_deadline',kind=kind)
         if model_request and s['max_calls'] is not None and s['calls'] >= s['max_calls']:
             self.reject(s, 'LimitsExceeded')
-        if s['cost_limit_usd'] is not None:
-            local_ollama = getattr(self, 'service_identity', {}).get('ollama', {}).get('cloud') is False
-            subscription = getattr(self, 'service_identity', {}).get('billing_contract', {}).get('mode') == 'subscription'
-            if not getattr(self, 'pricing', None) and not local_ollama and not subscription:
-                self.reject(s, 'Benchmark pricing contract unavailable', 'pricing_contract')
-            if s['cost_upper_bound_usd'] >= s['cost_limit_usd']:
-                self.reject(s, 'CostExceeded', 'published_peak_cost_upper_bound',kind=kind)
 
     def request_json(self, request, deadline, label, call, session_token=None, event_id=None):
         """Bound one request's wall time and quarantine late transport replies."""

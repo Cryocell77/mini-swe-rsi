@@ -111,10 +111,6 @@ def secrets():
     if any(not env.get(k) for k in required):
         raise ValueError('Missing model configuration in .env')
     config = {k: env[k] for k in required}
-    if env.get('RSI_BILLING_MODE'):
-        if env['RSI_BILLING_MODE'] != 'subscription':
-            raise ValueError('RSI_BILLING_MODE must be subscription or omitted')
-        config['RSI_BILLING_MODE'] = env['RSI_BILLING_MODE']
     return config
 
 

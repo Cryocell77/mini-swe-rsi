@@ -71,7 +71,7 @@ def test_existing_command_timeout_destroys_sandbox_without_fake_success(tmp_path
 
 
 # Same failure pattern as the observed generated script: one FormatError, then
-# zero-cost valid actions forever. `fixed` adds a genuine protocol termination.
+# successful actions forever. `fixed` adds a genuine protocol termination.
 STUB_SCRIPT = '''
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import FormatError, InterruptAgentFlow
@@ -135,7 +135,6 @@ def test_real_loop_stops_before_oom_and_next_tool_can_read_saved_prefix(tmp_path
     broker = Broker(tmp_path, ContextBudget({'context_window':1000000,'max_output_tokens':128000}))
     tools = StageTools(driver, logs, candidate, None, tmp_path/'tool_outputs')
     token = broker.session('local-check', solver='fixture', seconds=None)
-    broker.sessions[token]['cost_limit_usd'] = None  # Improvement tools, not a benchmark task.
     broker.sessions[token]['stage_tools'] = tools
     try:
         result = broker.tool(token, {'command':'python loop.py runaway'})

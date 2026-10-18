@@ -23,7 +23,7 @@ def proxy(tmp_path, monkeypatch):
     broker.close()
 
 
-def test_proxy_declaration_freezes_without_prompt_or_free_price_assumption(proxy):
+def test_proxy_declaration_freezes_without_catalog_prompt(proxy):
     broker, selected, catalog = proxy
     identity = broker.identity()
     assert identity['model'] == 'qfmodel' and identity['max_tokens'] == 8192
@@ -36,8 +36,7 @@ def test_proxy_declaration_freezes_without_prompt_or_free_price_assumption(proxy
     broker.identity()
     assert broker.service_identity != frozen
     token = broker.session('task:fixture', solver='fixture')
-    with pytest.raises(ModelError, match='pricing contract unavailable'):
-        broker.check_session(broker.sessions[token])
+    broker.check_session(broker.sessions[token])
     assert broker.sessions[token]['calls'] == 0
 
 
@@ -79,13 +78,9 @@ def test_http_status_retained_without_remote_body_or_credentials(proxy):
     assert broker.sessions[token]['unmetered_calls'] == 1
 
 
-def test_user_subscription_allows_task_with_tokens_but_unknown_dollars(proxy):
+def test_proxy_task_accounts_tokens_without_billing_configuration(proxy):
     broker, _, _ = proxy
-    broker.config['RSI_BILLING_MODE'] = 'subscription'
     broker.identity()
-    assert broker.service_identity['billing_contract']['mode'] == 'subscription'
-    assert not broker.budget_limits()['cost_threshold_enforced']
-    assert broker.pricing is None
     response = {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'fixture'}}],
                 'usage': {'prompt_tokens': 5, 'completion_tokens': 2, 'total_tokens': 7}}
     broker.request_json = lambda *args: response
@@ -93,39 +88,23 @@ def test_user_subscription_allows_task_with_tokens_but_unknown_dollars(proxy):
     broker.complete(token, {'messages': [{'role': 'user', 'content': 'fixture'}]})
     metrics = broker.finish(token)
     assert metrics['calls'] == 1 and metrics['tokens'] == 7
-    assert metrics['cost_accounting_available'] is False
+    assert not any('cost' in key or 'billing' in key for key in metrics)
 
 
-def test_workbuddy_subscription_uses_the_same_authenticated_capacity_contract(proxy):
+def test_workbuddy_uses_the_same_authenticated_capacity_contract(proxy):
     broker, selected, catalog = proxy
     selected['owned_by'] = 'workbuddy'
-    broker.config['RSI_BILLING_MODE'] = 'subscription'
     identity = broker.identity()
     assert identity['model'] == 'qfmodel'
     assert broker.service_identity['owned_by'] == 'workbuddy'
-    assert broker.service_identity['billing_contract'] == {
-        'mode': 'subscription',
-        'source': 'explicit subscription billing mode',
-        'usd_token_tariff_available': False,
-        'benchmark_usd_threshold_reproduced': False,
-    }
-    assert broker.pricing is None
 
 
-def test_subscription_requires_supported_proxy_verification(proxy):
-    broker, selected, _ = proxy
-    broker.config['RSI_BILLING_MODE'] = 'subscription'
-    selected.update(context_window=180000, max_output_tokens=8192)
-    with pytest.raises(ModelError, match='requires the verified'):
-        broker.identity()
-
-
-def test_billing_mode_is_explicit_and_validated(tmp_path, monkeypatch):
+def test_obsolete_billing_environment_is_ignored(tmp_path, monkeypatch):
     from mini_swe_rsi.core import secrets
     monkeypatch.setattr('mini_swe_rsi.core.ROOT', tmp_path)
     base = 'OPENAI_BASE_URL=http://127.0.0.1/v1\nOPENAI_API_KEY=fixture\nLOCAL_LLM_MODEL=qfmodel\n'
     (tmp_path/'.env').write_text(base+'RSI_BILLING_MODE=subscription\n')
-    assert secrets()['RSI_BILLING_MODE'] == 'subscription'
+    expected = secrets()
+    assert 'RSI_BILLING_MODE' not in expected
     (tmp_path/'.env').write_text(base+'RSI_BILLING_MODE=free_guessed\n')
-    with pytest.raises(ValueError, match='RSI_BILLING_MODE'):
-        secrets()
+    assert secrets() == expected

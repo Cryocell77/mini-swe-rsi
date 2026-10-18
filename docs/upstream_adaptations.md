@@ -151,3 +151,10 @@ Qwen切回后的Ollama适配：认证原生version/tags/show，冻结模型diges
 ContextBudget 只接收显式 provider 能力，删除历史隐式容量分支；认证服务容量、实际 usage、Qwen tokenizer 核验与内容审计继续执行原有 provider 语义。移除未启用的共同任务验收路径，候选仍须当前题不退化并满足声明的修复／机制标准。在线合同改为 `mini-swe-rsi-online-v3`、检查政策 revision 2，拒绝旧 v2 及共同任务字段，不迁移或重标历史产物；七步 improvement 协议仍为 v6。
 
 删除无效 `--resume` 与 bridge `--timeout/--cost-threshold`，禁用参数缩写；持久化边界恢复、明确工作流授权以及真实期限和费用合同保留。完整数据／镜像校验、身份字段、上游原文和锁文件保持。取舍与验收见 [online-rsi-phase-e-review.md](online-rsi-phase-e-review.md)。
+
+
+### 2026-10-18 删除自有计费流程
+
+按最新用户要求删除宿主单价、美元累计、费用阈值、订阅模式及相关反馈／报告字段。所有服务继续通过原有认证容量与身份核验；价格变化不再改变 SenseNova 身份。在线合同升为 `mini-swe-rsi-online-v4`，资源政策为 `sica-budget-scopes-v2`；旧 v2/v3 目录拒绝恢复和重新报告。七步 improvement v6 与检查政策 revision 2 不变。
+
+固定上游 mini/SICA 原文保持。bridge 对主角色和子角色实例绕过 mini `_calculate_cost`，保留查询所必需的 `cost: 0.0` 接口占位，并显式 `cost_limit=0` 禁用默认限制；这不声明服务免费。第三方 LiteLLM 的内部元数据和原始响应可能仍含成本字段，不参与宿主计费或验收。`LITELLM_LOCAL_MODEL_COST_MAP=True` 保留用于阻止 SDK 导入时联网获取其内置元数据，避免破坏容器网络隔离。具体范围和验证见 [online-rsi-billing-removal-review.md](online-rsi-billing-removal-review.md)。

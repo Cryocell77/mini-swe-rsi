@@ -39,6 +39,17 @@ def model_request_timeout(budget):
     return httpx.Timeout(None) if remaining is None else remaining
 
 
+def disable_model_billing(model):
+    """Bypass mini's price lookup; zero is an upstream ABI placeholder, not a tariff.
+
+    The archived mini query path requires a ``cost`` entry even for format
+    errors. Host accounting uses provider tokens only. Agents additionally use
+    ``cost_limit=0`` to disable mini's default monetary stop condition.
+    """
+    model._calculate_cost = lambda response: {'cost': 0.0}
+    return model
+
+
 def apply_model_request_timeout(model, budget):
     """Inject an unbounded timeout only at the SDK call boundary.
 
@@ -163,7 +174,7 @@ def rpc(path, value, identity='main', role='orchestrator'):
 
 def classified_failure(exc, status):
     reason = status.get('terminal_reason')
-    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded','InputIntegrityError','CostExceeded'):
+    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded','InputIntegrityError'):
         reason = type(exc).__name__
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
@@ -345,7 +356,7 @@ def main(entry):
     config['agent'].update(step_limit=main_iterations, cost_limit=0, wall_time_limit_seconds=wall_seconds,
                            output_path=Path(args.logdir) / 'trajectory.json')
     model_config = config['model']
-    model_config.update(model_name='openai/' + os.environ['RSI_MODEL'], cost_tracking='ignore_errors')
+    model_config.update(model_name='openai/' + os.environ['RSI_MODEL'])
     model_config['model_kwargs'].update(api_base=os.environ['RSI_BROKER'] + '/v1',
                     api_key=os.environ['RSI_TOKEN'], temperature=0, max_tokens=budgets['model_max_output_tokens'],
                     num_retries=0, timeout=budgets['session_remaining_seconds'],
@@ -353,7 +364,7 @@ def main(entry):
     environment = TaskEnvironment(
         cwd='/testbed' if args.command == 'benchmark' else args.workdir, timeout=budgets['command_default_seconds'],
         env=config['environment'].get('env', {}))
-    agent_model = apply_model_request_timeout(LitellmTextbasedModel(**model_config), budgets)
+    agent_model = apply_model_request_timeout(disable_model_billing(LitellmTextbasedModel(**model_config)), budgets)
     agent = DefaultAgent(agent_model, environment, **config['agent'])
     logs = Path(args.logdir)
     logs.mkdir(parents=True, exist_ok=True)
@@ -430,7 +441,7 @@ def main(entry):
             child_environment.identity, child_environment.role = identity, role
             child_environment.readonly = True if readonly else 'editor'
             child_model = apply_model_request_timeout(
-                LitellmTextbasedModel(**child_model_config), budgets)
+                disable_model_billing(LitellmTextbasedModel(**child_model_config)), budgets)
             child = DefaultAgent(child_model, child_environment, **child_config)
             (child_logs/'activation.json').write_text(json.dumps({**activation, 'role':identity,
                           'tool_capability':'read_only' if readonly else 'editing', 'shared_broker_session':True,
@@ -442,7 +453,7 @@ def main(entry):
                 result = failure(exc)
                 budget_exit = result.get('exit_status') in (
                     'LimitsExceeded', 'TimeExceeded', 'ContextLimitExceeded',
-                    'InputIntegrityError', 'CostExceeded')
+                    'InputIntegrityError')
                 if workflow_module.is_model_request_exception(exc) and not budget_exit:
                     (child_logs/'result.json').write_text(json.dumps(result))
                     raise workflow_module.WorkflowTransportError(

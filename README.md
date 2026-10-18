@@ -30,13 +30,7 @@ uv run mini-swe-rsi report --run runs/online
 
 `--task-limit N` 冻结开发题原顺序的前 N 题；省略时使用全部开发题。三题检查使用 `--task-limit 3`。每个运行目录独占运行锁，请勿并行启动同一目录。
 
-本地 Qoder / WorkBuddy 代理由用户确认使用订阅或免费额度、无按 token 单价时，可显式冻结订阅合同：
-
-```bash
-uv run mini-swe-rsi online --run runs/online --task-limit 3 --billing-mode subscription
-```
-
-也可在专用 `.env` 设置 `RSI_BILLING_MODE=subscription`。该合同仅适用于已核验的本地代理目录；美元成本保持未知，token 和时间照常计量，不能把订阅成本记为零美元。
+运行仅记录 token、调用次数和耗时，不估算美元成本，也不设置费用阈值。模型服务无需提供单价或订阅声明。旧 `--billing-mode` 参数已删除，旧 `.env` 中的 `RSI_BILLING_MODE` 被忽略，无需修改配置文件。
 
 报告完全离线，生成 `online_report.json` 与 `online_report.md`，分别列出首次任务、候选检查、接任/拒绝/跳过和已发生模型消耗。原批量运行目录不能作为在线报告输入。
 
@@ -59,20 +53,20 @@ uv run mini-swe-rsi online --run runs/online --task-limit 3 --billing-mode subsc
 uv run mini-swe-rsi online --run runs/online
 ```
 
-重新运行相同 `--run` 会校验冻结的题目、源码、模型、服务、计费和控制代码身份，并沿持久化边界恢复。旧的无效 `--resume` 参数已删除。已完成任务及不可变决策不会重复执行；评分基础设施故障只补评原补丁，不再次生成任务答案。
+重新运行相同 `--run` 会校验冻结的题目、源码、模型、服务和控制代码身份，并沿持久化边界恢复。旧的无效 `--resume` 参数已删除。已完成任务及不可变决策不会重复执行；评分基础设施故障只补评原补丁，不再次生成任务答案。
 
 已有模型工作流不能自动作为新会话重新开启。需要明确的宿主私有恢复授权时使用 `--resume-checkpoint PATH`；授权覆盖未完成的前五步和适用的未完成检查，累计调用与角色迭代继续计量。这是新模型上下文，不宣称原对话无缝续跑。
 
-当前在线合同为 `mini-swe-rsi-online-v3`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
+当前在线合同为 `mini-swe-rsi-online-v4`、检查政策 revision 2，不支持预留的 `common_tasks`。旧 v2/v3 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
 
 ## 模型与服务
 
 启动时从认证服务元数据冻结模型身份、上下文和输出容量；所有角色使用同一模型。代理仅声明模型名或容量时，不冒称已验证其底层权重。
 
-- DeepSeek 使用认证目录及已冻结的价格合同；截断回复通过其 beta prefix 协议续写。费用记录为保守上界，不作为实际账单。
+- DeepSeek 使用认证目录；截断回复通过其 beta prefix 协议续写。
 - Ollama 核验原生 version/tags/show、模型摘要、实际 `num_ctx` 与模板。Qwen tokenizer 匹配时提供文本计量和明显输入缺失审计，不承诺精确复刻服务聊天封装。
-- SenseNova 映射其目录容量；仅完整、明确的全零费率可记为服务声明的零费率。
-- 本地 Qoder / WorkBuddy 在标准目录缺容量时使用认证扩展目录。未知费用保持未知，仅按已支持的合同运行，不猜测价格。
+- SenseNova 映射其目录容量，忽略价格元数据。
+- 本地 Qoder / WorkBuddy 在标准目录缺容量时使用认证扩展目录。
 
 上下文预算要求明确的服务能力，不再提供隐式 32768/2048 模式。无匹配本地 tokenizer 时由服务执行 context 上限，宿主审核真实 usage，不把字符数当作 token。非支持 prefix 的服务截断回复显式失败，不执行未完成动作。服务故障暂停、未知用量和迟到回复继续保留审计。
 

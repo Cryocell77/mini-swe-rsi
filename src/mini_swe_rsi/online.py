@@ -71,7 +71,7 @@ def freeze_task_selection(data, root, task_limit=None):
 class OnlineLoop:
     """Run a fixed task sequence against one active Harness version at a time."""
 
-    protocol = 'mini-swe-rsi-online-v3'
+    protocol = 'mini-swe-rsi-online-v4'
 
     @classmethod
     def _validate_contract(cls, contract):
@@ -116,7 +116,7 @@ class OnlineLoop:
         self._load_or_initialize(active_code)
 
     @classmethod
-    def from_environment(cls, root, data_path=None, billing_mode=None, task_limit=None,
+    def from_environment(cls, root, data_path=None, task_limit=None,
                          resume_checkpoint=None):
         root = Path(root).resolve()
         # Earlier controls persisted an experiment-wide phase clock or an
@@ -135,11 +135,7 @@ class OnlineLoop:
         data = Data(data_path) if data_path else Data()
         data.freeze_images(root)
         selected_tasks = freeze_task_selection(data, root, task_limit)
-        saved_billing = existing_contract.get('billing_mode')
-        if billing_mode is not None and saved_billing not in (None, billing_mode):
-            raise OnlineError('Frozen online billing identity changed')
-        effective_billing = billing_mode if billing_mode is not None else saved_billing
-        broker = Broker(root, billing_mode=effective_billing)
+        broker = Broker(root)
         try:
             model_identity = broker.identity()
             service_identity = getattr(broker, 'service_identity', None)
@@ -155,7 +151,6 @@ class OnlineLoop:
                     'image_inventory_sha256': digest(root / 'image_inventory.json'),
                 },
                 'runtime_image': getattr(getattr(driver, 'image', None), 'id', None),
-                'billing_mode': effective_billing,
                 'task_limit': task_limit,
                 'improvement_task': improvement_contract(),
                 'check_policy': {
@@ -218,7 +213,6 @@ class OnlineLoop:
                                ('improvement_task', expected_improvement),
                                ('data', self.contract.get('data')),
                                ('runtime_image', self.contract.get('runtime_image')),
-                               ('billing_mode', self.contract.get('billing_mode')),
                                ('transport_policy', self.contract.get('transport_policy')),
                                ('task_limit', self.contract.get('task_limit'))):
                 if saved.get(key) != value:
@@ -477,7 +471,7 @@ class OnlineLoop:
         record = selected['record']
         public_record = {key: record[key] for key in (
             'problem_id', 'score', 'passed', 'tokens_used', 'num_cached_tokens',
-            'wall_time', 'timed_out', 'cost_threshold_exceeded',
+            'wall_time', 'timed_out',
             'token_accounting_complete') if key in record}
         summary = task_dir/'execution_summary.json'
         if summary.exists() and summary.is_file() and not summary.is_symlink():
@@ -494,7 +488,7 @@ class OnlineLoop:
         metrics = selected.get('metrics') if isinstance(selected.get('metrics'), dict) else {}
         public_metrics = {key: metrics[key] for key in (
             'tokens_used', 'tokens', 'num_cached_tokens', 'wall_time',
-            'cost_threshold_exceeded', 'token_accounting_complete') if key in metrics}
+            'token_accounting_complete') if key in metrics}
         write(summary, {'task_id': task_id, 'round_id': f'R{index + 1:04d}',
                         'version': self.active_version,
                         'full_source_hash': expected_full, 'execution_hash': expected_exec,

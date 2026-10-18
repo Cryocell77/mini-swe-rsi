@@ -151,7 +151,7 @@ Compatibility: online public file views use these read/list/search operations; e
                  'For a single recovery transition, initialize the messages and invoke step() a finite number of times. '
                  'For a full run(), the stub must eventually emit an exit message via InterruptAgentFlow; '
                  'also set a small explicit step_limit as a fallback and assert the intended exit_status '
-                 '(LimitsExceeded is not test success). Zero-cost stubs never hit cost_limit; '
+                 '(LimitsExceeded is not test success). Successful-action stubs need explicit termination; '
                  'max_consecutive_format_errors only stops consecutive errors, not successful actions. '
                  'Include these requirements in delegated testing tasks. Keep test logs finite. '
                  'Online improvement shell output above 300000 bytes is saved as a read-only artifact '
@@ -402,7 +402,7 @@ class Workflow:
             public['record'] = {key:record[key] for key in (
                 'problem_id', 'score', 'passed', 'tokens_used',
                 'num_cached_tokens', 'wall_time', 'timed_out',
-                'cost_threshold_exceeded', 'token_accounting_complete') if key in record}
+                'token_accounting_complete') if key in record}
         self.feedback = public
         path = self.logs / 'public_feedback.json'
         temporary = path.with_suffix('.tmp')

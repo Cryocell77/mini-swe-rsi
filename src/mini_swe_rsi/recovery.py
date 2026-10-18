@@ -61,7 +61,7 @@ def restore_session_accounting(broker, token, accounting):
         session[key] = accounting[key]
     session['iterations'] = dict(iterations)
     session['errors'] = list(accounting.get('errors', []))
-    # Deadline, concurrency, price policy and role allowances remain freshly
+    # Deadline, concurrency and role allowances remain freshly
     # host-bound. A checkpoint cannot grant an extra budget.
     if accounting.get('started') is not None:
         session['started'] = accounting['started']

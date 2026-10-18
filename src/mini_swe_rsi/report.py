@@ -8,7 +8,7 @@ from .core import read, write
 from .public_filter import public_value as _public_report_value
 
 
-_ONLINE_PROTOCOL = 'mini-swe-rsi-online-v3'
+_ONLINE_PROTOCOL = 'mini-swe-rsi-online-v4'
 _LEGACY_MARKERS = (
     'baseline.json', 'preflight.json', 'gates.json', 'champions.json',
     'recursive_track_result.json', 'verification.json', 'test_seal.json',
@@ -81,7 +81,7 @@ def build_online_report(root):
     usage = {'calls': 0, 'tokens': 0, 'prompt_tokens': 0, 'completion_tokens': 0,
              'unmetered_calls': 0, 'model_seconds': 0.0}
     by_activity = {}
-    priced_calls, known_cost, log_complete = 0, 0.0, True
+    log_complete = True
     if (root/'events.jsonl').exists():
         public_keys = {'kind', 'task_id', 'round_id', 'version', 'parent', 'proposal',
                        'decision', 'stage', 'status', 'time', 'online'}
@@ -111,9 +111,6 @@ def build_online_report(root):
                         target['completion_tokens'] += measured['completion_tokens']
                     else:
                         target['unmetered_calls'] += 1
-                if event.get('cost_upper_bound_usd') is not None:
-                    priced_calls += 1
-                    known_cost += event['cost_upper_bound_usd']
     result = {'mode':'online', 'run':str(root), 'configuration':config,
               'state':state, 'tasks':tasks, 'rounds':rounds,
               'counts':{'tasks':len(tasks), 'rounds':len(rounds),
@@ -125,7 +122,6 @@ def build_online_report(root):
     result.update(total_model_calls=usage['calls'], total_tokens=usage['tokens'],
                   usage=usage, usage_by_activity=by_activity,
                   token_accounting_complete=log_complete and usage['unmetered_calls'] == 0,
-                  cost_usd=known_cost if usage['calls'] and priced_calls == usage['calls'] and log_complete else None,
                   event_log_complete=log_complete, test_sealed=True,
                   interpretation='First task attempts and post-feedback checks are separate. Online acceptance does not establish general RSI benefit.')
     if (root/'failure.json').exists():

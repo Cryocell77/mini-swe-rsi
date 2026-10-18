@@ -282,11 +282,6 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
     context = ContextBudget({"context_window": 32768, "max_output_tokens": 2048})
     broker = Broker(root, context=context)
     broker.model = "fixture-model"
-    # The fixture has no token tariff.  Mark the local fixture as a non-cloud
-    # service so host accounting still executes instead of rejecting a call.
-    broker.service_identity = {"ollama": {"cloud": False}}
-    broker.pricing = {"input_per_million": 0.0, "cached_input_per_million": 0.0,
-                      "output_per_million": 0.0}
 
     class FixtureData:
         def image(self, task_id):
@@ -408,9 +403,7 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
         context = ContextBudget({"context_window": 65536, "max_output_tokens": 4096})
         broker = Broker(root, context=context)
         broker.model = "fixture-model"
-        broker.service_identity = {"ollama": {"cloud": False}}
-        broker.pricing = {"input_per_million": 0.0, "cached_input_per_million": 0.0,
-                          "output_per_million": 0.0}
+        broker.service_identity = {"capacity_source": "fixture"}
 
         class FixtureData:
             rows = {task: {"problem_statement": f"Deterministic fixture task {task}"}

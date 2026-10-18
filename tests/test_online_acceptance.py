@@ -53,7 +53,7 @@ class FakeBroker:
     def finish(self, token):
         self.finished.append(token)
         # Keep the shape of Broker.finish, including independently measured
-        # stage usage, so the loop cannot silently discard diagnostics cost.
+        # stage usage, so the loop cannot silently discard diagnostics usage.
         return {"label": token, "calls": 4, "tokens": 80, "prompt_tokens": 60,
                 "completion_tokens": 20, "cached_tokens": 0,
                 "unmetered_calls": 0}
