@@ -1,12 +1,14 @@
 # mini-swe-rsi
 
-固定模型的在线 Harness 自进化框架：活动版本完成一道任务后，根据公开反馈执行 SICA 两步诊断；存在可执行改进时完成后五步，候选经独立检查与宿主验收后接任，继续做题和自改进。
+固定模型的在线 Harness 自进化框架。活动版本完成一道任务后，根据公开反馈执行 SICA 诊断；有可执行改进时生成候选，经独立检查与宿主验收后接任，继续执行后续任务。
 
-当前仅提供 `online` 与 `report`。P1 已移除原批量基线、双轨道、探针、held-out 门槛和固定轨迹回放。历史实验结果保留为已有产物；在线候选通过某一题的检查不代表已经证明普遍 RSI 收益。
+- 本页：安装、配置、运行、恢复与测试。
+- [RSI 机制说明](docs/architecture.md)：七步流程、检查计划、隔离与产物。
+- [上游来源与适配](docs/upstream_adaptations.md)：固定依赖、保留内容与运行边界。
 
 ## 安装
 
-需要 Python 3.12、uv 和 Docker。模型配置从根目录 `.env` 读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`LOCAL_LLM_MODEL`（或 `LLM_MODEL_NAME`；两者同时存在时必须相同）。凭据留在宿主，不进入候选或 Git。
+需要 Python 3.12、uv 和 Docker。以下命令在仓库根目录执行；在 ARM 主机上，Docker 还需能够运行固定的 linux/amd64 任务镜像。
 
 ```bash
 python3 scripts/bootstrap.py
@@ -17,84 +19,64 @@ uv pip install --python .eval-venv/bin/python --no-deps .upstream/swebench
 docker build -t mini-swe-rsi-runtime:0.1 runtime
 ```
 
-上游提交、来源与文件摘要固定在 `upstream.lock.json`；宿主依赖为 `uv.lock`，容器依赖为 `runtime/requirements.lock`，独立评分依赖为 `evaluator.lock.txt`。保留 SICA 七步、角色与任务提示原文及许可证，实际执行使用从固定 mini-swe-agent 生成的归档 Harness；初始化时应用可追踪的计费删除补丁与在线包删除清单，不修改上游原始快照。
+bootstrap 按 [upstream.lock.json](upstream.lock.json) 下载并校验固定上游。宿主、运行容器和独立评分环境的依赖分别由 [uv.lock](uv.lock)、[runtime/requirements.lock](runtime/requirements.lock) 和 [evaluator.lock.txt](evaluator.lock.txt) 固定。
 
-新生成 Harness 保留 agent、model、environment、config 与 utils API，供在线运行和候选离线测试使用；移除独立 mini CLI、批量 runner 与自带 benchmark 配置。在线 `benchmark/improve` 仍通过归档根入口加载真实 mini 实现，生成包的 `python -m minisweagent` 不再提供。已有候选不会被重新裁剪。
+数据默认位于 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其他位置通过 `--data PATH` 指定，但必须具有相同的已批准清单、原始数据和镜像库存；不能直接换成任意 SWE-bench 数据集。在线按固定开发集的原顺序执行，缺失任务镜像时按不可变摘要恢复。
 
-数据默认复用 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其他位置通过 `--data PATH` 指定，数据和清单摘要必须一致。当前仍保留原固定数据集与完整镜像库存校验；在线只按冻结的开发题顺序执行，缺少任务镜像时按不可变摘要恢复。
+## 模型配置
+
+在仓库根目录创建未纳入 Git 的 `.env`：
+
+```dotenv
+OPENAI_BASE_URL=https://your-service.example/v1
+OPENAI_API_KEY=your-api-key
+LOCAL_LLM_MODEL=your-model-id
+```
+
+`LLM_MODEL_NAME` 可替代 `LOCAL_LLM_MODEL`；两者同时设置时必须相同。所有角色使用同一模型，凭据仅由宿主读取。
+
+启动时从认证服务元数据冻结模型身份、上下文和输出容量；不提供隐式容量默认值。支持的元数据适配包括 DeepSeek、Ollama、SenseNova 以及本地 Qoder / WorkBuddy 代理。代理声明的模型名不代表底层权重已被核验。无匹配本地 tokenizer 时由服务执行上下文上限，宿主审核真实 usage，不把字符数当作 token。
+
+运行记录 token、调用次数和耗时，不计算美元费用，不设置费用阈值，也不要求服务提供价格。
 
 ## 运行与报告
 
 ```bash
-uv run mini-swe-rsi online --run runs/online --data /absolute/path/to/data --task-limit 20
+uv run mini-swe-rsi online --run runs/online --data /absolute/path/to/data --task-limit 3
 uv run mini-swe-rsi report --run runs/online
 ```
 
-`--task-limit N` 冻结开发题原顺序的前 N 题；省略时使用全部开发题。三题检查使用 `--task-limit 3`。每个运行目录独占运行锁，请勿并行启动同一目录。
+`--task-limit N` 冻结开发集原顺序的前 N 题；省略时执行全部开发题。首次验证可用 `--task-limit 1`。运行真实调用配置的模型服务及独立评分器；每个运行目录只允许一个活动进程。
 
-运行仅记录 token、调用次数和耗时，不估算美元成本，也不设置费用阈值。实际初始 Harness 已删除模型价格计算、金额累计、费用配置、模板变量及轨迹字段，不使用禁用开关或零值占位。模型服务无需提供单价或订阅声明。旧 `--billing-mode` 参数已删除，旧 `.env` 中的 `RSI_BILLING_MODE` 被忽略，无需修改配置文件。
+`report` 完全离线，生成 `online_report.json` 和 `online_report.md`，列出首次任务、接任／拒绝／跳过、调用及 token 用量。首次作答与候选复测分开记录。用量不完整时报告会明确标识，不将未知调用视作零消耗。
 
-报告完全离线，生成 `online_report.json` 与 `online_report.md`，分别列出首次任务、候选检查、接任/拒绝/跳过和已发生模型消耗。原批量运行目录不能作为在线报告输入。
+## 恢复与常见问题
 
-## 在线闭环与验收
-
-- 本轮任务执行者、改进者、候选父版本始终是同一个活动版本 `H_v`。
-- 步骤 1、2 各需要成功且非空的归档分析角色报告。随后协调者显式选择 `skip` 或 `improve`，缺失诊断不能作为正常跳过。
-- 正常 `skip` 以两步终态推进题目，不创建接任版本；`improve` 才进入步骤 3～7。
-- 步骤 3 声明并冻结验收计划，步骤 4 实现。只有步骤 4 可以修改 Harness 源码、配置与测试，步骤 6、7 只更新描述与历史。
-- 步骤 5 由宿主独立加载候选、重新执行当前题并独立评分。机制判据额外将同一个冻结测试用于父版本与候选。当前题不退化且满足声明判据、执行摘要匹配，才可原子接任。
-- 接任后 `H_(v+1)` 实际执行下一题及后续改进；拒绝或正常跳过时继续使用 `H_v`。
-
-状态和不可变证据保存在 `online_state.json`、`versions/`、`tasks/`、`rounds/`、`proposals/`、`decisions/` 与 `events.jsonl`。首次作答结果不会被候选复测覆盖。公开归档仅暴露已发生任务的反馈、诊断、检查摘要和已接任源码；私有评分、凭据、未来任务不进入角色上下文。
-
-在线不设额外全局或阶段墙钟截止。保留 SICA 每角色独立迭代：协调者/归档/求解/评审 500，编码者 1000；每轮最多 5 次 provider 请求。单题 600 秒；工具有效上限 600 秒，命令声明范围 5～1800 秒。全部实际请求完整计量。
-
-## 恢复与版本身份
+再次运行同一目录即可沿已持久化的边界恢复：
 
 ```bash
 uv run mini-swe-rsi online --run runs/online
 ```
 
-重新运行相同 `--run` 会校验冻结的题目、源码、模型、服务和控制代码身份，并沿持久化边界恢复。旧的无效 `--resume` 参数已删除。已完成任务及不可变决策不会重复执行；评分基础设施故障只补评原补丁，不再次生成任务答案。
+题目序列、源码、模型、服务和控制代码身份必须与冻结配置一致；不可通过扩大 `--task-limit` 给原目录追加题目。已完成的任务和决定不会重复执行。评分基础设施故障只补评已保存的同一补丁。
 
-已有模型工作流不能自动作为新会话重新开启。需要明确的宿主私有恢复授权时使用 `--resume-checkpoint PATH`；授权覆盖未完成的前五步和适用的未完成检查，累计调用与角色迭代继续计量。这是新模型上下文，不宣称原对话无缝续跑。
+已有模型工作流不自动重开。需要显式继续未完成工作流时，使用 `--resume-checkpoint PATH`，其中 PATH 必须是该运行 `private/` 下、由宿主核对并授权的恢复 JSON。授权绑定原工作流完整状态、源码摘要、身份、控制清单和累计用量；具体校验见 [recovery.py](src/mini_swe_rsi/recovery.py)。这会创建新的模型上下文，不是原对话无缝续跑，也不是可直接填入任意状态的检查点参数。
 
-当前在线合同为 `mini-swe-rsi-online-v8`，improvement 合同为 `sica-mini-improvement-v8`，检查政策 revision 2；协议身份只使用 `protocol`，不接受 `online_protocol` 或预留的 `common_tasks`。旧 v2/v3/v4/v5/v6/v7 目录不能在新代码中恢复或重新生成报告，已有历史报告保留；应使用对应 Git 版本处理旧运行，新运行使用独立目录。每批精简会改变控制摘要，不放宽校验或重写历史身份。
+| 现象 | 处理方式 |
+|---|---|
+| 缺失模型容量或认证失败 | 核对 `.env` 和服务认证元数据；模型名存在本身不足以启动 |
+| 服务中断或调用失败 | 检查运行目录的 `failure.json`、`events.jsonl` 和离线报告；按持久化状态决定是否需要显式恢复授权 |
+| 数据或镜像身份不一致 | 使用批准的数据资产和固定镜像，不能修改清单来绕过校验 |
+| 恢复提示协议、源码或配置不一致 | 使用对应代码版本处理原运行，或使用新目录；不要重写旧运行身份 |
+| 正常跳过改进 | 这是两步诊断后的合法结果，表示本轮未形成可执行改进，不表示七步均已执行 |
 
-恢复要求完整的当前工作流状态和版本身份，任务结果仅从 `attempt_N` 目录读取。机制计划使用 `test_path`、`args`、`timeout_seconds`，宿主和容器各自应用同一规范化实现；旧 `entrypoint` 字段明确拒绝。
-
-宿主任务完成记录使用完整源码 `code_hash`，任务摘要必须绑定任务、轮次、版本、双摘要及所选 attempt。候选任务记录按状态验证完整身份；中断检查不会当作已完成缓存或自动重跑。完整源码摘要与执行摘要分别保留，源码哈希的纯实现由宿主和容器各自调用。
-
-角色结构化操作使用 `sica-workflow` 后直接跟原始 JSON 对象，JSON 不再外包 shell 引号。角色通过 `{"op":"submit","report":"完整报告正文"}` 提交，由宿主添加 mini 完成标记，报告不得自带标记前缀；受限角色的旧 echo/printf 提交已删除。标准 mini benchmark 提交和编辑角色的合法 shell 保持。改进启动只传一个父迭代值，执行者与改进者身份由活动父版本派生。
-
-文字轨迹保留 `trace.txt`，完整轨迹保留私有 `trajectory.json`；不再生成重复的 `execution_tree.txt`、`check_plan_host_record.json` 或旧 stdout 四列汇总。第三步声明、第五步冻结计划及宿主审计计划分别保留。报告不再输出固定的 `test_sealed` 字段。执行范围与验收见[当前版本精简计划](docs/online-rsi-current-only-simplification-plan.md)和[验收记录](docs/online-rsi-current-only-simplification-review.md)。
-
-## 模型与服务
-
-启动时从认证服务元数据冻结模型身份、上下文和输出容量；所有角色使用同一模型。代理仅声明模型名或容量时，不冒称已验证其底层权重。
-
-- DeepSeek 使用认证目录；截断回复通过其 beta prefix 协议续写。
-- Ollama 核验原生 version/tags/show、模型摘要、实际 `num_ctx` 与模板。Qwen tokenizer 匹配时提供文本计量和明显输入缺失审计，不承诺精确复刻服务聊天封装。
-- SenseNova 映射其目录容量，忽略价格元数据。
-- 本地 Qoder / WorkBuddy 在标准目录缺容量时使用认证扩展目录。
-
-上下文预算要求明确的服务能力，不再提供隐式 32768/2048 模式。无匹配本地 tokenizer 时由服务执行 context 上限，宿主审核真实 usage，不把字符数当作 token。非支持 prefix 的服务截断回复显式失败，不执行未完成动作。服务故障暂停、未知用量和迟到回复继续保留审计。
-
-在线改进阶段的 shell 输出超过 300,000 字节时完整落盘，返回明确索引和预览；超过 8 MiB 时终止工具沙箱并保存带摘要的不完整前缀。日志只读挂载供按需读取。这是本地工具资源保护，不是 token 估计或实验总时限；benchmark 输出处理保持原样。离线 agent 循环测试必须有明确退出及有限步数。详见 [第 5 步修复验收](docs/step5-loop-fix-validation.md)。
-
-## 验证与精简范围
+## 测试
 
 ```bash
 uv run pytest -q
 RUN_DOCKER_TESTS=1 uv run pytest -q
 ```
 
-Docker 测试使用本地模拟模型，不调用 `.env` 推理服务，检查版本实际加载、在线继承、接任/拒绝/跳过、恢复、候选机制测试及隔离边界。
+Docker 测试使用确定性模型服务和评分替身，不调用 `.env` 中的真实推理服务。完整集成验收需要 Docker 可用且相关测试没有跳过；真实模型运行需另行执行 `online`，并以实际完成的阶段、评分和接任证据判断结果。
 
-后续 P1 清理收敛评分器为 `score` 操作，移除旧镜像构建入口；缺失任务镜像仍按冻结摘要恢复。另清理工作流无用赋值和未实现的 fileview 再生预算占位，实际资源限制保持。新增候选与执行顺序见[后续精简执行计划](docs/online-rsi-followup-simplification-plan.md)，本轮范围和验证见[三个 P1 项验收](docs/online-rsi-followup-p1-review.md)。
-
-后续四个 P2 项已完成：收敛恢复、身份和旧结果格式，共享合同与计划校验，复用正常执行及恢复的摘要、决策构造。首次发布决策前的合法崩溃窗口保留；已发布决策仍要求完整身份与检查证据。实施与验证见[四个 P2 项验收](docs/online-rsi-followup-p2-review.md)。
-
-后续两个 P3 项已完成：新生成包移除 23 个附带文件，减少 2,393 行 Python/YAML；角色结构化传输统一原始 JSON。支持范围、依赖审计和验证见[两个 P3 项验收](docs/online-rsi-followup-p3-review.md)。
-
-已完成 P1、P2（批次 C、D）及批次 E 本轮选定的三项 P3：工作流固定在线规则，移除阶段/24 小时预算，仅用 `task_limit` 和 `online_task_selection.json` 冻结任务序列；事件完整落盘，结果读取、计量和公开过滤共享实现，独立身份与接任检查保留。旧运行的 `budget.json`、`execution_scope.json`、`dev_selection.json` 会被明确拒绝，历史产物应配合对应 Git 版本读取，不自动迁移或改写。完整数据／镜像校验及身份字段经评估保留。实施优先级见 [在线 RSI 精简指南](docs/online-rsi-simplification-guide.md)，验收见 [P1](docs/online-rsi-p1-review.md)、[批次 C](docs/online-rsi-phase-c-review.md)、[批次 D](docs/online-rsi-phase-d-review.md)与[批次 E](docs/online-rsi-phase-e-review.md)，历史差异见 [上游适配说明](docs/upstream_adaptations.md)。
+当前仅支持在线协议 `mini-swe-rsi-online-v8` 与改进协议 `sica-mini-improvement-v8`。旧协议目录不能用当前代码恢复或重新生成报告。单题通过、机制检查通过或候选接任都不能单独证明持续自改进收益。
