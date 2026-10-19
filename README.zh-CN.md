@@ -161,6 +161,10 @@ RUN_DOCKER_TESTS=1 uv run pytest -q
 
 第二条命令包含 Docker 集成测试，模型服务和评分使用测试替身。要验证自己的模型服务，请运行上面的单题命令。
 
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。集成的上游代码保留其原始版权声明与许可证，详见[上游与适配](docs/upstream_adaptations.zh-CN.md)。
+
 ## 文档
 
 - [RSI 运行机制](docs/architecture.zh-CN.md)：七步流程、候选检查、数据要求、资源限制和中断恢复。

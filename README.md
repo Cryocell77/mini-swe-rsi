@@ -161,6 +161,10 @@ RUN_DOCKER_TESTS=1 uv run pytest -q
 
 The second command includes Docker integration tests with fixture model responses and grading. To check your own model service, run a one-task command above.
 
+## License
+
+This project is licensed under the [MIT License](LICENSE). Bundled upstream code retains its original copyright notices and licenses; see [upstream sources and adaptations](docs/upstream_adaptations.md).
+
 ## Documentation
 
 - [RSI architecture](docs/architecture.md): the seven-step workflow, candidate checks, data requirements, resource limits, and recovery.
