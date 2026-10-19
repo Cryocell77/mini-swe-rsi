@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import shutil
 from pathlib import Path
@@ -19,19 +18,12 @@ from .core import (Data, ROOT, append_event, attempt_result_paths, digest,
 from .driver import Driver, InfrastructureError, initial_code, validate_code
 from .broker import (Broker, CANDIDATE_PUBLIC_IDENTITY_FIELDS, ModelError,
                      validate_candidate_job_record)
-from .online_contract import ONLINE_PROTOCOL, CHECK_POLICY_REVISION, validate_online_contract
-
-
-class OnlineError(RuntimeError):
-    pass
-
-
-class OnlineInterrupted(OnlineError):
-    pass
-
-
-class CandidateRejected(OnlineError):
-    pass
+from .online_contract import (ONLINE_PROTOCOL, CHECK_POLICY_REVISION, validate_online_contract,
+                              OnlineError, OnlineInterrupted, CandidateRejected)
+from .online_checks import (finite_number as _finite_number,
+                            candidate_job_identity as _candidate_job_identity,
+                            identity_digest, candidate_identity, validate_candidate_snapshot,
+                            evaluate_candidate)
 
 
 def _atomic_move(source, destination):
@@ -42,15 +34,8 @@ def _atomic_move(source, destination):
     os.replace(str(source), str(destination))
 
 
-def _finite_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _candidate_job_identity(task_id, round_id, parent_version, candidate):
-    return {'job_id': f'candidate:{round_id}:{candidate}',
-            'task_id': task_id, 'round_id': round_id, 'candidate': candidate,
-            'parent_version': parent_version, 'stage': 'candidate_check',
-            'check_revision': '1', 'agent': 'main', 'role': 'orchestrator'}
 
 
 def freeze_task_selection(data, root, task_limit=None):
@@ -187,10 +172,10 @@ class OnlineLoop:
     @staticmethod
     def _control_manifest():
         """Freeze the code that interprets the online contract."""
-        files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py',
+        files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py', ROOT/'src/mini_swe_rsi/workflow/roles.py',
                  ROOT/'src/mini_swe_rsi/workflow/relay.py', ROOT/'src/mini_swe_rsi/workflow/source_hash.py', ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
-                  ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
+                  ('online.py','online_checks.py','driver.py','broker.py','model_protocol.py','model_identity.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
                    'public_filter.py','recovery.py','stage_tools.py','tool_output.py',
                    'online_contract.py','single.py')]
@@ -402,10 +387,7 @@ class OnlineLoop:
         return hashlib.sha256(json.dumps(self.control_manifest, sort_keys=True,
                                          separators=(',', ':')).encode()).hexdigest()
 
-    @staticmethod
-    def _identity_digest(value):
-        return hashlib.sha256(json.dumps(value, sort_keys=True,
-                                         separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+    _identity_digest = staticmethod(identity_digest)
 
     def _validate_feedback(self, feedback, index, task_id, version=None):
         if not isinstance(feedback, dict) or feedback.get('task_id') != task_id:
@@ -919,37 +901,8 @@ class OnlineLoop:
         return out
 
     def _acceptance(self, candidate, feedback, snapshot, plan=None):
-        check = snapshot.get('check', {})
-        if isinstance(check, dict) and 'common_tasks' in check:
-            raise OnlineError('Candidate check common_tasks is unsupported')
-        if isinstance(plan, dict) and 'common_tasks' in plan:
-            raise OnlineError('Candidate check plan common_tasks is unsupported')
-        record = check.get('record', {}) if isinstance(check, dict) else {}
-        parent_score = feedback.get('record', {}).get('score')
-        candidate_score = record.get('score', check.get('score'))
-        final_full, final_exec = tree_hash(candidate), execution_hash(candidate)
-        source_changed = final_full != snapshot['parent_hash']
-        exec_changed = final_exec != snapshot['parent_execution_hash']
-        checked_match = final_exec == snapshot['checked_candidate_execution_hash']
-        score_known = _finite_number(candidate_score) and _finite_number(parent_score)
-        current_fixed = score_known and parent_score < 1 and candidate_score >= 1
-        mech = check.get('mechanism_check') if isinstance(check, dict) else None
-        mechanism = isinstance(mech, dict) and mech.get('parent_failed') is True and mech.get('candidate_passed') is True
-        selected = (plan or {}).get('criterion')
-        criterion_passed = current_fixed if selected == 'current_task_failure_fixed' else mechanism if selected == 'mechanism_parent_failed_candidate_passed' else False
-        non_regression = score_known and candidate_score >= parent_score
-        passed = bool(source_changed and exec_changed and checked_match and non_regression and criterion_passed)
-        if self.contract.get('check_policy', {}).get('require_task_pass'):
-            passed = passed and score_known and candidate_score >= 1
-        return {'passed': passed, 'source_changed': source_changed, 'execution_changed': exec_changed,
-                'checked_execution_matches': checked_match, 'score_known': score_known,
-                'non_regression': non_regression,
-                'parent_score': parent_score, 'candidate_score': candidate_score,
-                'checked_candidate_hash': snapshot['checked_candidate_hash'],
-                'final_candidate_hash': final_full,
-                'final_candidate_execution_hash': final_exec,
-                'improvement_criterion': selected if criterion_passed else None,
-                'reasons': [] if passed else ['acceptance criterion or immutable hash check failed']}
+        return evaluate_candidate(candidate, feedback, snapshot, plan,
+            require_task_pass=self.contract.get('check_policy', {}).get('require_task_pass', False))
 
     def _validate_diagnosis(self, diagnosis, feedback, workflow):
         if not isinstance(diagnosis, dict):
@@ -1202,11 +1155,7 @@ class OnlineLoop:
                 'acceptance': acceptance, 'candidate_check': 'candidate_check.json',
                 'completed_steps': completed_steps, 'takeover_summary': summary}
 
-    @staticmethod
-    def _candidate_identity(proposal_id, parent_version, parent_hash, candidate, plan_revision):
-        return {'proposal': proposal_id, 'parent_version': parent_version,
-                'parent_hash': parent_hash, 'candidate_hash': tree_hash(candidate),
-                'execution_hash': execution_hash(candidate), 'plan_revision': plan_revision}
+    _candidate_identity = staticmethod(candidate_identity)
 
     def _ensure_candidate_identity(self, path, proposal_id, parent_version,
                                    parent_hash, candidate, plan_revision):
@@ -1221,26 +1170,7 @@ class OnlineLoop:
             write(path, identity)
         return identity
 
-    @staticmethod
-    def _validate_candidate_snapshot(snapshot, feedback, proposal_id, candidate, *, accepted=False):
-        candidate_exec = execution_hash(candidate)
-        expected = {
-            'job_id': f'candidate:{feedback["round_id"]}:{proposal_id}',
-            'task_id': feedback['task_id'], 'check_revision': '1',
-            'round_id': feedback['round_id'], 'proposal': proposal_id,
-            'parent_version': feedback['version'], 'parent_hash': feedback['full_source_hash'],
-            'parent_execution_hash': feedback['execution_hash'],
-            'candidate_hash': tree_hash(candidate),
-            'candidate_execution_hash': candidate_exec,
-        }
-        if (not isinstance(snapshot, dict)
-                or any(snapshot.get(key) != value for key, value in expected.items())
-                or not isinstance(snapshot.get('checked_candidate_hash'), str)
-                or not snapshot['checked_candidate_hash']
-                or not isinstance(snapshot.get('checked_candidate_execution_hash'), str)
-                or not snapshot['checked_candidate_execution_hash']
-                or (accepted and snapshot['checked_candidate_execution_hash'] != candidate_exec)):
-            raise OnlineError('Candidate check identity differs during recovery')
+    _validate_candidate_snapshot = staticmethod(validate_candidate_snapshot)
 
     def _recover(self):
         state = self.state

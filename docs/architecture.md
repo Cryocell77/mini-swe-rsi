@@ -144,4 +144,10 @@ src/mini_swe_rsi/
 - [single.py](../src/mini_swe_rsi/single.py): local single-task input, independent verification, and the single-task promotion store.
 - [driver.py](../src/mini_swe_rsi/driver.py): container execution and candidate reruns.
 - [broker.py](../src/mini_swe_rsi/broker.py): model service, usage accounting, and sessions.
+- [model_protocol.py](../src/mini_swe_rsi/model_protocol.py): text action protocol, message normalization, and response adaptation.
+- [model_identity.py](../src/mini_swe_rsi/model_identity.py): provider identity and capacity resolution.
+- [online_checks.py](../src/mini_swe_rsi/online_checks.py): online identities, candidate snapshot validation, and acceptance rules.
+- [roles.py](../src/mini_swe_rsi/workflow/roles.py): role definitions, capabilities, and prompt templates.
 - [workflow.py](../src/mini_swe_rsi/workflow/workflow.py): the seven-step state machine and role operations.
+
+The existing model, online-loop, and workflow entry points remain available. Dedicated modules provide rule calculations and role definitions; the existing state machines retain persistence, version commits, and recovery. Disk record fields are unchanged. `workflow_sha256` covers both workflow and role implementations, and the new modules are included in the control manifest. Existing run directories still require the corresponding code version after source identities change.

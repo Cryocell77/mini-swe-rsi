@@ -383,7 +383,7 @@ def main(entry):
                     'renderer_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     'upstream_task_sha256': hashlib.sha256(Path('/upstream/agent_main.py').read_bytes()).hexdigest(),
                     'relay_sha256':hashlib.sha256(Path(__file__).with_name('relay.py').read_bytes()).hexdigest(),
-                    'workflow_sha256':hashlib.sha256(Path(__file__).with_name('workflow.py').read_bytes()).hexdigest(),
+                    'workflow_sha256':workflow_module.workflow_hash(Path(__file__).parent),
                     'source_hash_sha256':hashlib.sha256(Path(__file__).with_name('source_hash.py').read_bytes()).hexdigest(),
                     'template_manifest':templates,
                     'workflow_sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('/workflow_sources').glob('*')) if p.is_file()}}

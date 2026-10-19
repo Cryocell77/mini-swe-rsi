@@ -87,3 +87,13 @@ def test_source_hash_module_is_frozen_in_online_control_manifest(tmp_path, monke
     )
     with pytest.raises(OnlineError, match='control_manifest'):
         OnlineLoop(loop.root, ('t1',))
+
+
+def test_workflow_identity_covers_role_renderer_without_new_record_fields(tmp_path):
+    source = ROOT/'src/mini_swe_rsi/workflow'
+    for name in ('workflow.py', 'roles.py'):
+        (tmp_path/name).write_bytes((source/name).read_bytes())
+    identity = WORKFLOW['workflow_hash'](tmp_path)
+    assert identity == WORKFLOW['workflow_hash'](source)
+    (tmp_path/'roles.py').write_text((tmp_path/'roles.py').read_text() + '\n# changed renderer\n')
+    assert WORKFLOW['workflow_hash'](tmp_path) != identity

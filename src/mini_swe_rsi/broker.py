@@ -19,14 +19,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .core import append_event, secrets, read, read_regular_json, write
-from .context_budget import ContextBudget
-
-
-class ModelError(RuntimeError):
-    pass
-
-
-TEXT_PROTOCOL = 'mini-text-bash-v4'
+from .model_protocol import ModelError, TEXT_PROTOCOL, normalize_messages, adapt_response
+from .model_identity import resolve_identity, canonical_parameters
 
 
 DEFAULT_TRANSPORT_POLICY = {
@@ -124,148 +118,6 @@ def _transport_policy(root, supplied):
             raise ValueError(f'{key} must be boolean')
     return policy
 
-
-def canonical_parameters(parameters):
-    """Ollama may reorder map entries; preserve values while freezing content."""
-    lines = []
-    for line in parameters.splitlines():
-        fields = line.strip().split(None, 1)
-        if fields:
-            lines.append(' '.join(fields))
-    return '\n'.join(sorted(lines)) + '\n'
-
-
-def normalize_messages(messages):
-    """Fixed text protocol: one content string and optional assistant reasoning."""
-    if not isinstance(messages, list):
-        raise ModelError('Invalid messages')
-    normalized = []
-    for message in messages:
-        if not isinstance(message, dict) or message.get('role') not in ('system', 'user', 'assistant'):
-            raise ModelError('Invalid text message role')
-        if any(message.get(k) for k in ('tool_calls', 'function_call', 'tool_call_id')):
-            raise ModelError('Native tools are outside the text bash protocol')
-        content = message.get('content')
-        if not isinstance(content, str):
-            raise ModelError('Invalid text message content')
-        clean = {'role': message['role'], 'content': content}
-        reasoning = message.get('reasoning_content')
-        if reasoning is not None:
-            if message['role'] != 'assistant' or not isinstance(reasoning, str):
-                raise ModelError('Invalid reasoning_content')
-            clean['reasoning_content'] = reasoning
-        normalized.append(clean)
-    return normalized
-
-
-_ACTION_TAG = re.compile(r'</?(?:tool_call|mswea_bash_command|bash_command)\b')
-_FENCED_ACTION = re.compile(
-    r'^```(?P<format>mswea_bash_command|bash)[ \t]*\r?\n'
-    r'(?P<command>.*?)\r?\n^```[ \t]*(?=\r?$)',
-    re.MULTILINE | re.DOTALL)
-# Only delimiter lines frame a code block. Backticks in prose/JSON are data.
-_FENCE_LINE = re.compile(r'^[ \t]*(?:`{3,}|~{3,})[^\r\n]*\r?$', re.MULTILINE)
-_INLINE_CODE = re.compile(r'(?<!`)(`+)(?!`)[^\r\n]*?(?<!`)\1(?!`)')
-_QUOTED_TEXT = re.compile(r'"(?:[^"\\\r\n]|\\[^\r\n])*"')
-_QUOTED_EXAMPLES = re.compile(_INLINE_CODE.pattern + '|' + _QUOTED_TEXT.pattern)
-
-
-_XML_ACTION = re.compile(
-    r'(?P<outer><tool_call>\s*)?'
-    r'<(?P<tag>mswea_bash_command|bash_command)>[ \t]*\r?\n?'
-    r'(?P<command>.*?)</(?P=tag)>(?(outer)\s*</tool_call>)', re.DOTALL)
-
-
-def _mask_quoted_examples(text):
-    """Keep offsets while excluding inline code and quoted JSON/prose data."""
-    # One pass respects the earliest outer quotation; two separate passes
-    # could pair a backtick inside JSON with one beyond the closing XML tag.
-    return _QUOTED_EXAMPLES.sub(lambda match: ' ' * len(match.group()), text)
-
-
-def _single_text_action(text):
-    """Parse structural envelopes, preserving quoted examples as command data."""
-    fence_lines = list(_FENCE_LINE.finditer(text))
-    if fence_lines:
-        matches = list(_FENCED_ACTION.finditer(text))
-        if len(matches) != 1 or len(fence_lines) != 2:
-            raise ValueError('multiple, incomplete or unsupported fences')
-        match = matches[0]
-        # Each delimiter must belong to the one accepted block. This rejects
-        # extra/malformed fence lines rather than selecting a convenient block.
-        if any(not match.start() <= line.start() < match.end() for line in fence_lines):
-            raise ValueError('mixed or incomplete action envelopes')
-        kind = match['format']
-        command = match['command']
-    else:
-        inspection = _mask_quoted_examples(text)
-        matches = list(_XML_ACTION.finditer(inspection))
-        if not matches and not _ACTION_TAG.search(inspection):
-            return None
-        if len(matches) != 1:
-            raise ValueError('multiple or incomplete XML actions')
-        match = matches[0]
-        kind = 'xml:' + match['tag']
-        command = text[match.start('command'):match.end('command')]
-        if _ACTION_TAG.search(_mask_quoted_examples(command)):
-            raise ValueError('nested XML actions')
-    outside = _mask_quoted_examples(text[:match.start()] + text[match.end():])
-    if _ACTION_TAG.search(outside):
-        raise ValueError('mixed or incomplete action envelopes')
-    if not command.strip():
-        raise ValueError('empty action')
-    return match, kind, '```mswea_bash_command\n' + command + '\n```'
-
-
-def adapt_response(response):
-    """Normalize one explicit text action; retain the untouched provider evidence."""
-    returned = copy.deepcopy(response)
-    choices = returned.get('choices')
-    if not isinstance(choices, list) or len(choices) != 1:
-        return returned, 'unchanged: expected one choice'
-    choice = choices[0]
-    if not isinstance(choice, dict):
-        return returned, 'unchanged: invalid choice'
-    message = choice.get('message', {})
-    if not isinstance(message, dict) or message.get('role') != 'assistant':
-        return returned, 'unchanged: invalid assistant message'
-    if choice.get('finish_reason') != 'stop':
-        return returned, 'unchanged: non-stop finish'
-    if any(message.get(key) for key in ('tool_calls', 'function_call', 'refusal')):
-        return returned, 'unchanged: native tool or refusal'
-    content = message.get('content')
-    if content not in (None, ''):
-        if not isinstance(content, str):
-            return returned, 'unchanged: invalid content'
-        try:
-            action = _single_text_action(content)
-        except ValueError as exc:
-            # Merely returning mixed content is unsafe: mini might execute the
-            # one canonical block while ignoring a second XML/bash action.
-            message['content'] = 'Action format rejected: ' + str(exc)
-            return returned, 'rejected ambiguous content: ' + str(exc)
-        if action is None or action[1] == 'mswea_bash_command':
-            return returned, 'unchanged: nonempty content'
-        match, kind, canonical = action
-        message['content'] = content[:match.start()] + canonical + content[match.end():]
-        return returned, 'normalized single complete content action: ' + kind
-    fields = {key: message[key] for key in ('reasoning_content', 'reasoning') if message.get(key) is not None}
-    if not fields or any(not isinstance(value, str) for value in fields.values()):
-        return returned, 'unchanged: missing or invalid reasoning'
-    if len(set(fields.values())) != 1:
-        return returned, 'unchanged: conflicting reasoning fields'
-    reasoning = next(iter(fields.values()))
-    try:
-        action = _single_text_action(reasoning)
-    except ValueError:
-        action = None
-    if action is None:
-        return returned, 'unchanged: reasoning has no unique complete action'
-    match, kind, canonical = action
-    message['content'] = canonical
-    for key in fields:
-        message[key] = (reasoning[:match.start()] + reasoning[match.end():]).strip()
-    return returned, 'promoted single complete reasoning action; removed action from ' + ','.join(fields) + '; format=' + kind
 
 class Broker:
     def __init__(self, root, context=None, transport_policy=None):
@@ -625,107 +477,11 @@ class Broker:
             raise ModelError(f'Model identity request failed: {type(e).__name__}') from None
 
     def identity(self):
-        models = self.remote('/models')['data']
-        requested = self.config['LLM_MODEL_NAME']
-        selected = next((m for m in models if m['id'] == requested), None)
-        if selected is None and ':' not in requested.rsplit('/', 1)[-1]:
-            selected = next((m for m in models if m['id'] == requested + ':latest'), None)
-        if selected is None:
-            raise ModelError('Configured model is not advertised by the endpoint')
-        proxy_catalog = None
-        if (urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname in ('127.0.0.1', 'localhost', '::1')
-                and selected.get('owned_by') in ('qoder', 'workbuddy')
-                and ('context_window' not in selected or 'max_output_tokens' not in selected)):
-            matches = [m for m in self.remote('/models?client_version=pi').get('models', [])
-                       if m.get('slug') == selected['id']]
-            if len(matches) != 1:
-                raise ModelError('No unique proxy capacity declaration for configured model')
-            entry = matches[0]
-            proxy_catalog = {key: entry.get(key) for key in ('slug', 'context_window', 'max_context_window', 'max_tokens')}
-            for standard, field in (('context_window', 'context_window'), ('max_output_tokens', 'max_tokens')):
-                value = entry.get(field)
-                if type(value) is not int or value <= 0 or (standard in selected and selected[standard] != value):
-                    raise ModelError('Invalid or conflicting proxy capacity declaration')
-                selected = {**selected, standard: value}
-            maximum = entry.get('max_context_window')
-            if maximum is not None and (type(maximum) is not int or maximum < selected['context_window']):
-                raise ModelError('Invalid proxy maximum context declaration')
-        catalog = None
-        if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'token.sensenova.cn':
-            catalog = {key: selected.get(key) for key in ('context_length', 'max_output_length',
-                'supported_features', 'supported_sampling_parameters', 'quantization')}
-            for standard, native_key in (('context_window', 'context_length'),
-                                         ('max_output_tokens', 'max_output_length')):
-                value = catalog[native_key]
-                if type(value) is not int or value <= 0 or (standard in selected and selected[standard] != value):
-                    raise ModelError('Invalid or conflicting SenseNova capacity metadata')
-                selected = {**selected, standard: value}
-        native = None
-        if 'context_window' not in selected or 'max_output_tokens' not in selected:
-            # Ollama's OpenAI model list omits capacities. Verify the native
-            # service and the same model's digest instead of guessing a model.
-            if urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'api.deepseek.com':
-                raise ModelError('Endpoint must advertise valid context_window and max_output_tokens')
-            version = self.remote('/api/version').get('version')
-            tags = self.remote('/api/tags').get('models', [])
-            tag = next((m for m in tags if m.get('name') == selected['id']), None)
-            if not isinstance(version, str) or not tag or not re.fullmatch(r'(?:sha256:)?[a-f0-9]{64}', tag.get('digest', '')):
-                raise ModelError('Unverified Ollama service/model identity')
-            request = urllib.request.Request(self.config['OPENAI_BASE_URL'].rstrip('/').removesuffix('/v1') + '/api/show',
-                data=json.dumps({'model': selected['id'], 'verbose': False}).encode(),
-                headers={'Content-Type':'application/json','Authorization':'Bearer '+self.config['OPENAI_API_KEY']})
-            try:
-                with self.opener.open(request, timeout=30) as response:
-                    shown = json.load(response)
-            except Exception as exc:
-                raise ModelError('Ollama model metadata unavailable: ' + type(exc).__name__) from None
-            if shown.get('remote_model') or shown.get('remote_host') or ':cloud' in selected['id']:
-                raise ModelError('Ollama cloud model cannot be verified through local native metadata')
-            parameters = shown.get('parameters', '')
-            match = re.search(r'^num_ctx\s+(\d+)\s*$', parameters, re.MULTILINE)
-            info = shown.get('model_info', {})
-            architecture = info.get('general.architecture')
-            maximum = info.get(str(architecture)+'.context_length')
-            context = int(match.group(1)) if match else None
-            if type(maximum) is not int or context is None or not 1 < context <= maximum:
-                raise ModelError('Ollama must advertise an explicit valid num_ctx and architecture capacity')
-            output_match = re.search(r'^num_predict\s+(-?\d+)\s*$', parameters, re.MULTILINE)
-            num_predict = int(output_match.group(1)) if output_match else -1
-            if num_predict not in (-1, -2) and num_predict <= 0:
-                raise ModelError('Invalid Ollama num_predict')
-            output = min(context-1, num_predict) if num_predict > 0 else context-1
-            template = shown.get('template')
-            if not isinstance(template, str) or not template:
-                raise ModelError('Ollama chat template unavailable')
-            native = {'provider':'ollama', 'version':version, 'digest':tag['digest'],
-                'parameters':canonical_parameters(parameters), 'architecture_context_length':maximum,
-                'template_sha256':hashlib.sha256(template.encode()).hexdigest(),
-                'output_capacity_source':'positive num_predict bounded by context' if num_predict > 0 else 'derived context-1 bound; provider has no independent output cap',
-                'num_predict':num_predict, 'cloud':False}
-            selected = {**selected, 'digest':tag['digest'], 'context_window':context, 'max_output_tokens':output}
-        try:
-            self.context = ContextBudget(selected)
-        except ValueError as exc:
-            raise ModelError('Endpoint must advertise valid context_window and max_output_tokens') from exc
-        self.model = selected['id']
-        official = urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'api.deepseek.com'
-        self.prefix_protocol = 'deepseek-beta' if official and self.model.startswith('deepseek-') else None
-        self.service_identity = {'capacity_source':'authenticated /models',
-            'context_window':selected['context_window'], 'max_output_tokens':selected['max_output_tokens'],
-            'owned_by':selected.get('owned_by'), 'api_capabilities':selected.get('api_capabilities'),
-            'prefix_protocol':self.prefix_protocol}
-        if catalog is not None:
-            self.service_identity.update(capacity_source='authenticated SenseNova /models field mapping',
-                                         sensenova_catalog=catalog)
-        if proxy_catalog is not None:
-            self.service_identity.update(capacity_source='authenticated loopback proxy /models?client_version=pi',
-                proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
-        if native is not None:
-            self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
-        return {'requested':requested, 'model':self.model,
-                'weights':selected.get('digest'), 'weights_verifiable':bool(selected.get('digest')),
-                'temperature_requested':0, 'thinking':'provider default', 'reasoning_effort':'provider default',
-                'max_tokens':self.context.contract['output_tokens'], 'model_concurrency':1}
+        identity, self.context, self.service_identity = resolve_identity(
+            self.config, self.remote, self.opener)
+        self.model = identity['model']
+        self.prefix_protocol = self.service_identity['prefix_protocol']
+        return identity
 
     def budget_limits(self):
         if self.context is None:

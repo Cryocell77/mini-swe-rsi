@@ -144,4 +144,10 @@ src/mini_swe_rsi/
 - [single.py](../src/mini_swe_rsi/single.py)：本地单题输入、独立验收与单题晋升版本库。
 - [driver.py](../src/mini_swe_rsi/driver.py)：容器执行与候选重测。
 - [broker.py](../src/mini_swe_rsi/broker.py)：模型服务、用量及会话。
+- [model_protocol.py](../src/mini_swe_rsi/model_protocol.py)：文本动作协议、消息规范化与响应适配。
+- [model_identity.py](../src/mini_swe_rsi/model_identity.py)：模型服务身份与容量解析。
+- [online_checks.py](../src/mini_swe_rsi/online_checks.py)：在线身份、候选快照校验与验收计算。
+- [roles.py](../src/mini_swe_rsi/workflow/roles.py)：角色定义、权限与提示模板。
 - [workflow.py](../src/mini_swe_rsi/workflow/workflow.py)：七步状态机与角色操作。
+
+模型调用、在线调度和工作流的原有入口保持不变。规则计算与角色定义由独立模块提供，状态保存、版本提交和恢复仍由原有状态机管理。磁盘记录字段保持不变；`workflow_sha256` 同时覆盖工作流与角色实现，新模块也纳入控制清单。源码摘要变化后，已有运行目录仍需使用对应的代码版本。

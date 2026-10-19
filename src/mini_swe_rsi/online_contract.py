@@ -1,5 +1,17 @@
 """Shared online identity and policy checks; reporting may omit a policy."""
 
+class OnlineError(RuntimeError):
+    pass
+
+
+class OnlineInterrupted(OnlineError):
+    pass
+
+
+class CandidateRejected(OnlineError):
+    pass
+
+
 ONLINE_PROTOCOL = 'mini-swe-rsi-online-v8'
 CHECK_POLICY_REVISION = '2'
 

@@ -191,7 +191,7 @@ def improvement_contract():
             'budget_policy': policy_contract(),
             'renderer_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/bridge.py'),
             'upstream_task_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py'),
-            'workflow_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/workflow.py'),
+            'workflow_sha256': _SOURCE_HASH['workflow_hash'](ROOT/'src/mini_swe_rsi/workflow'),
             'source_hash_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/source_hash.py'),
             'check_plan_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/check_plan.py'),
             'relay_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/relay.py'),
