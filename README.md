@@ -2,7 +2,7 @@
 
 基于 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 和 [SICA](https://github.com/MaximeRobeyns/self_improving_coding_agent) 的在线 RSI 框架：让 agent 在解题后修改自己的 Harness，再通过独立检查决定是否采用新版本。整个过程使用同一个模型。
 
-每轮先完成一道 SWE-bench 任务，再分析执行轨迹。诊断支持改进时，agent 设计方案、修改代码、提交候选；宿主重测候选，通过后由新版本继续下一题。没有可执行改进时，直接进入下一题。
+每轮先完成一道编程任务，再分析执行轨迹。支持 SWE-bench 测评和本地项目的自由文本任务。诊断支持改进时，agent 设计方案、修改代码、提交候选；宿主重测候选，通过后由新版本继续下一题。没有可执行改进时，直接进入下一题。
 
 ## 安装
 
@@ -33,6 +33,55 @@ uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --sp
 数据准备方法见下面的[测评](#测评)。已有数据目录的格式见[数据要求](docs/architecture.md#数据要求)。
 
 `--task-limit N` 选择当前 split 原顺序的前 N 题，省略时运行整个 split。`--split` 省略时采用数据清单默认值。每次新实验使用独立的 `--run` 目录。
+
+## 本地单题输入
+
+指定代码目录和验收命令，启动后输入需求：
+
+```bash
+uv run mini-swe-rsi single \
+  --workspace /path/to/project \
+  --check 'python -m unittest discover -s tests -v'
+```
+
+代码会复制到隔离容器的 `/testbed`，原目录不会被修改。运行目录和版本库必须放在 `--workspace` 之外；不要把本项目根目录直接作为输入而沿用根目录下的默认保存路径。默认镜像 `mini-swe-rsi-runtime:0.1` 支持 Python 标准库和 unittest，但不包含 pytest。其他项目用 `--image IMAGE` 指定包含 bash、git 和项目依赖的本地 Linux 镜像。容器无法联网安装依赖。
+
+如果已有单题晋升版本，CLI 会**先询问原始版本或晋升版本，再询问编程任务**。选择晋升版本后按编号从新到旧列出，可输入完整编号，例如 `V000003`；直接回车选择最新版本。原始版本始终来自仓库集成的初始 Harness。
+
+![单题版本选择演示](docs/images/single-input.gif)
+
+*交互演示使用示例版本数据，未调用模型。*
+
+脚本调用可显式给出版本和需求，跳过交互：
+
+```bash
+uv run mini-swe-rsi single \
+  --workspace /path/to/project \
+  --check 'python -m unittest discover -s tests -v' \
+  --version original \
+  --prompt '修复空输入时的解析错误，并补充回归测试'
+```
+
+`--version V000003` 使用指定晋升版本。`--store PATH` 指定独立版本库，默认 `runs/single-input/`；单题晋升版本保存在其中的 `versions/Vxxxxxx/`，每次执行记录保存在 `executions/`。它们与 SWE-bench 测评版本互不混用。`--run PATH` 可指定尚不存在的运行目录；每条新需求使用新目录。已保存版本带有来源、父版本和源码摘要；框架代码变化后不兼容的版本会被拒绝加载。
+
+### 独立验收与结果
+
+每次验收都从相同的输入快照启动新容器，应用本次解题补丁后，在 `/testbed` 执行 `--check`。退出码为 0 表示通过，默认超时 300 秒，可用 `--check-timeout SECONDS` 调整。通过任务验收并不保证晋升：仍需完成现有 RSI 诊断、改进及候选检查；没有可执行改进时跳过，不保存新版本。单题模式的候选必须通过任务验收，才有资格晋升。
+
+建议使用独立验收脚本，而不是仅依赖 agent 能修改的项目测试：
+
+```bash
+uv run mini-swe-rsi single \
+  --workspace /path/to/project \
+  --verify-file /path/to/acceptance.py \
+  --check 'python /verification/verify'
+```
+
+`--verify-file` 的内容在运行开始时冻结，只在验收容器中以 `/verification/verify` 只读挂载；即使该文件在代码目录中，也不会复制给解题容器。普通 `--check` 的可信程度取决于命令实际检查的内容。
+
+快照不包含 `.git`、`.env*`、虚拟环境、`node_modules` 及常见 Python 缓存，不支持符号链接。镜像中的依赖应安装在 `/testbed` 之外。输入源码快照和验收命令会保存在运行目录，运行镜像留在本机以便核对。
+
+每次执行会打印运行目录，可用 `mini-swe-rsi report --run PATH` 查看报告。首次作答的补丁位于 `tasks/0001-single-task/patch.diff`，候选复测补丁保存在 `proposals/` 下对应的 `check/attempt_*/patch.diff`；验收日志位于 `private/`。检查报告后，再将需要的补丁应用到自己的项目。
 
 ## 测评
 

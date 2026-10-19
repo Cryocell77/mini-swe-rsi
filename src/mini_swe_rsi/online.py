@@ -184,7 +184,8 @@ class OnlineLoop:
         if self.broker is not None:
             self.broker.close()
 
-    def _control_manifest(self):
+    @staticmethod
+    def _control_manifest():
         """Freeze the code that interprets the online contract."""
         files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py',
                  ROOT/'src/mini_swe_rsi/workflow/relay.py', ROOT/'src/mini_swe_rsi/workflow/source_hash.py', ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py']
@@ -192,7 +193,7 @@ class OnlineLoop:
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
                    'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness/seed.py',
-                   'online_contract.py')]
+                   'online_contract.py','single.py')]
         files += [ROOT/'upstream.lock.json']
         files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
                   ('mini-no-billing.patch', 'mini-no-billing.json', 'mini-online-slim.json')]
@@ -940,6 +941,8 @@ class OnlineLoop:
         criterion_passed = current_fixed if selected == 'current_task_failure_fixed' else mechanism if selected == 'mechanism_parent_failed_candidate_passed' else False
         non_regression = score_known and candidate_score >= parent_score
         passed = bool(source_changed and exec_changed and checked_match and non_regression and criterion_passed)
+        if self.contract.get('check_policy', {}).get('require_task_pass'):
+            passed = passed and score_known and candidate_score >= 1
         return {'passed': passed, 'source_changed': source_changed, 'execution_changed': exec_changed,
                 'checked_execution_matches': checked_match, 'score_known': score_known,
                 'non_regression': non_regression,

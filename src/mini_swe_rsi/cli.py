@@ -11,6 +11,14 @@ from .core import write
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == 'single':
+        from .single import run_single
+        if args.check_timeout <= 0:
+            parser.error('--check-timeout must be positive')
+        if not args.check.strip():
+            parser.error('--check must not be empty')
+        run_single(args)
+        return
     if args.command == 'prepare':
         from .core import ROOT, command
         import os
@@ -73,6 +81,17 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description='Online mini-swe-agent RSI runs and SWE-bench data preparation', allow_abbrev=False)
     commands = parser.add_subparsers(dest='command', required=True)
+    from .core import ROOT
+    single = commands.add_parser('single', help='Solve a local coding task and run RSI', allow_abbrev=False)
+    single.add_argument('--workspace', type=Path, required=True, help='Source directory; copied into an isolated container')
+    single.add_argument('--check', required=True, help='Independent verification shell command, run in /testbed')
+    single.add_argument('--verify-file', type=Path, help='Private verifier mounted only for grading as /verification/verify')
+    single.add_argument('--check-timeout', type=int, default=300)
+    single.add_argument('--image', default='mini-swe-rsi-runtime:0.1', help='Local Linux image with project dependencies installed')
+    single.add_argument('--store', type=Path, default=ROOT/'runs/single-input', help='Persistent single-input promotion store')
+    single.add_argument('--run', type=Path, help='New execution directory; defaults to a unique directory inside the store')
+    single.add_argument('--prompt', help='Task text; omit to enter interactively')
+    single.add_argument('--version', help='original or a saved Vxxxxxx; omit for interactive selection')
     online = commands.add_parser('online', help='Run or continue online RSI', allow_abbrev=False)
     online.add_argument('--run', type=Path, required=True)
     online.add_argument('--data', type=Path)

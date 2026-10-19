@@ -137,6 +137,7 @@ src/mini_swe_rsi/
 ### 实现入口
 
 - [online.py](../src/mini_swe_rsi/online.py)：在线调度、检查与接任。
+- [single.py](../src/mini_swe_rsi/single.py)：本地单题输入、独立验收与单题晋升版本库。
 - [driver.py](../src/mini_swe_rsi/driver.py)：容器执行与候选重测。
 - [broker.py](../src/mini_swe_rsi/broker.py)：模型服务、用量及会话。
 - [workflow.py](../src/mini_swe_rsi/workflow/workflow.py)：七步状态机与角色操作。

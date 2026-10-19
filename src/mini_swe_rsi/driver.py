@@ -402,7 +402,7 @@ class Driver:
         output.mkdir(parents=True, exist_ok=True)
         frozen = self.frozen_image(task_id)
         solver = self.client.containers.run(frozen.id, ['sleep', 'infinity'], detach=True,
-                    platform='linux/amd64', network_disabled=True, cap_drop=['ALL'],
+                    platform=getattr(self, 'task_platform', 'linux/amd64'), network_disabled=True, cap_drop=['ALL'],
                     security_opt=['no-new-privileges'], mem_limit='2g', nano_cpus=1000000000,
                     pids_limit=256, working_dir='/testbed')
         self.running.append(solver)
