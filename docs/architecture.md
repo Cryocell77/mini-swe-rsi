@@ -78,6 +78,8 @@ The host Broker forwards model calls. Containers use restricted session tokens, 
 | Coding role | 1,000 iterations per role invocation |
 | One completion | Up to 5 provider requests |
 | Task solving | 600 seconds |
+| SWE-bench scoring container | 2 GiB memory, one CPU, 256 PIDs, no network; frozen `linux/amd64` image |
+| SWE-bench scoring timeout | 300 seconds for tests; 360 seconds for the host scoring subprocess |
 | Improvement workflow | No additional global or stage wall-clock deadline |
 | Tool command | Declared range 5–1,800 seconds; actual maximum 600 seconds |
 | Model context and output | Capacity read from authenticated service metadata |

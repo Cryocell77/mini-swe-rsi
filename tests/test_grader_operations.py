@@ -76,6 +76,10 @@ def test_frozen_image_restores_by_digest_and_retags_missing_mutable_label():
     ("timeout_log", True, False, "tests_timeout"),
     ("timeout_output", True, False, "tests_timeout"),
     ("missing_report", False, False, None),
+    *[(outcome, False, False, "invalid_report") for outcome in (
+        "invalid_json", "invalid_encoding", "report_list", "missing_task", "task_null",
+        "task_list", "missing_resolved", "resolved_null", "resolved_string",
+        "resolved_number", "multiple_reports")],
 ])
 def test_score_entrypoint_preserves_results_and_failure_classification(
         tmp_path, monkeypatch, outcome, completed, resolved, reason):
@@ -109,6 +113,23 @@ def test_score_entrypoint_preserves_results_and_failure_classification(
         logs.mkdir(parents=True)
         if outcome in ("resolved", "unresolved"):
             (logs / "report.json").write_text(json.dumps({"fixture": {"resolved": resolved}}))
+        elif reason == "invalid_report":
+            reports = {
+                "report_list": [], "missing_task": {"other": {"resolved": True}},
+                "task_null": {"fixture": None}, "task_list": {"fixture": []},
+                "missing_resolved": {"fixture": {}},
+                "resolved_null": {"fixture": {"resolved": None}},
+                "resolved_string": {"fixture": {"resolved": "false"}},
+                "resolved_number": {"fixture": {"resolved": 1}},
+            }
+            content = json.dumps(reports.get(outcome, {"fixture": {"resolved": True}}))
+            (logs / "report.json").write_bytes(
+                b"\xff" if outcome == "invalid_encoding" else
+                ("{" if outcome == "invalid_json" else content).encode())
+            if outcome == "multiple_reports":
+                extra = logs / "extra"
+                extra.mkdir()
+                (extra / "report.json").write_text(content)
         elif outcome == "patch_failure":
             (logs / "run_instance.log").write_text(">>>>> Patch Apply Failed")
         elif outcome == "timeout_log":
@@ -149,3 +170,5 @@ def test_score_entrypoint_preserves_results_and_failure_classification(
         assert result["container_boundaries"] == boundaries
     if outcome == "missing_report":
         assert result["error"] == "Official evaluator produced no report"
+    if reason == "invalid_report":
+        assert result["error"].startswith("Invalid official evaluation report:")

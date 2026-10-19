@@ -134,6 +134,8 @@ The report's `evaluation` field counts each task's **initial attempt**. `selecte
 
 This is task-by-task online RSI evaluation: the Harness can change between tasks. Running on a test split does not make it an independent evaluation of a fixed Harness. Report the online update procedure, dataset revision, task order, and model settings alongside any results.
 
+SWE-bench scoring uses fresh containers from frozen `linux/amd64` task images, with 2 GiB memory, one CPU, 256 PIDs, and networking disabled. Test execution has a 300-second timeout; the host allows 360 seconds for the complete scoring subprocess. These limits can affect results and must be reported when comparing evaluations. Recipe downloads and image retrieval occur on the host. Empty patches, patch application failures, and test timeouts count as unresolved tasks; missing or invalid evaluation reports are infrastructure failures and trigger rescoring of the original patch, subject to the retry limit.
+
 ## Reports and resuming
 
 Report generation does not require a model service:

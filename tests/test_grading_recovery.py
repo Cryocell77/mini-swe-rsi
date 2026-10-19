@@ -1,8 +1,26 @@
 import pytest
+from types import SimpleNamespace
 
 from mini_swe_rsi.core import tree_hash, write
 from mini_swe_rsi.driver import Driver, GradingUnavailable, InfrastructureError
 from mini_swe_rsi.evaluation.grader import grading_failure_reason
+
+
+@pytest.mark.parametrize('reason', ['invalid_report', None])
+def test_incomplete_grader_result_is_an_infrastructure_failure(tmp_path, monkeypatch, reason):
+    from mini_swe_rsi import driver as driver_module
+
+    driver = Driver.__new__(Driver)
+    driver.data = SimpleNamespace(rows={'task': {}}, image=lambda task_id: {})
+    driver.client = SimpleNamespace(containers=SimpleNamespace(list=lambda **kwargs: []))
+
+    def score_process(*args, **kwargs):
+        write(tmp_path/'result.json', {'completed': False, 'resolved': False,
+                                     'reason': reason, 'error': 'Invalid or missing report'})
+
+    monkeypatch.setattr(driver_module.subprocess, 'run', score_process)
+    with pytest.raises(InfrastructureError, match='no completed result'):
+        driver.score('task', 'original patch', tmp_path)
 
 
 def test_official_timeout_is_a_task_failure_not_an_infrastructure_retry():

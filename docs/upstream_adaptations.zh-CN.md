@@ -28,6 +28,6 @@
 
 所有角色调用 `.env` 中指定的同一个模型。候选使用现有依赖镜像，可以编辑源码、配置和测试，不能安装新依赖。数据可来自 Hugging Face 或本地 SWE-bench 记录，CLI 按所选 split 的顺序执行；任务和镜像身份在每个运行中冻结。
 
-[grader.py](../src/mini_swe_rsi/evaluation/grader.py) 复用本地旧项目的评分适配代码，增加镜像身份校验、空补丁处理、超时分类和容器隔离。它调用 SWE-bench 官方评分资产；补丁相对任务镜像的初始 HEAD 提取，排除镜像准备提交带来的差异。
+[grader.py](../src/mini_swe_rsi/evaluation/grader.py) 调用项目内集成的 SWE-bench 评分器，并执行镜像身份校验、空补丁处理、超时分类和容器隔离。补丁相对任务镜像的初始 HEAD 提取，排除镜像准备提交带来的差异。
 
 首次作答、候选复测和机制对照分别保存。执行规则与产物布局见 [RSI 运行机制](architecture.zh-CN.md)。

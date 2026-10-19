@@ -1,6 +1,6 @@
-"""Reused scoring asset from mini-swe-rsi-old; no evolution/controller code reused.
+"""Run SWE-bench scoring with frozen images and isolated containers.
 
-Changes: frozen image identity, empty patch handling and official timeout classification.
+Handle empty patches and classify official evaluator failures.
 """
 import json
 import hashlib
@@ -139,8 +139,18 @@ def main():
         result = {"completed": reason is not None, "resolved": False, "reason": reason,
                   "error": None if reason else "Official evaluator produced no report"}
     else:
-        report = json.loads(reports[0].read_text())
-        result = {"completed": True, "resolved": bool(report.get(row["instance_id"], {}).get("resolved", False))}
+        try:
+            if len(reports) != 1:
+                raise ValueError("Expected exactly one evaluation report")
+            report = json.loads(reports[0].read_text())
+            task_report = report.get(row["instance_id"]) if isinstance(report, dict) else None
+            if not isinstance(task_report, dict) or type(task_report.get("resolved")) is not bool:
+                raise ValueError("Expected current task report with a boolean resolved field")
+        except (ValueError, UnicodeError) as exc:
+            result = {"completed": False, "resolved": False, "reason": "invalid_report",
+                      "error": f"Invalid official evaluation report: {exc}"}
+        else:
+            result = {"completed": True, "resolved": task_report["resolved"]}
     result["container_boundaries"] = boundaries
     Path(job["result_file"]).write_text(json.dumps(result))
 

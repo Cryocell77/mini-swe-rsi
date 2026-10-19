@@ -28,6 +28,6 @@ A host-owned online loop replaces SICA's batch runner. Each task is followed by 
 
 Every role calls the same model configured in `.env`. Candidates use existing dependency images and can edit source, configuration, and tests, but cannot install new dependencies. Data can come from Hugging Face or local SWE-bench records. The CLI follows the selected split's order, and task and image identities are frozen per run.
 
-[grader.py](../src/mini_swe_rsi/evaluation/grader.py) reuses evaluation adapter code from the earlier local project, adding image identity checks, empty-patch handling, timeout classification, and container isolation. It calls official SWE-bench evaluation assets. Patches are extracted relative to the task image's initial HEAD to exclude changes from image preparation commits.
+[grader.py](../src/mini_swe_rsi/evaluation/grader.py) calls the integrated SWE-bench evaluator with image identity checks, empty-patch handling, timeout classification, and container isolation. Patches are extracted relative to the task image's initial HEAD to exclude changes from image preparation commits.
 
 Initial attempts, candidate reruns, and mechanism comparisons are stored separately. See [RSI architecture](architecture.md) for execution rules and artifact layout.
