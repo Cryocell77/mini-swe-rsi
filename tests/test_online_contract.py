@@ -54,7 +54,9 @@ def test_report_cannot_relabel_an_old_online_run(tmp_path, filename, protocol):
 @pytest.mark.parametrize('name', ['src/mini_swe_rsi/context_budget.py',
     'src/mini_swe_rsi/online_contract.py', 'src/mini_swe_rsi/workflow/check_plan.py',
     'src/mini_swe_rsi/model_protocol.py', 'src/mini_swe_rsi/model_identity.py',
-    'src/mini_swe_rsi/online_checks.py', 'src/mini_swe_rsi/workflow/roles.py'])
+    'src/mini_swe_rsi/online_checks.py', 'src/mini_swe_rsi/workflow/roles.py',
+    'src/mini_swe_rsi/online_records.py', 'src/mini_swe_rsi/candidate_jobs.py',
+    'src/mini_swe_rsi/workflow/review_cache.py'])
 def test_contract_implementation_is_frozen_for_recovery(tmp_path, monkeypatch, name):
     loop = make_loop(tmp_path)
     assert name in loop.control_manifest['files']

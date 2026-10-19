@@ -717,3 +717,13 @@ def test_top_level_result_is_ignored_by_attempt_layout(tmp_path):
     (task / 'attempt_1').symlink_to(task / 'attempt_0', target_is_directory=True)
     assert [p.parent.name for p in attempt_result_paths(task)] == [
         'attempt_0', 'attempt_2', 'attempt_10']
+
+
+def test_version_install_stays_bound_to_the_accepted_source_hash(initial_tree, tmp_path):
+    from mini_swe_rsi.online_records import OnlineRecords
+    full, execution = tree_hash(initial_tree), driver_execution_hash(initial_tree)
+    (initial_tree/'minisweagent/agents/default.py').write_text('CHANGED_AFTER_CHECK = True\n')
+    records = OnlineRecords(tmp_path/'records', ('t1',))
+    with pytest.raises(OnlineError, match='identity differs'):
+        records.install_version('H0001', 'H0000', initial_tree, {},
+                                accepted_hashes=(full, execution), allow_install=True)

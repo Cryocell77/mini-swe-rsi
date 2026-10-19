@@ -148,6 +148,9 @@ src/mini_swe_rsi/
 - [model_identity.py](../src/mini_swe_rsi/model_identity.py)：模型服务身份与容量解析。
 - [online_checks.py](../src/mini_swe_rsi/online_checks.py)：在线身份、候选快照校验与验收计算。
 - [roles.py](../src/mini_swe_rsi/workflow/roles.py)：角色定义、权限与提示模板。
+- [online_records.py](../src/mini_swe_rsi/online_records.py)：运行状态、不可变决定与版本安装。
+- [candidate_jobs.py](../src/mini_swe_rsi/candidate_jobs.py)：候选检查的持久化注册与并发执行。
+- [review_cache.py](../src/mini_swe_rsi/workflow/review_cache.py)：按模型、父版本和源码身份绑定的委员会缓存。
 - [workflow.py](../src/mini_swe_rsi/workflow/workflow.py)：七步状态机与角色操作。
 
-模型调用、在线调度和工作流的原有入口保持不变。规则计算与角色定义由独立模块提供，状态保存、版本提交和恢复仍由原有状态机管理。磁盘记录字段保持不变；`workflow_sha256` 同时覆盖工作流与角色实现，新模块也纳入控制清单。源码摘要变化后，已有运行目录仍需使用对应的代码版本。
+模型调用、在线调度和工作流的原有入口保持不变。规则计算、角色定义与持久化各有独立模块，原有状态机继续负责业务调度和恢复决策。正常提交与恢复重放共用状态及版本安装组件，Broker 保留会话认证和授权。磁盘记录字段保持不变；`workflow_sha256` 同时覆盖工作流、角色与委员会缓存实现，新模块也纳入控制清单。源码摘要变化后，已有运行目录仍需使用对应的代码版本。

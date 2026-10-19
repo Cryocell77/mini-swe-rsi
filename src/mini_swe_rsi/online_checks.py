@@ -82,3 +82,19 @@ def evaluate_candidate(candidate, feedback, snapshot, plan=None, *, require_task
             'final_candidate_execution_hash': final_exec,
             'improvement_criterion': selected if criterion_passed else None,
             'reasons': [] if passed else ['acceptance criterion or immutable hash check failed']}
+
+
+def decision_parent(feedback, decision):
+    if (not isinstance(decision, dict)
+            or decision.get('round_id') != feedback['round_id']
+            or decision.get('task_id') != feedback['task_id']
+            or decision.get('parent_version') != feedback['version']):
+        raise OnlineError('Durable decision identity is incomplete or differs')
+    parent = decision['parent_version']
+    try:
+        number = int(parent[1:]) if isinstance(parent, str) and parent.startswith('H') else -1
+    except ValueError:
+        number = -1
+    if number < 0 or parent != f'H{number:04d}':
+        raise OnlineError('Durable decision has an invalid parent version')
+    return parent, number

@@ -10,6 +10,9 @@ import runpy
 import uuid
 from pathlib import Path
 
+_CACHE = runpy.run_path(str(Path(__file__).with_name('review_cache.py')))
+ReviewCache = _CACHE['ReviewCache']
+
 _ROLES = runpy.run_path(str(Path(__file__).with_name('roles.py')))
 SOURCE = _ROLES['SOURCE']
 ROLE_MAP = _ROLES['ROLE_MAP']
@@ -66,7 +69,8 @@ class Workflow:
         self.diagnosis = None
         self.diagnostic_reports = {}
         self.diagnostic_role_evidence = {}
-        self.committee_cache = {}
+        self._reviews = ReviewCache()
+        self.committee_cache = self._reviews.entries
         self.check_plan = None
         self.counter = 0
         state_path = self.logs/'workflow_state.json'
@@ -148,30 +152,9 @@ class Workflow:
         self._restore_committee_cache(state['committee_cache'])
 
     def _restore_committee_cache(self, seeds):
-        if seeds is None:
-            return
-        if not isinstance(seeds, list):
-            raise ValueError('Resume committee cache seed must be a list')
-        for seed in seeds:
-            if not isinstance(seed, dict):
-                raise ValueError('Resume committee cache seed is malformed')
-            required = {'context', 'proposal', 'reviewer_specialisation_name',
-                        'submission', 'role_identity', 'source_execution_hash'}
-            if not required.issubset(seed):
-                raise ValueError('Resume committee cache seed is incomplete')
-            if (not isinstance(seed['context'], str) or not isinstance(seed['proposal'], str)
-                    or not isinstance(seed['reviewer_specialisation_name'], str)
-                    or not isinstance(seed['submission'], str)
-                    or not isinstance(seed['role_identity'], str) or not seed['role_identity']
-                    or not isinstance(seed['source_execution_hash'], str)):
-                raise ValueError('Resume committee cache seed has invalid types')
-            entry = self._committee_cache_entry(seed['proposal'], seed['context'],
-                                                seed['reviewer_specialisation_name'],
-                                                seed['submission'], seed['role_identity'],
-                                                seed['source_execution_hash'],
-                                                seed.get('parent_version'), seed.get('model'),
-                                                require_current=False)
-            self.committee_cache[entry['cache_key']] = entry
+        self._reviews.restore(seeds, {
+            'parent_version': self.identities.get('parent_version', self.identities.get('version')),
+            'model': self.identities.get('model')})
 
     def _write_feedback_index(self):
         """Persist the public facts supplied to diagnosis without private grader data."""
@@ -503,38 +486,20 @@ class Workflow:
             'source_execution_hash': self._source_execution_hash(),
         }
 
-    @staticmethod
-    def _committee_cache_key(context, specialisation):
-        return json.dumps({**context, 'reviewer_specialisation_name':specialisation},
-                          ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    _committee_cache_key = staticmethod(ReviewCache.key)
 
     def _committee_cache_entry(self, proposal, context, specialisation, submission,
                                role_identity, source_execution_hash,
                                parent_version=None, model=None, require_current=True):
-        current = self._committee_cache_context(proposal, context)
-        stored_parent = current['parent_version'] if parent_version is None else parent_version
-        stored_model = current['model'] if model is None else model
-        if (require_current and (source_execution_hash != current['source_execution_hash']
-                or stored_parent != current['parent_version']
-                or stored_model != current['model'])):
-            return None
-        cache_context = {'proposal': proposal, 'context': context,
-                         'parent_version': stored_parent, 'model': stored_model,
-                         'source_execution_hash': source_execution_hash}
-        return {'cache_key': self._committee_cache_key(cache_context, specialisation),
-                'proposal': proposal, 'context': context,
-                'reviewer_specialisation_name': specialisation,
-                'submission': submission, 'role_identity': role_identity,
-                'source_execution_hash': source_execution_hash,
-                'parent_version': stored_parent, 'model': stored_model}
+        return self._reviews.entry(self._committee_cache_context(proposal, context),
+            proposal, context, specialisation, submission, role_identity, source_execution_hash,
+            parent_version, model, require_current)
 
     def _committee_review(self, proposal, context, specialisation, task):
         cache_context = self._committee_cache_context(proposal, context)
-        if all(value is not None for value in cache_context.values()):
-            key = self._committee_cache_key(cache_context, specialisation)
-            cached = self.committee_cache.get(key)
-            if isinstance(cached, dict):
-                return cached['submission'], cached['role_identity']
+        cached = self._reviews.get(cache_context, specialisation)
+        if cached is not None:
+            return cached['submission'], cached['role_identity']
         before = self.counter
         submission = self.call_role('reviewer', proposal, task, context)
         role_identity = f'{before + 1:03d}_reviewer'
@@ -543,7 +508,7 @@ class Workflow:
             cache_context['source_execution_hash'], cache_context['parent_version'],
             cache_context['model'])
         if entry is not None:
-            self.committee_cache[entry['cache_key']] = entry
+            self._reviews.put(entry)
             self.save()
         return submission, role_identity
 

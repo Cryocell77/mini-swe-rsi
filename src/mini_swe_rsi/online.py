@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 from pathlib import Path
 
@@ -23,19 +22,8 @@ from .online_contract import (ONLINE_PROTOCOL, CHECK_POLICY_REVISION, validate_o
 from .online_checks import (finite_number as _finite_number,
                             candidate_job_identity as _candidate_job_identity,
                             identity_digest, candidate_identity, validate_candidate_snapshot,
-                            evaluate_candidate)
-
-
-def _atomic_move(source, destination):
-    destination = Path(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists():
-        raise OnlineError(f'Refusing to overwrite immutable online version: {destination}')
-    os.replace(str(source), str(destination))
-
-
-
-
+                            evaluate_candidate, decision_parent)
+from .online_records import OnlineRecords
 
 
 def freeze_task_selection(data, root, task_limit=None):
@@ -94,6 +82,7 @@ class OnlineLoop:
         self._validate_contract(self.contract)
         self.control_manifest = self._control_manifest()
         self._improvement_token = None
+        self.records = OnlineRecords(self.root, self.tasks)
         self._load_or_initialize(active_code)
 
     @classmethod
@@ -172,10 +161,10 @@ class OnlineLoop:
     @staticmethod
     def _control_manifest():
         """Freeze the code that interprets the online contract."""
-        files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py', ROOT/'src/mini_swe_rsi/workflow/roles.py',
+        files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py', ROOT/'src/mini_swe_rsi/workflow/roles.py', ROOT/'src/mini_swe_rsi/workflow/review_cache.py',
                  ROOT/'src/mini_swe_rsi/workflow/relay.py', ROOT/'src/mini_swe_rsi/workflow/source_hash.py', ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
-                  ('online.py','online_checks.py','driver.py','broker.py','model_protocol.py','model_identity.py','archive_view.py','core.py','budget_policy.py',
+                  ('online.py','online_checks.py','online_records.py','candidate_jobs.py','driver.py','broker.py','model_protocol.py','model_identity.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
                    'public_filter.py','recovery.py','stage_tools.py','tool_output.py',
                    'online_contract.py','single.py')]
@@ -187,111 +176,30 @@ class OnlineLoop:
                 'files': {str(p.relative_to(ROOT)): digest(p) for p in files if p.is_file()}}
 
     def _load_or_initialize(self, active_code):
-        config_path = self.root/'configuration.json'
-        state_path = self.root/'online_state.json'
         self.root.mkdir(parents=True, exist_ok=True)
-        had_config = config_path.exists()
-        if had_config:
-            saved = read(config_path)
-            self._validate_contract(saved)
-            expected_improvement = self.contract.get('improvement_task') or improvement_contract()
-            for key, value in (('protocol', self.protocol), ('tasks', list(self.tasks)),
-                               ('control_manifest', self.control_manifest),
-                               ('check_policy', self.contract.get('check_policy')),
-                               ('improvement_task', expected_improvement),
-                               ('data', self.contract.get('data')),
-                               ('runtime_image', self.contract.get('runtime_image')),
-                               ('transport_policy', self.contract.get('transport_policy')),
-                               ('task_limit', self.contract.get('task_limit'))):
-                if saved.get(key) != value:
-                    raise OnlineError(f'Frozen online contract changed: {key}')
-            for key, value in (('model', self.model_identity), ('service', self.service_identity)):
-                if value is not None and saved.get(key) != value:
-                    raise OnlineError(f'Frozen online identity changed: {key}')
-            self.contract = saved
-            self.model_identity, self.service_identity = saved.get('model'), saved.get('service')
-        else:
-            self.contract = {**self.contract, 'protocol': self.protocol,
-                             'tasks': list(self.tasks), 'control_manifest': self.control_manifest,
-                             'model': self.model_identity, 'service': self.service_identity,
-                             'improvement_task': improvement_contract()}
-            write(config_path, self.contract)
-        target_code = self.root/'versions/H0000/agent_code'
-        if not target_code.exists():
-            if active_code is not None and Path(active_code).exists():
-                target_code.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(Path(active_code), target_code)
-            else:
-                initial_code(target_code)
-        code = target_code
-        validate_code(code)
-        h0 = self.root/'versions/H0000'
-        identity = {'version': 'H0000', 'full_source_hash': tree_hash(code),
-                    'execution_hash': execution_hash(code),
-                    'control_manifest': self.control_manifest,
-                    'control_manifest_sha256': self._contract_digest(),
-                    'model_identity_sha256': self._identity_digest(self.model_identity),
-                    'service_identity_sha256': self._identity_digest(self.service_identity)}
-        identity_path = h0/'version_identity.json'
-        if had_config and not identity_path.exists():
-            raise OnlineError('Online contract exists without H0000 identity')
-        if identity_path.exists() and read(identity_path) != identity:
-            raise OnlineError('H0000 source or control identity changed')
-        write(identity_path, identity)
-        if not state_path.exists():
-            write(state_path, {'protocol': self.protocol, 'active_version': 'H0000',
-                'next_task_index': 0, 'next_round': 1, 'next_proposal': 1,
-                'status': 'idle', 'current_task': None, 'current_round': None,
-                'current_proposal': None})
-        self._validate_state(read(state_path))
+        had_config = (self.root/'configuration.json').exists()
+        improvement = (self.contract.get('improvement_task') if had_config else None) or improvement_contract()
+        expected = {**self.contract, 'protocol': self.protocol, 'tasks': list(self.tasks),
+                    'control_manifest': self.control_manifest, 'model': self.model_identity,
+                    'service': self.service_identity,
+                    'improvement_task': improvement}
+        self.contract = self.records.configuration(expected)
+        self.model_identity, self.service_identity = self.contract.get('model'), self.contract.get('service')
+        self.records.initialize(active_code, self._runtime_identity(), had_config)
         self._recover()
 
+    def _runtime_identity(self):
+        return {'control_manifest': self.control_manifest,
+                'control_manifest_sha256': self._contract_digest(),
+                'model_identity_sha256': self._identity_digest(self.model_identity),
+                'service_identity_sha256': self._identity_digest(self.service_identity)}
+
     def _validate_state(self, state):
-        validate_online_contract(state, require_policy=False, error_type=OnlineError)
-        required = ('active_version', 'next_task_index', 'next_round', 'next_proposal', 'status')
-        if any(k not in state for k in required):
-            raise OnlineError('Online state is incomplete')
-        try:
-            valid_version = state['active_version'] == f"H{int(state['active_version'][1:]):04d}"
-        except (TypeError, ValueError, IndexError):
-            valid_version = False
-        if not valid_version:
-            raise OnlineError('Invalid active version identity')
-        if not isinstance(state['next_task_index'], int) or not 0 <= state['next_task_index'] <= len(self.tasks):
-            raise OnlineError('Invalid task cursor')
-        if not isinstance(state['next_round'], int) or state['next_round'] < 1:
-            raise OnlineError('Invalid round cursor')
-        if not isinstance(state['next_proposal'], int) or state['next_proposal'] < 1:
-            raise OnlineError('Invalid proposal cursor')
-        allowed = {'idle','task_running','task_done','feedback_ready','diagnosing',
-                   'diagnosis_pending','improving','checking','decision_ready',
-                   'round_committed','skipped','interrupted','completed'}
-        if state['status'] not in allowed:
-            raise OnlineError('Unknown online state')
-        if state.get('current_task') is not None and state.get('current_task') not in self.tasks:
-            raise OnlineError('State current task is outside frozen sequence')
-        if state.get('current_task') is not None and state.get('current_round') != f"R{self.tasks.index(state['current_task']) + 1:04d}":
-            raise OnlineError('State task and round identities differ')
-        if state.get('current_round') is not None:
-            if state.get('current_task') is None:
-                raise OnlineError('State round has no current task')
-            try:
-                if state['current_round'] != f"R{int(state['current_round'][1:]):04d}":
-                    raise ValueError
-            except (TypeError, ValueError, IndexError):
-                raise OnlineError('Invalid current round identity')
-        if state.get('current_proposal') is not None:
-            try:
-                if state['current_proposal'] != f"P{int(state['current_proposal'][1:]):04d}":
-                    raise ValueError
-            except (TypeError, ValueError, IndexError):
-                raise OnlineError('Invalid current proposal identity')
+        self.records.validate_state(state)
 
     @property
     def state(self):
-        result = read(self.root/'online_state.json')
-        self._validate_state(result)
-        return result
+        return self.records.state
 
     @property
     def active_version(self):
@@ -299,28 +207,10 @@ class OnlineLoop:
 
     @property
     def active_code(self):
-        path = self.root/'versions'/self.active_version/'agent_code'
-        identity = read(path.parent/'version_identity.json')
-        expected_identity = {
-            'version': self.active_version,
-            'control_manifest': self.control_manifest,
-            'control_manifest_sha256': self._contract_digest(),
-            'model_identity_sha256': self._identity_digest(self.model_identity),
-            'service_identity_sha256': self._identity_digest(self.service_identity),
-        }
-        if (not isinstance(identity, dict)
-                or any(key not in identity or identity[key] != value
-                       for key, value in expected_identity.items())):
-            raise OnlineError('Active version control identity differs from current runtime')
-        if tree_hash(path) != identity.get('full_source_hash') or execution_hash(path) != identity.get('execution_hash'):
-            raise OnlineError('Active version source changed after acceptance')
-        return path
+        return self.records.code(self.active_version, self._runtime_identity())
 
     def _save_state(self, **changes):
-        current = self.state
-        current.update(changes)
-        self._validate_state(current)
-        write(self.root/'online_state.json', current)
+        self.records.save_state(changes)
 
     def _event(self, kind, **event):
         append_event(self.root, {'kind': kind, **event})
@@ -1011,34 +901,11 @@ class OnlineLoop:
             return None
         return diagnosis['decision']
 
-    @staticmethod
-    def _decision_parent(feedback, decision):
-        if (not isinstance(decision, dict)
-                or decision.get('round_id') != feedback['round_id']
-                or decision.get('task_id') != feedback['task_id']
-                or decision.get('parent_version') != feedback['version']):
-            raise OnlineError('Durable decision identity is incomplete or differs')
-        parent = decision['parent_version']
-        try:
-            number = int(parent[1:]) if isinstance(parent, str) and parent.startswith('H') else -1
-        except ValueError:
-            number = -1
-        if number < 0 or parent != f'H{number:04d}':
-            raise OnlineError('Durable decision has an invalid parent version')
-        return parent, number
+    _decision_parent = staticmethod(decision_parent)
 
     def _commit_round(self, feedback, decision):
-        path = self.root/'decisions'/f"{feedback['round_id']}.json"
-        if path.exists():
-            old = read(path)
-            # A durable decision is immutable. Recovery uses its exact
-            # contents and never silently rewrites it.
-            return self._apply_existing_decision(feedback, old)
-        parent, _ = self._decision_parent(feedback, decision)
-        if parent != self.active_version:
-            raise OnlineError('Decision parent is not the active version')
-        write(path, decision)
-        return self._apply_existing_decision(feedback, decision)
+        record = self.records.commit_decision(feedback, decision, self.active_version)
+        return self._apply_existing_decision(feedback, record)
 
     def _apply_existing_decision(self, feedback, decision):
         parent, parent_number = self._decision_parent(feedback, decision)
@@ -1071,56 +938,11 @@ class OnlineLoop:
             # parent, never of whichever active label happens to be present
             # while recovery is replayed.
             next_version = f"H{parent_number + 1:04d}"
-            dest = self.root/'versions'/next_version/'agent_code'
-            def verify_dest():
-                if not dest.is_dir():
-                    raise OnlineError('Accepted decision has no durable child source')
-                identity_path = dest.parent/'version_identity.json'
-                if not identity_path.is_file() or identity_path.is_symlink():
-                    raise OnlineError('Accepted version identity is missing during recovery')
-                identity = read(identity_path)
-                expected_identity = {
-                    'version': next_version,
-                    'parent_version': parent,
-                    'full_source_hash': source_full,
-                    'execution_hash': source_exec,
-                    'control_manifest': self.control_manifest,
-                    'control_manifest_sha256': self._contract_digest(),
-                    'model_identity_sha256': self._identity_digest(self.model_identity),
-                    'service_identity_sha256': self._identity_digest(self.service_identity),
-                }
-                if identity != expected_identity:
-                    raise OnlineError('Accepted version identity differs during recovery')
-                if tree_hash(dest) != source_full or execution_hash(dest) != source_exec:
-                    raise OnlineError('Accepted version source differs during recovery')
-
-            if current['active_version'] == next_version:
-                # This covers a crash after the immutable child was installed
-                # but before the cursor was advanced.  Verify the child before
-                # treating replay as idempotent.
-                verify_dest()
-            elif current['active_version'] == parent:
-                if dest.exists():
-                    verify_dest()
-                else:
-                    if dest.parent.exists() and any(dest.parent.iterdir()):
-                        raise OnlineError('Accepted version directory has an unexpected partial state')
-                    temp = dest.parent/(dest.name + '.tmp')
-                    if temp.exists():
-                        shutil.rmtree(temp)
-                    shutil.copytree(source, temp)
-                    validate_code(temp)
-                    identity = {'version': next_version, 'parent_version': parent,
-                                'full_source_hash': tree_hash(temp), 'execution_hash': execution_hash(temp),
-                                'control_manifest': self.control_manifest,
-                                'control_manifest_sha256': self._contract_digest(),
-                                'model_identity_sha256': self._identity_digest(self.model_identity),
-                                'service_identity_sha256': self._identity_digest(self.service_identity)}
-                    write(temp.parent/'version_identity.json', identity)
-                    _atomic_move(temp, dest)
-                    verify_dest()
-            else:
+            if current['active_version'] not in (parent, next_version):
                 raise OnlineError('Active version is neither the decision parent nor its child')
+            self.records.install_version(next_version, parent, source, self._runtime_identity(),
+                                         accepted_hashes=(source_full, source_exec),
+                                         allow_install=current['active_version'] == parent)
             active = next_version
         else:
             active = parent

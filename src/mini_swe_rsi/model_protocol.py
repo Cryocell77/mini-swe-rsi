@@ -141,4 +141,3 @@ def adapt_response(response):
     for key in fields:
         message[key] = (reasoning[:match.start()] + reasoning[match.end():]).strip()
     return returned, 'promoted single complete reasoning action; removed action from ' + ','.join(fields) + '; format=' + kind
-

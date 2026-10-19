@@ -58,10 +58,10 @@ candidate_source_hash = tree_hash
 
 
 def workflow_hash(root):
-    """Bind the state machine and role renderer under one workflow identity."""
+    """Bind standalone workflow components under one implementation identity."""
     root = Path(root)
     digest = hashlib.sha256()
-    for name in ('workflow.py', 'roles.py'):
+    for name in ('workflow.py', 'roles.py', 'review_cache.py'):
         digest.update(name.encode() + b'\0')
         digest.update(hashlib.sha256((root/name).read_bytes()).digest())
     return digest.hexdigest()

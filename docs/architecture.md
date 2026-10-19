@@ -148,6 +148,9 @@ src/mini_swe_rsi/
 - [model_identity.py](../src/mini_swe_rsi/model_identity.py): provider identity and capacity resolution.
 - [online_checks.py](../src/mini_swe_rsi/online_checks.py): online identities, candidate snapshot validation, and acceptance rules.
 - [roles.py](../src/mini_swe_rsi/workflow/roles.py): role definitions, capabilities, and prompt templates.
+- [online_records.py](../src/mini_swe_rsi/online_records.py): run state, immutable decisions, and version installation.
+- [candidate_jobs.py](../src/mini_swe_rsi/candidate_jobs.py): durable candidate-check registration and concurrent execution.
+- [review_cache.py](../src/mini_swe_rsi/workflow/review_cache.py): committee cache bound to model, parent version, and source identity.
 - [workflow.py](../src/mini_swe_rsi/workflow/workflow.py): the seven-step state machine and role operations.
 
-The existing model, online-loop, and workflow entry points remain available. Dedicated modules provide rule calculations and role definitions; the existing state machines retain persistence, version commits, and recovery. Disk record fields are unchanged. `workflow_sha256` covers both workflow and role implementations, and the new modules are included in the control manifest. Existing run directories still require the corresponding code version after source identities change.
+The existing model, online-loop, and workflow entry points remain available. Dedicated modules own rule calculations, role definitions, and persistence. The existing state machines retain business orchestration and recovery decisions. Normal commits and recovery replay share state and version installation components; the Broker retains session authentication and authorization. Disk record fields are unchanged. `workflow_sha256` covers workflow, role, and committee cache implementations, and the new modules are included in the control manifest. Existing run directories still require the corresponding code version after source identities change.
