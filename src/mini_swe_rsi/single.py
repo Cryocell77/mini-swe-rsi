@@ -36,15 +36,15 @@ class Versions:
         entries = self.entries()
         if version is None and entries:
             while True:
-                choice = ask('Harness：1 原始版本 / 2 晋升版本 [1]: ').strip() or '1'
+                choice = ask('Harness: 1 Original / 2 Promoted [1]: ').strip() or '1'
                 if choice in ('1', '2'):
                     break
             if choice == '2':
                 for entry in entries:
                     info = read(entry/'metadata.json')
-                    show(f"{entry.name}  {info['created']}  来源 {info['run']}")
+                    show(f"{entry.name}  {info['created']}  From {info['run']}")
                 while version not in {p.name for p in entries}:
-                    version = ask(f'选择版本号 [{entries[0].name}]: ').strip() or entries[0].name
+                    version = ask(f'Select version [{entries[0].name}]: ').strip() or entries[0].name
         if version in (None, 'original'):
             return None, 'original'
         entry = next((p for p in entries if p.name == version), None)
@@ -187,7 +187,7 @@ def run_single(args, *, ask=input, show=print):
             raise ValueError('Another single-input session is using this store') from None
         versions = Versions(store)
         code, selected = versions.select(args.version, ask=ask, show=show)
-        prompt = args.prompt or ask('请输入编程任务：\n> ').strip()
+        prompt = args.prompt or ask('Enter a coding task:\n> ').strip()
         if not prompt.strip():
             raise ValueError('Task prompt must not be empty')
         root = (args.run or store/'executions'/f'{time.strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:8]}').resolve()
@@ -202,7 +202,7 @@ def run_single(args, *, ask=input, show=print):
               'verifier_sha256': digest(verifier) if verifier else None})
         client = docker.from_env()
         broker = driver = loop = None
-        show(f'运行目录：{root}\n使用版本：{selected}')
+        show(f'Run directory: {root}\nSelected version: {selected}')
         try:
             image = prepare_image(client, root, args.workspace, args.image, verify_file=args.verify_file)
             broker = Broker(root)

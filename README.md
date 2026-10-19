@@ -40,6 +40,8 @@ See [Evaluation](#evaluation) for dataset preparation and [Data requirements](do
 
 ## Local single-task input
 
+CLI help, prompts, and framework messages are in English. Task requests can be written in your preferred language.
+
 Specify a source directory and a verification command, then enter your request:
 
 ```bash
@@ -54,7 +56,7 @@ When saved single-task promotions exist, the CLI asks you to **select the origin
 
 ![Single-task version selection demo](docs/images/single-input.en.gif)
 
-*The demo shows an English translation of the CLI interaction with example version data and no model calls.*
+*The demo uses the English CLI prompts with example version data and no model calls.*
 
 For scripts, pass the version and request explicitly to skip the prompts:
 

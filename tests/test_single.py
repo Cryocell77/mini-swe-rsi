@@ -94,7 +94,8 @@ def test_task_prompt_follows_version_selection(tmp_path):
         '--check', 'true', '--store', str(versions.root)])
     with pytest.raises(ValueError, match='empty'):
         run_single(args, ask=ask)
-    assert 'Harness' in prompts[0] and '编程任务' in prompts[1]
+    assert 'Harness: 1 Original / 2 Promoted' in prompts[0]
+    assert prompts[1] == 'Enter a coding task:\n> '
 
 
 @pytest.mark.skipif(os.environ.get('RUN_DOCKER_TESTS') != '1', reason='Explicit Docker acceptance')
