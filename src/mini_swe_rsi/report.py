@@ -30,8 +30,6 @@ def _ensure_online_root(root):
         raise ValueError('Online report requires online_state.json or an online configuration')
     if state_path.exists():
         state = read(state_path)
-        if not isinstance(state, dict):
-            raise ValueError('Online state must be a JSON object')
         validate_online_contract(state, require_policy=False)
     for marker in _LEGACY_MARKERS:
         if (root/marker).exists():

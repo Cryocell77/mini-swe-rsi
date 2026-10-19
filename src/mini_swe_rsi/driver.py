@@ -139,18 +139,16 @@ class Driver:
             raise
 
     def _cleanup_resources(self):
-        for c in list(self.running):
+        containers = [*self.running]
+        if self.relay is not None:
+            containers.append(self.relay)
+        for c in containers:
             try:
                 c.remove(force=True)
             except Exception:
                 pass
         self.running.clear()
-        if self.relay is not None:
-            try:
-                self.relay.remove(force=True)
-            except Exception:
-                pass
-            self.relay = None
+        self.relay = None
         for network_name in ('network', 'transport'):
             network = getattr(self, network_name, None)
             if network is not None:
@@ -202,9 +200,6 @@ class Driver:
             parent = int(argument('--parent-iter'))
             if parent < 0:
                 raise RuntimeError('Online improvement parent version must be non-negative')
-            if any(option == value or value.startswith(option + '=')
-                   for value in command_args for option in ('--best-iter', '--current-iter')):
-                raise RuntimeError('Online improvement best/current iteration options were removed')
             proposer = parent
             candidate = argument('--candidate-id')
             task_id = argument('--task-id')

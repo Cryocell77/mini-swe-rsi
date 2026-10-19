@@ -22,7 +22,7 @@ def online_archive_view(source, destination):
     occurred_tasks = []
     for task_dir in sorted((source/'tasks').iterdir()) if (source/'tasks').exists() else []:
         feedback = task_dir/'public_feedback.json'
-        if feedback.exists() and feedback.is_file() and not feedback.is_symlink():
+        if feedback.is_file() and not feedback.is_symlink():
             value = read(feedback)
             if isinstance(value, dict) and isinstance(value.get('task_id'), str):
                 occurred_tasks.append(value['task_id'])
@@ -34,13 +34,13 @@ def online_archive_view(source, destination):
         for name in ('public_feedback.json', 'trace.txt',
                      'patch.diff', 'answer.txt', 'activation.json', 'execution_summary.json'):
             item = path/name
-            if item.exists() and item.is_file():
+            if item.is_file():
                 files.append(item)
     for path in (source/'rounds').glob('R*') if (source/'rounds').exists() else []:
         for name in ('diagnosis.json', 'public_feedback.json', 'candidate_check.json',
                      'online_workflow_result.json'):
             item = path/name
-            if item.exists() and item.is_file():
+            if item.is_file():
                 files.append(item)
     for path in (source/'decisions').glob('R*.json') if (source/'decisions').exists() else []:
         files.append(path)
@@ -64,7 +64,7 @@ def online_archive_view(source, destination):
         if item.exists() and (item.is_symlink() or not item.resolve().is_relative_to(source.resolve())
                               or any(p.is_symlink() for p in item.parents if p != source.parent)):
             raise ValueError('Invalid online public file')
-    files = [p for p in files if p.exists() and p.is_file()]
+    files = [p for p in files if p.is_file()]
     manifest = {str(p.relative_to(source)):digest(p) for p in files}
     marker = destination.parent/(destination.name + '.manifest.json')
 

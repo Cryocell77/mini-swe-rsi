@@ -63,7 +63,7 @@ def test_validate_candidate_job_record_rejects_missing_identity_and_status(mutat
         validate_candidate_job_record("candidate:R0001:P0001", metadata, state)
 
 
-def test_registration_requires_complete_metadata_but_pause_stays_first(tmp_path, monkeypatch):
+def test_registration_requires_explicit_metadata_but_pause_stays_first(tmp_path, monkeypatch):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
         "LOCAL_LLM_MODEL": "fixture",
@@ -71,11 +71,11 @@ def test_registration_requires_complete_metadata_but_pause_stays_first(tmp_path,
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                        "max_output_tokens": 2048}))
     try:
-        with pytest.raises(ValueError, match="metadata is incomplete"):
+        with pytest.raises(TypeError, match="metadata"):
             broker.register_candidate_job("candidate:R0001:P0001", lambda payload: {})
         broker.pause_event.set()
         with pytest.raises(ModelError, match="TransportPaused"):
-            broker.register_candidate_job("candidate:R0001:P0001", lambda payload: {})
+            broker.register_candidate_job("candidate:R0001:P0001", lambda payload: {}, None)
     finally:
         broker.close()
 
@@ -206,6 +206,36 @@ def test_empty_exception_message_is_persisted_and_not_replayed(tmp_path, monkeyp
         assert restarted.candidate_jobs[metadata["job_id"]]["error"]["message"] == ""
         assert replay_calls == []
         restarted.close()
+    finally:
+        broker.finish(token)
+        broker.close()
+
+
+def test_candidate_payload_rejection_never_runs_or_completes_the_job(tmp_path, monkeypatch):
+    monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
+        "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
+        "LOCAL_LLM_MODEL": "fixture",
+    })
+    broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
+                                                   "max_output_tokens": 2048}))
+    token = broker.session("candidate", seconds=30, calls=0)
+    metadata = _metadata(token=token)
+    payload = {key: metadata[key] for key in CANDIDATE_JOB_METADATA_FIELDS[:7]}
+    calls = []
+    broker.register_candidate_job(metadata['job_id'],
+                                  lambda request: calls.append(request) or {"passed": True}, metadata)
+    try:
+        for invalid in ({key: value for key, value in payload.items() if key != 'stage'},
+                        {**payload, 'extra': 'ignored?'},
+                        {**payload, 'session_token_sha256': metadata['session_token_sha256']},
+                        {**payload, 'parent_version': 'H9999'}):
+            with pytest.raises(ModelError, match='identity differs'):
+                broker.candidate_check(token, invalid, agent='candidate-main')
+        assert calls == []
+        saved = read(tmp_path / 'candidate_checks' / (metadata['job_id'] + '.json'))
+        assert saved['status'] == 'registered'
+        assert broker.candidate_check(token, payload, agent='candidate-main') == {'passed': True}
+        assert calls == [payload]
     finally:
         broker.finish(token)
         broker.close()

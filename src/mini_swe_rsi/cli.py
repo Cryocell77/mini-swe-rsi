@@ -31,34 +31,31 @@ def main():
                 history = root/'failure_history'
                 history.mkdir(exist_ok=True)
                 previous_failure.rename(history/f'{time.time_ns()}.json')
-            if args.command == 'online':
-                from .online import OnlineLoop
-                online_kwargs = {key:value for key, value in (
-                    ('task_limit', args.task_limit),
-                    ('resume_checkpoint', args.resume_checkpoint))
-                    if value is not None}
-                loop = OnlineLoop.from_environment(root, args.data, **online_kwargs)
-                try:
-                    result = loop.run()
-                    print(json.dumps(result, ensure_ascii=False))
-                finally:
-                    loop.close()
-                return
+            from .online import OnlineLoop
+            online_kwargs = {key:value for key, value in (
+                ('task_limit', args.task_limit),
+                ('resume_checkpoint', args.resume_checkpoint))
+                if value is not None}
+            loop = OnlineLoop.from_environment(root, args.data, **online_kwargs)
+            try:
+                result = loop.run()
+                print(json.dumps(result, ensure_ascii=False))
+            finally:
+                loop.close()
         except Exception as e:
             write(root/'failure.json', {'type': type(e).__name__, 'reason': str(e)[:500],
                                        'time': time.time(), 'command': args.command})
             raise
         finally:
-            if args.command == 'online':
-                from .report import build_online_report
-                active_error = sys.exception()
-                try:
-                    build_online_report(root)
-                except BaseException:
-                    # A startup/run failure can occur before the online
-                    # contract is written; preserve that original error.
-                    if active_error is None:
-                        raise
+            from .report import build_online_report
+            active_error = sys.exception()
+            try:
+                build_online_report(root)
+            except BaseException:
+                # A startup/run failure can occur before the online
+                # contract is written; preserve that original error.
+                if active_error is None:
+                    raise
 
 
 def build_parser():

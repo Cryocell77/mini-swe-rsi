@@ -92,11 +92,8 @@ def load_resume_authorization(path, logs, expected_identity, workdir, workflow_m
             or not isinstance(state.get('check_plan'), dict)):
         raise ValueError('Step-5 restore requires explicit incomplete-check authorization')
     identities = authorization['identities']
-    if not isinstance(identities, dict) or set(identities) != set(expected_identity):
-        raise ValueError('Resume authorization identities are invalid')
-    for key, expected in expected_identity.items():
-        if identities.get(key) != expected:
-            raise ValueError(f'Resume authorization identity mismatch: {key}')
+    if identities != expected_identity:
+        raise ValueError('Resume authorization identity mismatch')
     source_hash = workflow_module.candidate_source_hash(workdir)
     if authorization['candidate_source_sha256'] != source_hash:
         raise ValueError('Resume candidate source hash mismatch')

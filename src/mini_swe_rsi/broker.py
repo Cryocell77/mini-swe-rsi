@@ -58,25 +58,15 @@ CANDIDATE_JOB_STATES = ('registered', 'running', 'completed', 'failed', 'interru
 
 
 def validate_candidate_job_record(job_id, metadata, state):
-    """Validate one host candidate-job identity and persisted state.
-
-    This is deliberately side-effect free so the online recovery path can use
-    the same contract as the broker.  A valid record returns ``True``; invalid
-    records raise ``ValueError`` and must be rejected rather than retried.
-    """
+    """Validate a persisted candidate job before reuse or recovery."""
     if not isinstance(job_id, str) or not job_id or len(job_id) > 160:
         raise ValueError('Invalid candidate job id')
-    if not isinstance(metadata, dict):
+    if (not isinstance(metadata, dict)
+            or any(not isinstance(metadata.get(key), str) or not metadata[key]
+                   for key in CANDIDATE_JOB_METADATA_FIELDS)):
         raise ValueError('Candidate job metadata is incomplete')
-    missing = [key for key in CANDIDATE_JOB_METADATA_FIELDS if key not in metadata]
-    if missing:
-        raise ValueError('Candidate job metadata is incomplete: ' + ','.join(missing))
     if metadata.get('job_id') != job_id:
         raise ValueError('Candidate job metadata job_id differs')
-    for key in CANDIDATE_JOB_METADATA_FIELDS[:-1]:
-        value = metadata.get(key)
-        if not isinstance(value, str) or not value:
-            raise ValueError('Candidate job metadata field is invalid: ' + key)
     session_hash = metadata.get('session_token_sha256')
     if not isinstance(session_hash, str) or re.fullmatch(r'[0-9a-f]{64}', session_hash) is None:
         raise ValueError('Candidate job session token hash is invalid')
@@ -84,30 +74,23 @@ def validate_candidate_job_record(job_id, metadata, state):
         raise ValueError('Candidate job record is not an object')
     if state.get('job_id') != job_id:
         raise ValueError('Persisted candidate job id differs')
-    persisted_metadata = state.get('metadata')
-    if not isinstance(persisted_metadata, dict) or persisted_metadata != metadata:
+    if state.get('metadata') != metadata:
         raise ValueError('Persisted candidate job metadata differs')
     status = state.get('status')
     if status not in CANDIDATE_JOB_STATES:
         raise ValueError('Unknown candidate job status')
-    if status == 'completed' and not isinstance(state.get('result'), dict):
-        raise ValueError('Completed candidate job record has no result')
     result = state.get('result')
     error = state.get('error')
-    # Registered/running records intentionally need no completion fields.  An
-    # explicit JSON null is harmless, but a non-null field belonging to a
-    # different state is a malformed replay cache.
-    if status != 'completed' and result is not None:
-        raise ValueError('Non-completed candidate job record has a result')
-    if status == 'completed' and error is not None:
-        raise ValueError('Completed candidate job record has an error')
-    if status in ('registered', 'running') and error is not None:
-        raise ValueError('Active candidate job record has an error')
-    if status in ('failed', 'interrupted'):
-        if (not isinstance(error, dict)
-                or not isinstance(error.get('type'), str) or not error['type']
-                or not isinstance(error.get('message'), str)):
-            raise ValueError('Failed candidate job record has no error')
+    if status == 'completed':
+        valid = isinstance(result, dict) and error is None
+    elif status in ('failed', 'interrupted'):
+        valid = (result is None and isinstance(error, dict)
+                 and isinstance(error.get('type'), str) and bool(error['type'])
+                 and isinstance(error.get('message'), str))
+    else:
+        valid = result is None and error is None
+    if not valid:
+        raise ValueError('Candidate job fields differ from its status')
     return True
 
 
@@ -486,26 +469,14 @@ class Broker:
         if not isinstance(result, dict):
             return {'error': {'type': 'invalid_response'}}
         fault = Broker._response_fault(result)
-        if fault == 'invalid_response':
-            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
-            safe['error'] = {'type': fault}
-            return safe
-        if fault == 'finish_reason_error':
-            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
-            safe['error'] = {'type': fault}
-            return safe
-        if fault == 'upstream_error' and result.get('error') is None:
-            safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
-            safe['error'] = {'type': fault}
-            return safe
-        if result.get('error') is None:
+        if fault is None:
             return result
         safe = {key: result[key] for key in ('id', 'object', 'created', 'model') if key in result}
         error = result.get('error')
         if isinstance(error, dict):
             safe_error = {key: error[key] for key in ('type', 'code') if key in error}
         else:
-            safe_error = {'type': 'upstream_error'}
+            safe_error = {'type': fault}
         safe['error'] = safe_error
         return safe
 
@@ -542,7 +513,7 @@ class Broker:
                 s['inflight'] = False
             self._state_condition.notify_all()
 
-    def register_candidate_job(self, job_id, callback, metadata=None):
+    def register_candidate_job(self, job_id, callback, metadata):
         """Register one authenticated, idempotent candidate check.
 
         ``callback`` runs in the host process and owns all path resolution.
@@ -550,16 +521,6 @@ class Broker:
         restarted relay cannot silently point a job at another candidate.
         """
         self._raise_if_paused()
-        if not callable(callback):
-            raise TypeError('Candidate callback must be callable')
-        # Keep the default for the paused path: callers that attempt a
-        # registration while transport is paused must receive TransportPaused
-        # before metadata validation.  Once unpaused, registration requires
-        # the complete host identity.
-        metadata = {} if metadata is None else metadata
-        validate_candidate_job_record(
-            job_id, metadata,
-            {'job_id': job_id, 'metadata': metadata, 'status': 'registered'})
         with self.candidate_lock:
             prior = self.candidate_jobs.get(job_id)
             if prior is not None:
@@ -579,13 +540,12 @@ class Broker:
                 prior_status = 'interrupted'
                 prior_error = {'type':'OnlineInterrupted',
                                'message':'Candidate check was interrupted before completion; use a new revision'}
-            prior_result = (prior_state.get('result')
-                            if prior_state is not None and prior_status == 'completed' else None)
+            prior_result = prior_state.get('result') if prior_state is not None else None
             self.candidate_jobs[job_id] = {'callback': callback, 'metadata': metadata,
                                            'result': prior_result,
                                            'error': prior_error, 'running': False,
                                            'record': record}
-            status = ('completed' if prior_result is not None else prior_status or 'registered')
+            status = prior_status or 'registered'
             persisted = {'job_id': job_id, 'metadata': metadata, 'status': status}
             if prior_result is not None:
                 persisted['result'] = prior_result
@@ -606,19 +566,12 @@ class Broker:
         self.check_session(self.sessions[token], model_request=False)
         identity_keys = CANDIDATE_PUBLIC_IDENTITY_FIELDS
         bound = {k: job['metadata'][k] for k in identity_keys}
-        requested = {k: payload[k] for k in identity_keys if k in payload}
-        if any(key not in identity_keys for key in payload):
-            raise ModelError('Candidate check payload contains private or unknown identity')
-        # Every identity field registered by the host must be echoed by the
-        # caller.  A caller cannot omit a bound stage/round/candidate field or
-        # add an unregistered identity field and still reuse the job.
-        if set(requested) != set(bound) or requested != bound:
+        if payload != bound:
             raise ModelError('Candidate check identity differs from host registration')
         for key, actual in (('agent', agent), ('role', role)):
-            expected_identity = job['metadata'].get(key)
-            if expected_identity is not None and expected_identity != actual:
+            if job['metadata'][key] != actual:
                 raise ModelError('Candidate check execution identity differs from host registration')
-        expected_session_hash = job['metadata'].get('session_token_sha256')
+        expected_session_hash = job['metadata']['session_token_sha256']
         if hashlib.sha256(token.encode()).hexdigest() != expected_session_hash:
             raise ModelError('Candidate check session differs from host registration')
         with self.candidate_lock:
@@ -790,13 +743,11 @@ class Broker:
                 'output_capacity_source':'positive num_predict bounded by context' if num_predict > 0 else 'derived context-1 bound; provider has no independent output cap',
                 'num_predict':num_predict, 'cloud':False}
             selected = {**selected, 'digest':tag['digest'], 'context_window':context, 'max_output_tokens':output}
-        from .budget_policy import sica_budget
         try:
-            limits = sica_budget(selected['max_output_tokens'], selected['context_window'])
-        except (KeyError, ValueError) as exc:
+            self.context = ContextBudget(selected)
+        except ValueError as exc:
             raise ModelError('Endpoint must advertise valid context_window and max_output_tokens') from exc
         self.model = selected['id']
-        self.context = ContextBudget(selected)
         official = urllib.parse.urlparse(self.config['OPENAI_BASE_URL']).hostname == 'api.deepseek.com'
         self.prefix_protocol = 'deepseek-beta' if official and self.model.startswith('deepseek-') else None
         self.service_identity = {'capacity_source':'authenticated /models',
@@ -823,7 +774,7 @@ class Broker:
         return {'requested':requested, 'model':self.model,
                 'weights':selected.get('digest'), 'weights_verifiable':bool(selected.get('digest')),
                 'temperature_requested':0, 'thinking':'provider default', 'reasoning_effort':'provider default',
-                'max_tokens':limits['model_max_output_tokens'], 'model_concurrency':1}
+                'max_tokens':self.context.contract['output_tokens'], 'model_concurrency':1}
 
     def budget_limits(self):
         if self.context is None:
@@ -1113,7 +1064,7 @@ class Broker:
                             category = 'missing_usage'
                         else:
                             category = None
-                    if category is not None and self._pause_enabled(category, status):
+                    if category is not None:
                         self._pause_transport(s, category, event, status=status)
                     event['metrics'] = self._safe_metrics(s)
                     raise ModelError(reason) from None

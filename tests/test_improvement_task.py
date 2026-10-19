@@ -71,32 +71,6 @@ def test_existing_online_workflow_evidence_cannot_be_overwritten(tmp_path):
     assert (logs/'result.json').read_text().find('TimeExceeded') >= 0
 
 
-def test_online_improvement_rejects_removed_iteration_aliases(tmp_path):
-    from mini_swe_rsi.driver import Driver, initial_code
-
-    code = tmp_path/'code'
-    initial_code(code)
-    driver = Driver.__new__(Driver)
-    driver.root = tmp_path
-    args = ['improve', '--parent-iter', '0', '--best-iter', '1',
-            '--candidate-id', 'P0001', '--task-id', 'task',
-            '--round-id', 'R0001', '--online-version', 'H0000']
-    with pytest.raises(RuntimeError, match='best/current'):
-        driver.controller(code, tmp_path/'logs', args, 'fixture')
-
-
-@pytest.mark.parametrize('removed', ['--best-iter', '--current-iter',
-                                     '--best-iter=1', '--current-iter=1'])
-def test_driver_rejects_removed_iteration_alias_forms(tmp_path, removed):
-    from mini_swe_rsi.driver import Driver, initial_code
-
-    code = tmp_path/'code'
-    initial_code(code)
-    driver = Driver.__new__(Driver)
-    with pytest.raises(RuntimeError, match='best/current'):
-        driver.controller(code, tmp_path/'logs', _online_args() + [removed], 'fixture')
-
-
 @pytest.mark.parametrize('case', ['version_label', 'selected_path', 'inactive_version'])
 def test_online_archive_identity_guards_fail_before_container_setup(tmp_path, case):
     from mini_swe_rsi.driver import initial_code

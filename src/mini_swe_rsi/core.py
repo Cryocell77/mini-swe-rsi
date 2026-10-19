@@ -53,7 +53,7 @@ def attempt_result_paths(root, filename='host_result.json'):
 def read_regular_json(path):
     """Read a durable JSON record only when it is a regular, non-link file."""
     path = Path(path)
-    if not path.exists() or not path.is_file() or path.is_symlink():
+    if not path.is_file() or path.is_symlink():
         return None
     value = read(path)
     if not isinstance(value, dict):

@@ -174,7 +174,7 @@ def test_pause_intercepts_candidate_registration_and_tool(make_broker):
     broker.pause_event.set()
     try:
         with pytest.raises(ModelError, match='TransportPaused'):
-            broker.register_candidate_job('candidate:P1', lambda: {'passed': True})
+            broker.register_candidate_job('candidate:P1', lambda: {'passed': True}, None)
         broker.sessions[token]['solver'] = 'fixture'
         with pytest.raises(ModelError, match='TransportPaused'):
             broker.tool(token, {'command': 'true', 'generous_expected_duration': 5})

@@ -486,7 +486,7 @@ class OnlineLoop:
         if summary.exists() or summary.is_symlink():
             try:
                 old_summary = read_regular_json(summary)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 raise OnlineError('Task execution summary is corrupt') from exc
             if old_summary is None:
                 raise OnlineError('Task execution summary is not a regular file')
@@ -519,14 +519,14 @@ class OnlineLoop:
         for name in public_names:
             src = attempt/name
             dst = task_dir/name
-            if src.exists() and src.is_file() and not src.is_symlink() and src != dst:
+            if src.is_file() and not src.is_symlink() and src != dst:
                 shutil.copyfile(src, dst)
         activation_src = attempt/'activation.json'
         activation_dst = task_dir/'activation.json'
-        if activation_src.exists() and activation_src.is_file() and not activation_src.is_symlink():
+        if activation_src.is_file() and not activation_src.is_symlink():
             try:
                 activation = read(activation_src)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 raise OnlineError('Task activation evidence is corrupt') from exc
             if not isinstance(activation, dict):
                 raise OnlineError('Task activation evidence is invalid')
@@ -546,7 +546,7 @@ class OnlineLoop:
         refs = []
         for name in ('trace.txt','patch.diff','answer.txt','activation.json','execution_summary.json'):
             p = task_dir/name
-            if p.exists() and p.is_file():
+            if p.is_file():
                 refs.append(str(p.relative_to(self.root)))
         refs = self._validate_refs(refs)
         identity = self.active_version
@@ -689,7 +689,7 @@ class OnlineLoop:
             # host compatibility default after the workflow has reached step
             # 5.  The workflow writes this model-declared file atomically.
             declared_path = round_dir/'check_plan_declared.json'
-            if not declared_path.exists() or not declared_path.is_file() or declared_path.is_symlink():
+            if not declared_path.is_file() or declared_path.is_symlink():
                 raise CandidateRejected('Candidate check requested without a frozen step-3 check plan')
             declared_plan = read(declared_path)
             if isinstance(declared_plan, dict) and 'common_tasks' in declared_plan:
@@ -771,14 +771,7 @@ class OnlineLoop:
                     write(round_dir/'online_workflow_result.json', result)
 
     def _check_candidate(self, candidate, feedback, round_dir, proposal_id, identity):
-        if not isinstance(identity, dict):
-            raise OnlineError('Candidate check requires a complete host identity')
-        job_id = identity.get('job_id')
-        try:
-            validate_candidate_job_record(
-                job_id, identity, {'job_id': job_id, 'metadata': identity, 'status': 'registered'})
-        except ValueError as exc:
-            raise OnlineError('Candidate check host identity is incomplete') from exc
+        job_id = identity['job_id']
         expected_identity = _candidate_job_identity(
             feedback['task_id'], feedback['round_id'], feedback['version'], proposal_id)
         if any(identity.get(key) != value for key, value in expected_identity.items()):
@@ -791,7 +784,7 @@ class OnlineLoop:
                 if persisted is None:
                     raise ValueError('Candidate job record is not a regular file')
                 validate_candidate_job_record(job_id, identity, persisted)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 raise OnlineError('Persisted candidate job record is invalid') from exc
             status = persisted['status']
             if status == 'completed':
@@ -799,7 +792,7 @@ class OnlineLoop:
             elif status == 'running':
                 raise OnlineInterrupted('Candidate check was interrupted while running')
             elif status in ('failed', 'interrupted'):
-                error = persisted.get('error') or {}
+                error = persisted['error']
                 if status == 'failed' and error.get('type') == 'CandidateRejected':
                     raise CandidateRejected(error.get('message', 'candidate check rejected'))
                 raise OnlineInterrupted('Candidate check was interrupted before completion')
@@ -821,8 +814,6 @@ class OnlineLoop:
             finally:
                 if own_token:
                     self.broker.finish(token)
-        if not isinstance(result, dict):
-            raise CandidateRejected('Candidate check returned no host result')
         # Select one matching attempt for the score, activation and execution
         # evidence, including when task_retry succeeded on its second attempt.
         check_output = self._proposal_dir(int(proposal_id[1:]))/'check'
@@ -849,29 +840,27 @@ class OnlineLoop:
         private_path = self.root/'private/candidate_checks'/(job_id.replace('/', '_') + '.json')
         try:
             private_result = read_regular_json(private_path)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise CandidateRejected('Candidate private completion record is corrupt') from exc
         if private_result is None:
             raise CandidateRejected('Candidate check has no private host completion record')
         if (private_result.get('job_id') != job_id
                 or private_result.get('task_id') != feedback['task_id']
-                or str(private_result.get('check_revision')) != str(identity.get('check_revision', '1'))
-                or private_result.get('candidate_hash') is None
-                or private_result.get('execution_hash') is None):
+                or str(private_result.get('check_revision')) != identity['check_revision']):
             raise CandidateRejected('Candidate private completion identity differs')
         if private_result.get('parent_hash') != feedback['full_source_hash']:
             raise CandidateRejected('Candidate private parent identity differs')
         activation_path = selected_attempt/'activation.json'
         try:
             activation = read_regular_json(activation_path)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise CandidateRejected('Candidate activation evidence is corrupt') from exc
         if not isinstance(activation, dict) or activation.get('command') != 'benchmark':
             raise CandidateRejected('Candidate check lacks host activation evidence for a fresh process')
         task_execution = selected_attempt/'task_execution.json'
         try:
             task_execution_data = read_regular_json(task_execution)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise CandidateRejected('Candidate task execution evidence is corrupt') from exc
         if task_execution_data is None or not result_matches_source(
                 task_execution_data, before_full, error_type=CandidateRejected):
@@ -886,9 +875,8 @@ class OnlineLoop:
                 or private_result.get('execution_hash') != before_exec):
             raise CandidateRejected('Candidate private source hash differs from checked source')
         private_record = private_result.get('record')
-        public_record = result.get('record') if isinstance(result.get('record'), dict) else None
-        if (isinstance(private_record, dict) and isinstance(public_record, dict)
-                and private_record.get('score') != public_record.get('score')):
+        public_record = result['record']
+        if isinstance(private_record, dict) and private_record.get('score') != public_record.get('score'):
             raise CandidateRejected('Candidate private/public score records differ')
         check = self._public_check(result)
         snapshot = {'job_id': job_id, 'task_id': feedback['task_id'],
@@ -993,7 +981,7 @@ class OnlineLoop:
         # no legacy fallback for anonymous reports or generic role_end events.
         successful_role_ends = {0: [], 1: []}
         events_path = self._round_dir(int(feedback['round_id'][1:]))/'workflow_events.jsonl'
-        if events_path.exists() and events_path.is_file() and not events_path.is_symlink():
+        if events_path.is_file() and not events_path.is_symlink():
             for line in events_path.read_text(errors='replace').splitlines():
                 try:
                     event = json.loads(line)
@@ -1106,7 +1094,7 @@ class OnlineLoop:
                 raise OnlineError('Accepted decision has no candidate source')
             source_full, source_exec = tree_hash(source), execution_hash(source)
             candidate_identity = self._proposal_dir(int(proposal_id[1:]))/'candidate_identity.json'
-            if (not candidate_identity.exists() or not candidate_identity.is_file()
+            if (not candidate_identity.is_file()
                     or candidate_identity.is_symlink()):
                 raise OnlineError('Accepted decision has no candidate identity during recovery')
             ident = read(candidate_identity)
@@ -1115,7 +1103,7 @@ class OnlineLoop:
             if ident != expected_candidate_identity:
                 raise OnlineError('Candidate identity differs during recovery')
             check_path = self._round_dir(int(feedback['round_id'][1:]))/'candidate_check.json'
-            if not check_path.exists() or not check_path.is_file() or check_path.is_symlink():
+            if not check_path.is_file() or check_path.is_symlink():
                 raise OnlineError('Accepted decision has no candidate check during recovery')
             self._validate_candidate_snapshot(read(check_path), feedback, proposal_id, source,
                                               accepted=True)
@@ -1125,10 +1113,10 @@ class OnlineLoop:
             next_version = f"H{parent_number + 1:04d}"
             dest = self.root/'versions'/next_version/'agent_code'
             def verify_dest():
-                if not dest.exists() or not dest.is_dir():
+                if not dest.is_dir():
                     raise OnlineError('Accepted decision has no durable child source')
                 identity_path = dest.parent/'version_identity.json'
-                if not identity_path.exists() or not identity_path.is_file() or identity_path.is_symlink():
+                if not identity_path.is_file() or identity_path.is_symlink():
                     raise OnlineError('Accepted version identity is missing during recovery')
                 identity = read(identity_path)
                 expected_identity = {
@@ -1304,13 +1292,13 @@ class OnlineLoop:
             # not start a second model solution.  Without that record the
             # outcome is unknown and the online chain must pause.
             execution_evidence = [p for p in attempt_result_paths(task_dir, 'task_execution.json')
-                                  if p.exists() and p.is_file() and not p.is_symlink()]
+                                  if p.is_file() and not p.is_symlink()]
             if execution_evidence and self.driver is not None:
                 expected_full = tree_hash(self.active_code)
                 for evidence_path in execution_evidence:
                     try:
                         evidence = read(evidence_path)
-                    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    except (OSError, TypeError, ValueError) as exc:
                         self._save_state(status='interrupted')
                         raise OnlineInterrupted('Task execution evidence is corrupt') from exc
                     if not isinstance(evidence, dict):
@@ -1324,14 +1312,14 @@ class OnlineLoop:
                 for host_result in attempt_result_paths(task_dir):
                     try:
                         saved_host = read_regular_json(host_result)
-                    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    except (OSError, TypeError, ValueError) as exc:
                         self._save_state(status='interrupted')
                         raise OnlineInterrupted('Task host result is corrupt') from exc
                     if saved_host is None:
                         continue
                     rel = host_result.parent.relative_to(self.root)
                     ledger = self.root/'private/task_grading'/rel/'attempts.json'
-                    if not ledger.exists() or not ledger.is_file() or ledger.is_symlink():
+                    if not ledger.is_file() or ledger.is_symlink():
                         self._save_state(status='interrupted')
                         raise OnlineInterrupted('Task host result has no private grading ledger')
                 self.execute_task(index)
@@ -1363,7 +1351,7 @@ class OnlineLoop:
                     validate_candidate_job_record(
                         f'candidate:{state["current_round"]}:{state["current_proposal"]}',
                         persisted.get('metadata'), persisted)
-                except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                except (OSError, TypeError, ValueError) as exc:
                     raise OnlineError('Persisted candidate job record is invalid') from exc
                 metadata = persisted['metadata']
                 expected_metadata = _candidate_job_identity(
@@ -1371,8 +1359,8 @@ class OnlineLoop:
                     self.active_version, state['current_proposal'])
                 if any(metadata.get(key) != value for key, value in expected_metadata.items()):
                     raise OnlineError('Persisted candidate job identity differs during recovery')
-                if persisted.get('status') == 'failed':
-                    error = persisted.get('error') or {}
+                if persisted['status'] == 'failed':
+                    error = persisted['error']
                     if error.get('type') == 'CandidateRejected':
                         workflow = read(workflow_path)
                         summary = self._execution_summary(
@@ -1395,7 +1383,7 @@ class OnlineLoop:
                         return
                     self._save_state(status='interrupted')
                     raise OnlineInterrupted('Candidate check failed before durable completion')
-                if persisted.get('status') != 'completed' or not isinstance(persisted.get('result'), dict):
+                if persisted['status'] != 'completed':
                     self._save_state(status='interrupted')
                     raise OnlineInterrupted('Candidate check record is not durably completed')
                 if not check_path.exists():

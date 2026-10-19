@@ -20,7 +20,7 @@ _EXECUTION_ROOT_EXCLUSIONS = {
 def _digest(path, *, execution_only=False):
     """Hash a validated tree with the selected source identity rules."""
     root = Path(path)
-    if root.is_symlink() or not root.exists() or not root.is_dir():
+    if root.is_symlink() or not root.is_dir():
         raise ValueError(f'Source hash root must be an existing directory: {path}')
     digest = hashlib.sha256()
     for item in sorted(root.rglob('*')):

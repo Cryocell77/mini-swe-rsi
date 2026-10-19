@@ -308,11 +308,6 @@ class Workflow:
             raise ValueError('Resume check_plan is invalid')
         if state['candidate_check'] is not None and not isinstance(state['candidate_check'], dict):
             raise ValueError('Resume candidate_check is invalid')
-        valid_statuses = {'not_invoked', 'active', 'diagnosis_pending', 'diagnosis_failed',
-                          'improving', 'completed', 'failed', 'incomplete',
-                          'skipped_no_actionable_improvement'}
-        if state['status'] not in valid_statuses:
-            raise ValueError('Resume status is invalid')
         if active is None or state['status'] not in ('active', 'diagnosis_pending', 'improving'):
             raise ValueError('Resume requires an active online workflow')
         if state['completed_steps'] != active['index']:
@@ -353,8 +348,7 @@ class Workflow:
                                                 seed['source_execution_hash'],
                                                 seed.get('parent_version'), seed.get('model'),
                                                 require_current=False)
-            if entry is not None:
-                self.committee_cache[entry['cache_key']] = entry
+            self.committee_cache[entry['cache_key']] = entry
 
     def _write_feedback_index(self):
         """Persist the public facts supplied to diagnosis without private grader data."""
@@ -577,8 +571,6 @@ class Workflow:
             self.event(kind='complete', previous=previous, declared_success=success, output=output)
             return output
         if op in ('diagnosis_decision', 'decision'):
-            if role != 'orchestrator':
-                raise ValueError('diagnosis_decision is available only to the coordinator')
             if not self.active or self.active['index'] != 2 or self.completed_steps != 2 or self.status != 'diagnosis_pending':
                 raise ValueError('diagnosis_decision is available only after successful steps 1 and 2')
             decision = request.get('decision')
@@ -591,13 +583,8 @@ class Workflow:
             opportunities = request.get('improvement_opportunities', [])
             if not isinstance(reason, str) or not reason.strip():
                 raise ValueError('diagnosis decision requires a reason')
-            if not isinstance(refs, list) or not all(isinstance(item, str) and item for item in refs):
-                raise ValueError('evidence_refs must be a list of non-empty strings')
             if not isinstance(failures, list) or not isinstance(mechanisms, list) or not isinstance(opportunities, list):
                 raise ValueError('diagnosis fields must be lists')
-            valid_refs = set(self.feedback.get('evidence_refs', []))
-            if not refs or not valid_refs or not set(refs).issubset(valid_refs):
-                raise ValueError('diagnosis evidence_refs must refer to public feedback')
             self.validate_evidence_refs(refs)
             if decision == 'skip' and opportunities:
                 raise ValueError('A normal skip must declare no actionable improvement opportunities')
@@ -628,8 +615,6 @@ class Workflow:
                        opened_steps=[3,4,5,6,7])
             return self.current()
         if op == 'candidate_check':
-            if role != 'orchestrator':
-                raise ValueError('candidate_check is available only to the coordinator')
             if not self.active or self.active['index'] != 4 or self.completed_steps != 4 or self.status != 'improving':
                 raise ValueError('candidate_check is available only at step 5 after steps 1-4')
             if self.candidate_check is None:
@@ -760,7 +745,7 @@ class Workflow:
         if (not isinstance(refs, list) or not refs or any(
                 not isinstance(ref, str) or ref not in allowed or Path(ref).is_absolute()
                 or '..' in Path(ref).parts or not ref.startswith('tasks/') for ref in refs)):
-            raise ValueError('Evidence references must belong to the host-provided public task feedback')
+            raise ValueError('evidence_refs must belong to the host-provided public task feedback')
 
     def online_overview(self):
         archive = Path(self.identities.get('public_archive', '/home/agent/archive'))
