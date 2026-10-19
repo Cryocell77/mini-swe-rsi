@@ -28,7 +28,7 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-_SOURCE_HASH = runpy.run_path(str(ROOT / 'runtime/source_hash.py'))
+_SOURCE_HASH = runpy.run_path(str(ROOT / 'src/mini_swe_rsi/workflow/source_hash.py'))
 tree_hash = _SOURCE_HASH['tree_hash']
 execution_hash = _SOURCE_HASH['execution_hash']
 
@@ -147,7 +147,7 @@ def append_event(root, event):
 
 def improvement_contract():
     """Freeze the independent task renderer without changing the model protocol."""
-    sources = ROOT/'vendor/sica_workflow'
+    sources = ROOT/'src/mini_swe_rsi/workflow/sources'
     expected = read(ROOT/'upstream.lock.json')['sica']['workflow_files']
     actual = {p.name:digest(p) for p in sources.iterdir() if p.is_file()}
     if actual != {n:v['sha256'] for n,v in expected.items()}:
@@ -156,10 +156,10 @@ def improvement_contract():
     return {'version': 'sica-mini-improvement-v8',
             'limits': {'calls': None, 'seconds': None},
             'budget_policy': policy_contract(),
-            'renderer_sha256': digest(ROOT/'runtime/bridge.py'),
-            'upstream_task_sha256': digest(ROOT/'vendor/sica/agent_main.py'),
-            'workflow_sha256': digest(ROOT/'runtime/workflow.py'),
-            'source_hash_sha256': digest(ROOT/'runtime/source_hash.py'),
-            'check_plan_sha256': digest(ROOT/'runtime/check_plan.py'),
-            'relay_sha256': digest(ROOT/'runtime/relay.py'),
-            'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'vendor/sica_workflow').glob('*')) if p.is_file()}}
+            'renderer_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/bridge.py'),
+            'upstream_task_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py'),
+            'workflow_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/workflow.py'),
+            'source_hash_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/source_hash.py'),
+            'check_plan_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/check_plan.py'),
+            'relay_sha256': digest(ROOT/'src/mini_swe_rsi/workflow/relay.py'),
+            'workflow_sources': {p.name:digest(p) for p in sorted((ROOT/'src/mini_swe_rsi/workflow/sources').glob('*')) if p.is_file()}}

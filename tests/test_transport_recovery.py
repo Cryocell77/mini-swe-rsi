@@ -9,7 +9,7 @@ import pytest
 
 from mini_swe_rsi.core import ROOT
 
-sys.path.insert(0, str(ROOT / '.upstream/mini/src'))
+sys.path.insert(0, str(ROOT / 'src/mini_swe_rsi/harness/template'))
 
 
 def load_module(name, path):
@@ -19,8 +19,8 @@ def load_module(name, path):
     return module
 
 
-w = load_module('transport_recovery_workflow', 'runtime/workflow.py')
-b = load_module('transport_recovery_bridge', 'runtime/bridge.py')
+w = load_module('transport_recovery_workflow', 'src/mini_swe_rsi/workflow/workflow.py')
+b = load_module('transport_recovery_bridge', 'src/mini_swe_rsi/workflow/bridge.py')
 
 
 REF = 'tasks/t1/trace.txt'
@@ -201,7 +201,7 @@ def test_host_and_container_resume_prompt_bytes_match(tmp_path):
     make_active_resume_state(tmp_path)
     state = json.loads((tmp_path / 'workflow_state.json').read_text())
     authorization = {'state': state, 'candidate_source_sha256': 'candidate-source'}
-    kwargs = dict(upstream=ROOT / 'vendor/sica/agent_main.py',
+    kwargs = dict(upstream=ROOT / 'src/mini_swe_rsi/workflow/task/agent_main.py',
                   budget={'session_remaining_seconds': None}, task_id='t1', round_id='R0001', version='H0000', feedback='public facts')
     host_base = b.improvement_prompt(0, 'P0001', **kwargs)
     container_base = b.improvement_prompt(0, 'P0001', **kwargs)

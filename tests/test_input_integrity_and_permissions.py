@@ -11,7 +11,7 @@ from mini_swe_rsi.context_budget import ContextBudget, LOCK_PATH
 from mini_swe_rsi.core import ROOT, read
 from tests.event_helpers import broker_events
 
-spec = importlib.util.spec_from_file_location('permission_fixture', ROOT/'runtime/workflow.py')
+spec = importlib.util.spec_from_file_location('permission_fixture', ROOT/'src/mini_swe_rsi/workflow/workflow.py')
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 
@@ -120,10 +120,10 @@ def test_parameter_order_is_not_service_identity_drift():
 
 def test_original_completion_arguments_and_archive_defaults():
     import ast
-    tree=ast.parse((ROOT/'vendor/sica_workflow/sequential.py').read_text())
+    tree=ast.parse((ROOT/'src/mini_swe_rsi/workflow/sources/sequential.py').read_text())
     cls=next(n for n in ast.walk(tree) if isinstance(n,ast.ClassDef) and n.name=='SequentialReasoningStep')
     assert {n.target.id for n in cls.body if isinstance(n,ast.AnnAssign)}=={'success'}
-    tree=ast.parse((ROOT/'.upstream/sica/base_agent/src/tools/archive_tools.py').read_text())
+    tree=ast.parse((ROOT/'src/mini_swe_rsi/workflow/provenance/base_agent/src/tools/archive_tools.py').read_text())
     for name in ('BestProblems','WorstProblems'):
         cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==name)
         field=next(n.value for n in cls.body if isinstance(n,ast.AnnAssign) and n.target.id=='count')

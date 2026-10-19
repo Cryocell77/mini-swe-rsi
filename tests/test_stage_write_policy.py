@@ -10,7 +10,7 @@ import pytest
 from mini_swe_rsi.core import ROOT, read, write
 from mini_swe_rsi.stage_tools import StageTools, stage_permissions, tool_mounts
 
-spec = importlib.util.spec_from_file_location('stage_policy_workflow', ROOT/'runtime/workflow.py')
+spec = importlib.util.spec_from_file_location('stage_policy_workflow', ROOT/'src/mini_swe_rsi/workflow/workflow.py')
 w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
 
 

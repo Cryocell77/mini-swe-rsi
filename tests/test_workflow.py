@@ -6,7 +6,7 @@ import pytest
 
 from mini_swe_rsi.core import ROOT, improvement_contract, read
 
-spec = importlib.util.spec_from_file_location('workflow_fixture', ROOT/'runtime/workflow.py')
+spec = importlib.util.spec_from_file_location('workflow_fixture', ROOT/'src/mini_swe_rsi/workflow/workflow.py')
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 FEEDBACK = {'task_id': 'task', 'round_id': 'R0001',
@@ -72,9 +72,9 @@ def test_pinned_sources_reject_missing_extra_or_changed(tmp_path, monkeypatch, m
     import shutil
     from mini_swe_rsi import core
 
-    shutil.copytree(ROOT/'vendor/sica_workflow', tmp_path/'vendor/sica_workflow')
+    shutil.copytree(ROOT/'src/mini_swe_rsi/workflow/sources', tmp_path/'src/mini_swe_rsi/workflow/sources')
     shutil.copy(ROOT/'upstream.lock.json', tmp_path/'upstream.lock.json')
-    source = tmp_path/'vendor/sica_workflow/meta_improvement.py'
+    source = tmp_path/'src/mini_swe_rsi/workflow/sources/meta_improvement.py'
     if mutation == 'missing':
         source.unlink()
     elif mutation == 'extra':

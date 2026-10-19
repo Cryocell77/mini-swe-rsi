@@ -182,17 +182,19 @@ class OnlineLoop:
 
     def _control_manifest(self):
         """Freeze the code that interprets the online contract."""
-        files = [ROOT/'runtime/bridge.py', ROOT/'runtime/workflow.py', ROOT/'runtime/check_plan.py',
-                 ROOT/'runtime/relay.py', ROOT/'runtime/source_hash.py', ROOT/'vendor/sica/agent_main.py']
+        files = [ROOT/'src/mini_swe_rsi/workflow/bridge.py', ROOT/'src/mini_swe_rsi/workflow/workflow.py', ROOT/'src/mini_swe_rsi/workflow/check_plan.py',
+                 ROOT/'src/mini_swe_rsi/workflow/relay.py', ROOT/'src/mini_swe_rsi/workflow/source_hash.py', ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py']
         files += [ROOT/'src/mini_swe_rsi'/name for name in
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
-                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness_seed.py',
+                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness/seed.py',
                    'online_contract.py')]
         files += [ROOT/'upstream.lock.json']
         files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
                   ('mini-no-billing.patch', 'mini-no-billing.json', 'mini-online-slim.json')]
-        files += sorted((ROOT/'vendor/sica_workflow').glob('*'))
+        files += sorted((ROOT/'src/mini_swe_rsi/workflow/sources').glob('*'))
+        files += [p for p in sorted((ROOT/'src/mini_swe_rsi/evaluation').rglob('*'))
+                  if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc']
         return {'improvement': improvement_contract(),
                 'files': {str(p.relative_to(ROOT)): digest(p) for p in files if p.is_file()}}
 

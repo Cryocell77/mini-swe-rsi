@@ -11,15 +11,14 @@
 在仓库根目录执行：
 
 ```bash
-python3 scripts/bootstrap.py
 uv sync --locked
 uv venv .eval-venv
 uv pip install --python .eval-venv/bin/python -r evaluator.lock.txt
-uv pip install --python .eval-venv/bin/python --no-deps .upstream/swebench
+uv pip install --python .eval-venv/bin/python --no-deps .
 docker build -t mini-swe-rsi-runtime:0.1 runtime
 ```
 
-bootstrap 下载并校验上游源码，`.eval-venv` 用于独立评分。上游版本及依赖见 [upstream.lock.json](upstream.lock.json)、[uv.lock](uv.lock)、[容器依赖](runtime/requirements.lock) 和 [评分依赖](evaluator.lock.txt)。
+上游源码已集成在仓库内，安装时无需下载源码。`.eval-venv` 用于独立评分。来源版本及依赖见 [upstream.lock.json](upstream.lock.json)、[uv.lock](uv.lock)、[容器依赖](runtime/requirements.lock) 和 [评分依赖](evaluator.lock.txt)。
 
 ## 快速开始
 

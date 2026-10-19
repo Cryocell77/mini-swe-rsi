@@ -9,7 +9,7 @@ from mini_swe_rsi.online import OnlineError, OnlineLoop
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = runpy.run_path(str(ROOT / 'runtime/workflow.py'))
+WORKFLOW = runpy.run_path(str(ROOT / 'src/mini_swe_rsi/workflow/workflow.py'))
 BASELINE_FILES = {
     '__main__.py': 'print("entry")\n',
     'README.md': 'root docs\n',
@@ -80,7 +80,7 @@ def test_source_hash_module_is_frozen_in_online_control_manifest(tmp_path, monke
     (code / 'default.py').write_text('x = 1\n')
     loop = OnlineLoop(tmp_path / 'run', ('t1',), active_code=code.parents[1])
     original_digest = online.digest
-    source_hash_path = ROOT / 'runtime/source_hash.py'
+    source_hash_path = ROOT / 'src/mini_swe_rsi/workflow/source_hash.py'
     monkeypatch.setattr(
         online, 'digest',
         lambda path: '0' * 64 if path == source_hash_path else original_digest(path),

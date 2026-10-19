@@ -14,7 +14,7 @@ CANON = '```mswea_bash_command\n' + CMD + '\n```'
 
 @pytest.fixture
 def official_parser(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT/'.upstream/mini/src'))
+    monkeypatch.syspath_prepend(str(ROOT/'src/mini_swe_rsi/harness/template'))
     module = importlib.import_module('minisweagent.models.utils.actions_text')
     def parse(text):
         return module.parse_regex_actions(text, action_regex=r'```mswea_bash_command\s*\n(.*?)\n```',
@@ -82,7 +82,7 @@ def test_nonstop_native_tools_and_plain_prose_are_not_reinterpreted():
 
 
 def test_normalized_action_cannot_bypass_step_three_role_permissions(tmp_path,official_parser):
-    spec=importlib.util.spec_from_file_location('envelope_stage_workflow',ROOT/'runtime/workflow.py')
+    spec=importlib.util.spec_from_file_location('envelope_stage_workflow',ROOT/'src/mini_swe_rsi/workflow/workflow.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     delegated=[]
     flow=module.Workflow(tmp_path,lambda *args:delegated.append(args),feedback={'task_id':'t','evidence_refs':['tasks/t/trace.txt']})
@@ -173,7 +173,7 @@ def test_real_committee_payload_reaches_original_workflow_without_source_writes(
     import json
     fixtures=json.loads((ROOT/'tests/fixtures/committee_fence_responses.json').read_text())
     source=next(x['response'] for x in fixtures if x['call']==call)
-    spec=importlib.util.spec_from_file_location('real_committee_fence_workflow',ROOT/'runtime/workflow.py')
+    spec=importlib.util.spec_from_file_location('real_committee_fence_workflow',ROOT/'src/mini_swe_rsi/workflow/workflow.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     code=tmp_path/'candidate';code.mkdir();(code/'source.py').write_text('UNCHANGED = True\n')
     calls=[]

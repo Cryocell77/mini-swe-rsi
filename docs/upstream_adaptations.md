@@ -8,13 +8,15 @@
 | mini-swe-agent | `SWE-agent/mini-swe-agent` | `04d809ceab9df28f9adaed044884180159172930` | 初始 Harness 的 agent、model、environment、config 和 utils |
 | SWE-bench | `SWE-bench/SWE-bench` | `726c5461e2ef52d83cf1ea2107870a8bb3328d57` | 官方评分资产 |
 
-归档与文件摘要保存在 [upstream.lock.json](../upstream.lock.json)。[bootstrap.py](../scripts/bootstrap.py) 下载上游归档，校验后将使用的 SICA 文件同步至 `vendor/sica/` 和 `vendor/sica_workflow/`；mini 与 SWE-bench 源码位于 `.upstream/`。
+来源版本与原始文件摘要保存在 [upstream.lock.json](../upstream.lock.json)。所需源码已经纳入 `src/mini_swe_rsi/`，安装和测试无需运行下载脚本。
 
-SICA 的 MIT 许可证保留在 vendor 目录中，生成的 Harness 附带 mini 许可证。其余上游许可保留在下载的源码内。
+- `harness/template/minisweagent/`：锁定的 mini 源码模板；`harness/LICENSE.mini` 保留其许可证。
+- `workflow/task/` 和 `workflow/sources/`：SICA 任务、角色与七步定义原文，附 MIT 许可证。预算核对所需原文保存在 `workflow/provenance/`，仅供来源校验，不执行其中的上游 agent 或 provider。
+- `evaluation/swebench/`：SWE-bench 实现；包内导入改为 `mini_swe_rsi.evaluation.swebench`，数据集名称、镜像名称与评分配方保持原样。许可证位于 `evaluation/LICENSE.swebench`。
 
 ## H0000 的构建
 
-[driver.py](../src/mini_swe_rsi/driver.py) 从 mini-swe-agent 2.4.6 创建 H0000。[harness_seed.py](../src/mini_swe_rsi/harness_seed.py) 在副本上应用两项处理：
+[driver.py](../src/mini_swe_rsi/driver.py) 从 mini-swe-agent 2.4.6 创建 H0000。[seed.py](../src/mini_swe_rsi/harness/seed.py) 在副本上应用两项处理：
 
 1. 用 [mini-no-billing.patch](../src/mini_swe_rsi/assets/mini-no-billing.patch) 删除价格计算、金额累计及费用相关配置、模板变量和轨迹字段；修改前后的摘要记录在[补丁清单](../src/mini_swe_rsi/assets/mini-no-billing.json)。
 2. 按 [mini-online-slim.json](../src/mini_swe_rsi/assets/mini-online-slim.json) 移除独立 mini CLI、批量 runner 和附带 benchmark 配置。
@@ -27,6 +29,6 @@ SICA 的 MIT 许可证保留在 vendor 目录中，生成的 Harness 附带 mini
 
 所有角色调用 `.env` 中指定的同一个模型。候选使用现有依赖镜像，可以编辑源码、配置和测试，不能安装新依赖。数据来自固定清单，CLI 按开发题顺序选取前 N 题。
 
-[grader.py](../src/mini_swe_rsi/grader.py) 复用本地旧项目的评分适配代码，增加镜像身份校验、空补丁处理、超时分类和容器隔离。它调用 SWE-bench 官方评分资产；补丁相对任务镜像的初始 HEAD 提取，排除镜像准备提交带来的差异。
+[grader.py](../src/mini_swe_rsi/evaluation/grader.py) 复用本地旧项目的评分适配代码，增加镜像身份校验、空补丁处理、超时分类和容器隔离。它调用 SWE-bench 官方评分资产；补丁相对任务镜像的初始 HEAD 提取，排除镜像准备提交带来的差异。
 
 首次作答、候选复测和机制对照分别保存。执行规则与产物布局见 [RSI 运行机制](architecture.md)。

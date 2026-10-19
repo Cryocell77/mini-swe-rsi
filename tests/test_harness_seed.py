@@ -8,13 +8,13 @@ import sys
 
 import pytest
 
-from mini_swe_rsi import harness_seed
+from mini_swe_rsi.harness import seed as harness_seed
 from mini_swe_rsi.core import ROOT, digest, read, tree_hash
 from mini_swe_rsi.driver import initial_code
 
 
 def test_generated_package_removes_all_billing_while_preserving_upstream(tmp_path):
-    original = ROOT/'.upstream/mini/src/minisweagent'
+    original = ROOT/'src/mini_swe_rsi/harness/template/minisweagent'
     locked = read(ROOT/'upstream.lock.json')['mini']['files']
     first, second = tmp_path/'first', tmp_path/'second'
     initial_code(first)
@@ -150,7 +150,7 @@ def test_invalid_slim_manifest_never_publishes_partial_harness(tmp_path, monkeyp
     assert not list(tmp_path.glob('.harness-seed-*'))
 
 
-@pytest.mark.parametrize('name', ['src/mini_swe_rsi/harness_seed.py',
+@pytest.mark.parametrize('name', ['src/mini_swe_rsi/harness/seed.py',
     'src/mini_swe_rsi/assets/mini-no-billing.patch', 'src/mini_swe_rsi/assets/mini-no-billing.json',
     'src/mini_swe_rsi/assets/mini-online-slim.json'])
 def test_seed_implementation_is_frozen_for_recovery(tmp_path, monkeypatch, name):

@@ -16,14 +16,14 @@ from mini_swe_rsi.core import ROOT, improvement_contract, read
 from mini_swe_rsi.broker import Broker, ModelError
 from tests.event_helpers import broker_events
 
-w = runpy.run_path(str(ROOT/'runtime/workflow.py'))
-bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+w = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/workflow.py'))
+bridge = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))
 
 CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
 
 
 def selected():
-    return yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
+    return yaml.safe_load((ROOT/'src/mini_swe_rsi/harness/template/minisweagent/config/mini_textbased.yaml').read_text())
 
 
 def test_all_roles_use_original_system_core_user_and_selected_format_contract():
@@ -55,7 +55,7 @@ def test_all_roles_use_original_system_core_user_and_selected_format_contract():
 
 def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch):
     # Keep production roots, mapping their Path objects onto temporary fixtures only.
-    module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('read_fixture',ROOT/'runtime/workflow.py'))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('read_fixture',ROOT/'src/mini_swe_rsi/workflow/workflow.py'))
     module.__spec__.loader.exec_module(module)
     actual_path = module.Path
     candidate = tmp_path/'candidate'; archive = tmp_path/'archive'

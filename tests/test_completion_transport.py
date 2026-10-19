@@ -6,12 +6,12 @@ import pytest
 
 from mini_swe_rsi.core import ROOT
 
-sys.path.insert(0, str(ROOT / '.upstream/mini/src'))
+sys.path.insert(0, str(ROOT / 'src/mini_swe_rsi/harness/template'))
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.exceptions import Submitted
 
 
-spec = importlib.util.spec_from_file_location('completion_workflow_fixture', ROOT / 'runtime/workflow.py')
+spec = importlib.util.spec_from_file_location('completion_workflow_fixture', ROOT / 'src/mini_swe_rsi/workflow/workflow.py')
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 

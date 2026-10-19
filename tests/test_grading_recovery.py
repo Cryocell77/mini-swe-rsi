@@ -2,7 +2,7 @@ import pytest
 
 from mini_swe_rsi.core import tree_hash, write
 from mini_swe_rsi.driver import Driver, GradingUnavailable, InfrastructureError
-from mini_swe_rsi.grader import grading_failure_reason
+from mini_swe_rsi.evaluation.grader import grading_failure_reason
 
 
 def test_official_timeout_is_a_task_failure_not_an_infrastructure_retry():

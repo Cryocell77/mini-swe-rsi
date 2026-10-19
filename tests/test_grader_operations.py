@@ -5,7 +5,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from mini_swe_rsi import grader
+from mini_swe_rsi.evaluation import grader
 
 
 @pytest.mark.parametrize("operation", ["image", "inspect"])
@@ -81,8 +81,8 @@ def test_score_entrypoint_preserves_results_and_failure_classification(
         tmp_path, monkeypatch, outcome, completed, resolved, reason):
     # Execute the real grader entrypoint with a simulated official evaluator.
     modules = {}
-    for name in ("swebench", "swebench.harness", "swebench.harness.test_spec",
-                 "swebench.harness.test_spec.test_spec", "swebench.harness.run_evaluation"):
+    for name in ("mini_swe_rsi.evaluation.swebench", "mini_swe_rsi.evaluation.swebench.harness", "mini_swe_rsi.evaluation.swebench.harness.test_spec",
+                 "mini_swe_rsi.evaluation.swebench.harness.test_spec.test_spec", "mini_swe_rsi.evaluation.swebench.harness.run_evaluation"):
         modules[name] = ModuleType(name)
         modules[name].__path__ = []
         monkeypatch.setitem(sys.modules, name, modules[name])
@@ -118,8 +118,8 @@ def test_score_entrypoint_preserves_results_and_failure_classification(
         else:
             (logs / "run_instance.log").write_text("Scoring infrastructure unavailable")
 
-    modules["swebench.harness.test_spec.test_spec"].make_test_spec = make_spec
-    modules["swebench.harness.run_evaluation"].run_instance = run_instance
+    modules["mini_swe_rsi.evaluation.swebench.harness.test_spec.test_spec"].make_test_spec = make_spec
+    modules["mini_swe_rsi.evaluation.swebench.harness.run_evaluation"].run_instance = run_instance
     monkeypatch.setattr(grader, "direct_assets", lambda path: calls["assets"].append(path))
     monkeypatch.setattr(grader.docker, "from_env", lambda: client)
     monkeypatch.setattr(grader, "frozen_image", lambda *args: calls["frozen"].append(args))

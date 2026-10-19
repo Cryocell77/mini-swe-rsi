@@ -34,8 +34,8 @@ def _online_args(version='H0000'):
 
 
 def test_online_improvement_prompt_binds_task_round_and_version():
-    render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
-    prompt = render(2, 'P0001', ROOT/'vendor/sica/agent_main.py',
+    render = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['improvement_prompt']
+    prompt = render(2, 'P0001', ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py',
                     task_id='task-1', round_id='R0001', version='H0002',
                     feedback='Observed public failure')
     assert 'task-1' in prompt and 'R0001' in prompt and 'H0002' in prompt
@@ -43,13 +43,13 @@ def test_online_improvement_prompt_binds_task_round_and_version():
     assert 'Observed public failure' in prompt
     assert 'best performing agent' not in prompt
     contract = improvement_contract()
-    assert contract['renderer_sha256'] == hashlib.sha256((ROOT/'runtime/bridge.py').read_bytes()).hexdigest()
+    assert contract['renderer_sha256'] == hashlib.sha256((ROOT/'src/mini_swe_rsi/workflow/bridge.py').read_bytes()).hexdigest()
 
 
 def test_benchmark_uses_exact_prompt_file_without_improvement_additions():
     import ast
 
-    tree = ast.parse((ROOT/'runtime/bridge.py').read_text())
+    tree = ast.parse((ROOT/'src/mini_swe_rsi/workflow/bridge.py').read_text())
     main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
     branch = next(node for node in ast.walk(main) if isinstance(node, ast.If) and node.orelse
                   and ast.unparse(node.test) == "args.command == 'improve'")
@@ -115,7 +115,7 @@ def test_online_renderer_contract_change_is_rejected_before_runtime_setup(tmp_pa
 
 def _bridge_entry(monkeypatch, argv):
     import runpy
-    bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+    bridge = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))
     monkeypatch.setattr('sys.argv', ['bridge', *argv])
     # Identity validation must precede any model/agent setup and log creation.
     monkeypatch.setitem(bridge['main'].__globals__, 'budget_config',
@@ -186,7 +186,7 @@ def test_benchmark_entry_rejects_resume_authorization_without_model_setup(tmp_pa
     with pytest.raises(ValueError, match='does not support workflow restoration'):
         _bridge_entry(monkeypatch, argv)(str(tmp_path/'missing-entry'))
     assert not (tmp_path/'logs').exists()
-    bridge = runpy.run_path(str(ROOT/'runtime/bridge.py'))
+    bridge = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))
     assert bridge['validate_improvement_args'](
         SimpleNamespace(command='benchmark', resume_workflow=None)) is None
 

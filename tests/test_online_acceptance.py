@@ -28,7 +28,7 @@ from tests.event_helpers import broker_events
 
 
 _WORKFLOW_SPEC = importlib.util.spec_from_file_location("online_acceptance_workflow",
-                                                        ROOT / "runtime/workflow.py")
+                                                        ROOT / "src/mini_swe_rsi/workflow/workflow.py")
 _WORKFLOW = importlib.util.module_from_spec(_WORKFLOW_SPEC)
 _WORKFLOW_SPEC.loader.exec_module(_WORKFLOW)
 

@@ -120,9 +120,23 @@ JSON 对象不加外层 shell 引号，报告正文不带完成标记。其他�
 
 当前协议为 `mini-swe-rsi-online-v8` 和 `sica-mini-improvement-v8`，检查政策 revision 为 2。协议字段为 `protocol`，机制计划字段为 `test_path`、`args`、`timeout_seconds`。宿主任务记录使用完整源码 `code_hash`，执行摘要另用于比对实际受测代码。
 
-## 实现入口
+## 代码结构
+
+`src/` 下只提供 `mini_swe_rsi` 包：
+
+```text
+src/mini_swe_rsi/
+├── harness/       # 初始 Harness 模板、生成逻辑与许可证
+├── workflow/      # 七步状态机、桥接器、角色定义与来源记录
+├── evaluation/    # 隔离评分入口与项目内 SWE-bench 实现
+└── ...            # 在线调度、模型服务、恢复与报告
+```
+
+`harness/template/minisweagent/` 是生成候选的源码模板，不作为宿主顶层包加载。每代候选仍有独立的 `minisweagent` 包及源码身份。评分实现使用 `mini_swe_rsi.evaluation.swebench` 导入，不依赖外部同名安装包。根目录 `runtime/` 只保留容器 Dockerfile 和依赖锁。
+
+### 实现入口
 
 - [online.py](../src/mini_swe_rsi/online.py)：在线调度、检查与接任。
 - [driver.py](../src/mini_swe_rsi/driver.py)：容器执行与候选重测。
 - [broker.py](../src/mini_swe_rsi/broker.py)：模型服务、用量及会话。
-- [workflow.py](../runtime/workflow.py)：七步状态机与角色操作。
+- [workflow.py](../src/mini_swe_rsi/workflow/workflow.py)：七步状态机与角色操作。

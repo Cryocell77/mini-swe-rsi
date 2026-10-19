@@ -23,11 +23,11 @@ def test_full_source_hash_includes_comments_and_symlinks_rejected(tmp_path):
 
 def test_improvement_prompt_keeps_upstream_task(monkeypatch):
     import importlib.util
-    spec = importlib.util.spec_from_file_location('bridge', ROOT/'runtime/bridge.py')
+    spec = importlib.util.spec_from_file_location('bridge', ROOT/'src/mini_swe_rsi/workflow/bridge.py')
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
     original = Path.read_text
-    monkeypatch.setattr(Path, 'read_text', lambda self,*a,**kw: original(ROOT/'vendor/sica/agent_main.py')
+    monkeypatch.setattr(Path, 'read_text', lambda self,*a,**kw: original(ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py')
                         if str(self)=='/upstream/agent_main.py' else original(self,*a,**kw))
     prompt = bridge.improvement_prompt(1, 'agent_4')
     assert 'parent=agent_1; proposer=agent_1; candidate=agent_4' in prompt

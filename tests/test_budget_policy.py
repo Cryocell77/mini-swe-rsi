@@ -255,7 +255,7 @@ def test_pinned_upstream_budget_scopes_match_policy():
     from mini_swe_rsi.budget_policy import sica_budget
 
     policy = sica_budget(393216, 1048576)
-    sources = ROOT/'.upstream/sica'
+    sources = ROOT/'src/mini_swe_rsi/workflow/provenance'
     for path, expected in read(ROOT/'upstream.lock.json')['sica']['budget_files'].items():
         assert digest(sources/path) == expected
     base = ast.parse((sources/'base_agent/src/agents/base_agent.py').read_text())
@@ -265,7 +265,7 @@ def test_pinned_upstream_budget_scopes_match_policy():
     calls = [n for n in ast.walk(base) if isinstance(n, ast.Call)]
     continuation = next(k.value.value for n in calls for k in n.keywords if k.arg == 'max_continuations')
     assert continuation == policy['completion_max_requests'] == 5
-    coder = ast.parse((ROOT/'vendor/sica_workflow/coder.py').read_text())
+    coder = ast.parse((ROOT/'src/mini_swe_rsi/workflow/sources/coder.py').read_text())
     iterations = next(n.value.value for n in ast.walk(coder) if isinstance(n, ast.Assign)
                       and any(isinstance(t, ast.Name) and t.id == 'MAX_ITERATIONS' for t in n.targets))
     assert iterations == policy['role_iterations']['software_developer'] == 1000
@@ -277,9 +277,9 @@ def test_unbounded_observation_keeps_archived_harness_customization():
     from jinja2 import Template
     from mini_swe_rsi.core import ROOT
 
-    config = yaml.safe_load((ROOT/'.upstream/mini/src/minisweagent/config/mini_textbased.yaml').read_text())
+    config = yaml.safe_load((ROOT/'src/mini_swe_rsi/harness/template/minisweagent/config/mini_textbased.yaml').read_text())
     template = config['model']['observation_template'] + '\nCANDIDATE_CUSTOMIZATION'
-    adapted = runpy.run_path(str(ROOT/'runtime/bridge.py'))['unbounded_observation'](template)
+    adapted = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['unbounded_observation'](template)
     value = Template(adapted).render(output={'output':'x'*12000, 'returncode':0, 'exception_info':''})
     assert 'x'*12000 in value and 'CANDIDATE_CUSTOMIZATION' in value
     assert 'elided_chars' not in value

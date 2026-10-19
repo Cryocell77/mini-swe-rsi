@@ -9,7 +9,7 @@ from mini_swe_rsi.core import write
 from mini_swe_rsi.driver import Driver, InfrastructureError
 
 
-spec = importlib.util.spec_from_file_location('online_review_workflow', ROOT/'runtime/workflow.py')
+spec = importlib.util.spec_from_file_location('online_review_workflow', ROOT/'src/mini_swe_rsi/workflow/workflow.py')
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
 

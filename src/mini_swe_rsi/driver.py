@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import math
 import runpy
 import hashlib
@@ -71,13 +72,13 @@ def initial_code(destination):
     destination = Path(destination)
     if destination.exists():
         return
-    source = ROOT / '.upstream/mini/src/minisweagent'
+    source = ROOT / 'src/mini_swe_rsi/harness/template/minisweagent'
     if not source.is_dir():
-        raise RuntimeError('Run scripts/bootstrap.py to fetch pinned mini source')
+        raise RuntimeError('Integrated initial Harness source is missing')
     for name, expected in read(ROOT/'upstream.lock.json')['mini']['files'].items():
         if digest(source/name) != expected:
             raise RuntimeError('Pinned mini source changed: ' + name)
-    from .harness_seed import apply_seed_patch
+    from .harness.seed import apply_seed_patch
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Do not publish a partial H0 if verification or patch application fails.
     with tempfile.TemporaryDirectory(prefix='.harness-seed-', dir=destination.parent) as staging:
@@ -95,7 +96,7 @@ def initial_code(destination):
 def _seed_metadata(destination):
     (destination / '__init__.py').write_text('')
     (destination / '__main__.py').write_text('from bridge import main\nmain(__file__)\n')
-    shutil.copy(ROOT / '.upstream/mini/LICENSE.md', destination / 'LICENSE.mini')
+    shutil.copy(ROOT / 'src/mini_swe_rsi/harness/LICENSE.mini', destination / 'LICENSE.mini')
     (destination / 'agent_change_log.md').write_text('# H0\nPinned mini-swe-agent with reproducible accounting removal and online package trimming; no evolved strategies.\n')
     (destination / 'description.txt').write_text('H0: online mini-swe-agent without monetary accounting or standalone runners, fixed model and host execution adapter.\n')
     (destination / 'README.md').write_text(
@@ -122,7 +123,7 @@ class Driver:
             self.network = self.client.networks.create('mini-rsi-' + uuid.uuid4().hex[:12], internal=True)
             self.transport = self.client.networks.create('mini-rsi-transport-' + uuid.uuid4().hex[:12])
             self.relay = self.client.containers.create(self.image.id, ['python', '/runtime/relay.py'],
-                volumes={str(ROOT/'runtime'): {'bind': '/runtime', 'mode': 'ro'}},
+                volumes={str(ROOT/'src/mini_swe_rsi/workflow'): {'bind': '/runtime', 'mode': 'ro'}},
                 environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}',
                              # Every broker request owns its own session/tool
                              # deadline; the relay itself must not invent an
@@ -182,15 +183,15 @@ class Driver:
         selected_hash = tree_hash(code)
         logs = Path(logs).resolve()
         logs.mkdir(parents=True, exist_ok=True)
-        mounts = {str(ROOT / 'runtime'): {'bind': '/runtime', 'mode': 'ro'},
-                  str(ROOT / 'vendor/sica'): {'bind': '/upstream', 'mode': 'ro'},
+        mounts = {str(ROOT / 'src/mini_swe_rsi/workflow'): {'bind': '/runtime', 'mode': 'ro'},
+                  str(ROOT / 'src/mini_swe_rsi/workflow/task'): {'bind': '/upstream', 'mode': 'ro'},
                   str(logs): {'bind': '/logs', 'mode': 'rw'}}
         task_identity = None
         execution_limits = None
         if command_args[0] == 'improve':
             if (logs/'workflow_state.json').exists() and resume_checkpoint is None:
                 raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
-            mounts[str(ROOT/'vendor/sica_workflow')] = {'bind':'/workflow_sources','mode':'ro'}
+            mounts[str(ROOT/'src/mini_swe_rsi/workflow/sources')] = {'bind':'/workflow_sources','mode':'ro'}
             def argument(name):
                 try:
                     index = command_args.index(name)
@@ -228,15 +229,15 @@ class Driver:
                 if frozen_contract != contract:
                     raise RuntimeError('Frozen improvement task contract changed before launch')
             execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
-            workflow_module = SimpleNamespace(**runpy.run_path(str(ROOT/'runtime/workflow.py')))
-            render = runpy.run_path(str(ROOT/'runtime/bridge.py'))['improvement_prompt']
+            workflow_module = SimpleNamespace(**runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/workflow.py')))
+            render = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['improvement_prompt']
             render_kwargs = {'budget':execution_limits, 'workflow_module':workflow_module}
             render_kwargs.update(task_id=task_id, round_id=round_id, version=version)
             if prompt is not None and Path(prompt).exists():
                 render_kwargs['feedback'] = Path(prompt).read_text()
-            rendered = render(parent, candidate, ROOT/'vendor/sica/agent_main.py', **render_kwargs)
+            rendered = render(parent, candidate, ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py', **render_kwargs)
             if resume is not None:
-                rendered = runpy.run_path(str(ROOT/'runtime/bridge.py'))['resume_prompt'](rendered, resume)
+                rendered = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['resume_prompt'](rendered, resume)
             selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
             task_identity = {'template_manifest':workflow_module.template_manifest(selected_config), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
                              'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
@@ -381,7 +382,8 @@ class Driver:
         python = ROOT / '.eval-venv/bin/python'
         try:
             with (directory / 'process.log').open('w') as log:
-                subprocess.run([str(python), str(ROOT / 'src/mini_swe_rsi/grader.py'), str(directory / 'job.json')],
+                subprocess.run([str(python), '-m', 'mini_swe_rsi.evaluation.grader', str(directory / 'job.json')],
+                        env={**os.environ, 'PYTHONPATH': str(ROOT/'src')},
                         stdout=log, stderr=subprocess.STDOUT,
                         timeout=360, check=True)
             result = read(directory / 'result.json')
@@ -522,7 +524,7 @@ class Driver:
     def _mechanism_plan(plan):
         """Load and apply the shared mechanism plan normalizer."""
         try:
-            normalize = runpy.run_path(str(ROOT / 'runtime' / 'check_plan.py'))[
+            normalize = runpy.run_path(str(ROOT / 'src/mini_swe_rsi/workflow' / 'check_plan.py'))[
                 'normalize_mechanism_plan']
             return normalize(plan)
         except ValueError as exc:
