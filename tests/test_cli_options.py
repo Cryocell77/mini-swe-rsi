@@ -1,4 +1,6 @@
 """CLI option boundary regressions."""
+from pathlib import Path
+
 import pytest
 
 
@@ -7,13 +9,13 @@ def test_cli_keeps_explicit_checkpoint_and_removes_unused_resume():
 
     parser = build_parser()
     args = parser.parse_args([
-        'online', '--run', '/tmp/online', '--resume-checkpoint', '/tmp/resume.json'])
+        'online', '--data', '/tmp/explicit-dataset', '--run', '/tmp/online', '--resume-checkpoint', '/tmp/resume.json'])
     assert args.resume_checkpoint.name == 'resume.json'
     assert not hasattr(args, 'resume')
 
     for option in ('--resume', '--res'):
         with pytest.raises(SystemExit) as exc:
-            parser.parse_args(['online', '--run', '/tmp/online', option])
+            parser.parse_args(['online', '--data', '/tmp/explicit-dataset', '--run', '/tmp/online', option])
         assert exc.value.code == 2
 
 
@@ -36,9 +38,10 @@ def test_cli_run_relies_on_persisted_cursor_without_resume_argument(tmp_path, mo
 
     monkeypatch.setattr(online.OnlineLoop, 'from_environment', start)
     monkeypatch.setattr(report, 'build_online_report', lambda root: None)
-    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path / 'run')])
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--data', '/tmp/explicit-dataset', '--run', str(tmp_path / 'run')])
     cli.main()
 
+    assert seen['args'] == ((tmp_path/'run').resolve(), Path('/tmp/explicit-dataset'))
     assert seen['kwargs'] == {}
     assert 'resume' not in seen['kwargs']
 
@@ -48,7 +51,7 @@ def test_removed_billing_mode_is_rejected(option):
     from mini_swe_rsi.cli import build_parser
 
     with pytest.raises(SystemExit) as exc:
-        build_parser().parse_args(['online', '--run', '/tmp/online', option, 'subscription'])
+        build_parser().parse_args(['online', '--data', '/tmp/explicit-dataset', '--run', '/tmp/online', option, 'subscription'])
     assert exc.value.code == 2
 
 
@@ -68,8 +71,8 @@ def test_prepare_uses_evaluator_environment_without_starting_online(tmp_path, mo
 
 
 @pytest.mark.parametrize('args', [
-    ['online', '--run', '/tmp/run', '--dataset', 'fixture/dataset'],
-    ['online', '--run', '/tmp/run', '--revision', 'snapshot'],
+    ['online', '--data', '/tmp/explicit-dataset', '--run', '/tmp/run', '--dataset', 'fixture/dataset'],
+    ['online', '--data', '/tmp/explicit-dataset', '--run', '/tmp/run', '--revision', 'snapshot'],
     ['report', '--run', '/tmp/run', '--task-limit', '3'],
     ['prepare', '--dataset', 'fixture/dataset', '--data', '/tmp/data', '--run', '/tmp/run'],
 ])
@@ -78,3 +81,16 @@ def test_options_for_another_command_are_rejected(args):
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args(args)
     assert exc.value.code == 2
+
+
+def test_online_requires_data_before_runtime_setup(tmp_path, monkeypatch, capsys):
+    from mini_swe_rsi import cli, online
+    run = tmp_path/'run'
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(run)])
+    monkeypatch.setattr(online.OnlineLoop, 'from_environment',
+                        lambda *a, **k: pytest.fail('Missing --data reached runtime setup'))
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    assert '--data' in capsys.readouterr().err
+    assert not run.exists()

@@ -150,7 +150,7 @@ def test_online_cli_finalizer_uses_online_report(tmp_path, monkeypatch):
 
     monkeypatch.setattr(OnlineLoop, 'from_environment', lambda *a, **k: Loop())
     monkeypatch.setattr(report, 'build_online_report', lambda root: seen.append('online_report'))
-    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run'), '--task-limit', '3'])
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--data', '/tmp/explicit-dataset', '--run', str(tmp_path/'run'), '--task-limit', '3'])
     cli.main()
     assert seen == ['closed', 'online_report']
 
@@ -173,7 +173,7 @@ def test_successful_online_run_propagates_report_finalizer_value_error(tmp_path,
 
     monkeypatch.setattr(OnlineLoop, 'from_environment', lambda *a, **k: Loop())
     monkeypatch.setattr(report, 'build_online_report', report_fail)
-    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run')])
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--data', '/tmp/explicit-dataset', '--run', str(tmp_path/'run')])
     with pytest.raises(ValueError, match='report finalizer failure'):
         cli.main()
     assert seen == ['ran', 'closed']
@@ -193,7 +193,7 @@ def test_cli_preserves_interrupt_setup_signal_when_report_finalizer_fails(tmp_pa
     run = tmp_path/'run'
     monkeypatch.setattr(OnlineLoop, 'from_environment', start)
     monkeypatch.setattr(report, 'build_online_report', report_fail)
-    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(run)])
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--data', '/tmp/explicit-dataset', '--run', str(run)])
     with pytest.raises(signal):
         cli.main()
     assert not (run/'failure.json').exists()
@@ -302,7 +302,7 @@ def test_cli_preserves_online_startup_error_when_report_finalizer_fails(tmp_path
 
     monkeypatch.setattr(OnlineLoop, 'from_environment', start)
     monkeypatch.setattr(report, 'build_online_report', report_fail)
-    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--run', str(tmp_path/'run')])
+    monkeypatch.setattr('sys.argv', ['mini-swe-rsi', 'online', '--data', '/tmp/explicit-dataset', '--run', str(tmp_path/'run')])
     with pytest.raises(RuntimeError, match='startup contract failure'):
         cli.main()
 

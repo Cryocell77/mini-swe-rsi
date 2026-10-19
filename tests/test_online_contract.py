@@ -37,7 +37,7 @@ def test_unsupported_contract_fails_before_data_or_model_setup(tmp_path, monkeyp
     original = path.read_bytes()
     monkeypatch.setattr(online, 'Data', lambda *args: pytest.fail('Unexpected runtime setup'))
     with pytest.raises(OnlineError, match='protocol|common_tasks|policy'):
-        OnlineLoop.from_environment(run)
+        OnlineLoop.from_environment(run, tmp_path/'data')
     assert path.read_bytes() == original
     assert list(run.iterdir()) == [path]
 

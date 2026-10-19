@@ -94,7 +94,8 @@ def build_parser():
     single.add_argument('--version', help='original or a saved Vxxxxxx; omit for interactive selection')
     online = commands.add_parser('online', help='Run or continue online RSI', allow_abbrev=False)
     online.add_argument('--run', type=Path, required=True)
-    online.add_argument('--data', type=Path)
+    online.add_argument('--data', type=Path, required=True,
+                        help='Prepared dataset directory; required for new and resumed runs')
     online.add_argument('--split', help='Dataset split; defaults to the saved or manifest selection')
     online.add_argument('--resume-checkpoint', type=Path,
                         help='Host-private authorization for unfinished workflow restoration')

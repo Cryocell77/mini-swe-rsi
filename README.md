@@ -34,6 +34,8 @@ uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --sp
 
 See [Evaluation](#evaluation) for dataset preparation and [Data requirements](docs/architecture.md#data-requirements) for the directory format.
 
+`online --data PATH` is required for both new and resumed runs; there is no default dataset directory.
+
 `--task-limit N` selects the first N tasks in the split's original order. Omit it to run the entire split. If omitted, `--split` uses the manifest default. Use a separate `--run` directory for each experiment.
 
 ## Local single-task input

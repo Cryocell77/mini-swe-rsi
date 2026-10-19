@@ -60,7 +60,7 @@ data/
 
 现有的 `images/` 镜像元数据和 `preflight/` 记录也可保留：清单声明了预检证据时，加载器会核对摘要。它们不再是所有新数据集的必需文件，也不再要求固定 30/30/100 划分。
 
-未指定 `--data` 时，仍使用本地资产位置 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其默认 split 是 dev。新准备的数据使用所指定 split 作为默认值。
+新建和继续运行时均必须指定 `online --data PATH`，不再提供默认数据目录。新准备的数据使用所指定 split 作为默认值。
 
 ## 隔离与权限
 

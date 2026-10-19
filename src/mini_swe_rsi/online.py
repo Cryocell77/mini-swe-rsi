@@ -112,7 +112,7 @@ class OnlineLoop:
         self._load_or_initialize(active_code)
 
     @classmethod
-    def from_environment(cls, root, data_path=None, task_limit=None,
+    def from_environment(cls, root, data_path, task_limit=None,
                          resume_checkpoint=None, split=None):
         root = Path(root).resolve()
         # Earlier controls persisted an experiment-wide phase clock or an
@@ -130,7 +130,7 @@ class OnlineLoop:
             task_limit = existing_contract.get('task_limit')
         if split is None:
             split = existing_contract.get('data', {}).get('split')
-        data = Data(data_path, split=split) if data_path else Data(split=split)
+        data = Data(data_path, split=split)
         selected_tasks = freeze_task_selection(data, root, task_limit)
         data.freeze_images(root, selected_tasks)
         broker = Broker(root)

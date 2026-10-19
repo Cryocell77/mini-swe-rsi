@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = Path('/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated')
 
 
 def read(path):
@@ -91,7 +90,7 @@ def secrets():
 
 
 class Data:
-    def __init__(self, path=DATA, split=None):
+    def __init__(self, path, split=None):
         self.path = Path(path)
         self.manifest = read(self.path / 'manifest.json')
         if digest(self.path / 'raw.json') != self.manifest['raw_sha256']:

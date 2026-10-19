@@ -60,7 +60,7 @@ Only official linux/amd64 images for selected tasks are prepared. Local images a
 
 Existing `images/` metadata and `preflight/` records can be retained. When the manifest declares preflight evidence, the loader checks its hashes. These files are not required for all new datasets, and no fixed 30/30/100 split is required.
 
-Without `--data`, the local asset path remains `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`, whose default split is dev. Newly prepared datasets use the specified split as their default.
+`online --data PATH` is required for both new and resumed runs. There is no default dataset directory. Newly prepared datasets use the specified split as their default.
 
 ## Isolation and permissions
 

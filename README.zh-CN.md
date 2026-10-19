@@ -34,6 +34,8 @@ uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --sp
 
 数据准备方法见下面的[测评](#测评)。已有数据目录的格式见[数据要求](docs/architecture.zh-CN.md#数据要求)。
 
+新建和继续运行时均必须指定 `online --data PATH`，不再提供默认数据目录。
+
 `--task-limit N` 选择当前 split 原顺序的前 N 题，省略时运行整个 split。`--split` 省略时采用数据清单默认值。每次新实验使用独立的 `--run` 目录。
 
 ## 本地单题输入
