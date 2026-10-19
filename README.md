@@ -24,22 +24,69 @@ docker build -t mini-swe-rsi-runtime:0.1 runtime
 
 将 [.env.example](.env.example) 复制为 `.env`，填写服务地址、密钥和模型名。
 
-准备项目所需的数据目录后，先运行一题：
+准备数据后，先运行一题：
 
 ```bash
-uv run mini-swe-rsi online --run runs/online --data /path/to/data --task-limit 1
+uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --split test --task-limit 1
 ```
 
-`--data` 需要包含已批准的数据清单、原始数据、镜像元数据和预检记录。当前仅支持项目固定的数据资产；格式与默认位置见[数据要求](docs/architecture.md#数据要求)。
+数据准备方法见下面的[测评](#测评)。已有数据目录的格式见[数据要求](docs/architecture.md#数据要求)。
 
-`--task-limit N` 选择开发集原顺序的前 N 题，省略时运行全部开发题。每次新实验使用独立的 `--run` 目录。
+`--task-limit N` 选择当前 split 原顺序的前 N 题，省略时运行整个 split。`--split` 省略时采用数据清单默认值。每次新实验使用独立的 `--run` 目录。
+
+## 测评
+
+### 完整 SWE-bench Lite
+
+官方 [SWE-bench Lite](https://www.swebench.com/lite.html) 的 test split 包含 300 题。先从 Hugging Face 准备任务数据：
+
+```bash
+uv run mini-swe-rsi prepare \
+  --dataset SWE-bench/SWE-bench_Lite \
+  --split test \
+  --data data/swe-bench-lite
+```
+
+`prepare` 使用 `.eval-venv` 中的 datasets 库，保存原始任务、顺序和来源摘要；不调用模型，不下载任务镜像。需要指定数据版本时加 `--revision COMMIT`。目标数据目录必须尚不存在。
+
+然后运行完整 test split；不要添加 `--task-limit`：
+
+```bash
+uv run mini-swe-rsi online \
+  --run runs/lite-test \
+  --data data/swe-bench-lite \
+  --split test
+uv run mini-swe-rsi report --run runs/lite-test
+```
+
+开始前建议先完成上面的单题检查。完整测评必须使用新运行目录，不能扩大已冻结的单题运行范围。首次运行会为选中的任务准备相应官方 linux/amd64 镜像，并记录镜像摘要；完整 300 题需要相应的下载时间和磁盘空间。
+
+### 其他数据
+
+`--dataset` 也接受其他 SWE-bench 格式的 Hugging Face 数据集，或本地 JSON／JSONL 任务文件。例如：
+
+```bash
+uv run mini-swe-rsi prepare \
+  --dataset /path/to/tasks.jsonl \
+  --split test \
+  --data data/custom
+uv run mini-swe-rsi online --run runs/custom --data data/custom --split test
+```
+
+本地 JSON 应是任务对象列表，JSONL 每行一个任务。记录需包含 `instance_id`、`repo`、`base_commit`、`version`、`problem_statement`、`test_patch`、`FAIL_TO_PASS` 和 `PASS_TO_PASS`。仓库／版本必须被内置 SWE-bench 评分器支持，并有对应官方任务镜像；通用问答或任意代码数据不能直接使用这一评分入口。
+
+### 成绩如何统计
+
+报告的 `evaluation` 字段统计每题**首次作答**：`selected_tasks` 是计划题数，`scored_tasks` 是已评分题数，`resolved_tasks` 是通过数。全部选定题目评分结束后，`resolved_rate = resolved_tasks / selected_tasks`；未完成时为 null。候选复测与机制检查另行保存，不增加通过题数。
+
+这里执行的是逐题在线 RSI 测评，Harness 会在题目之间更新。使用 test split 不会将它变为固定 Harness 的独立测试成绩；对外报告时应注明在线更新方式、数据版本、任务顺序与模型设置。
 
 ## 查看结果与继续运行
 
 生成报告不需要模型服务：
 
 ```bash
-uv run mini-swe-rsi report --run runs/online
+uv run mini-swe-rsi report --run runs/lite-smoke
 ```
 
 报告写入 `online_report.md` 和 `online_report.json`，包含任务得分、候选接受／拒绝／跳过情况、模型调用和 token 用量。源码版本位于 `versions/`，宿主决定位于 `decisions/`。
@@ -47,7 +94,7 @@ uv run mini-swe-rsi report --run runs/online
 继续已有运行时使用相同的参数：
 
 ```bash
-uv run mini-swe-rsi online --run runs/online --data /path/to/data --task-limit 1
+uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --split test --task-limit 1
 ```
 
 已完成的任务不会重跑。原目录的题目范围、源码、模型和服务配置必须保持一致；已有模型工作流中断后需[显式恢复授权](docs/architecture.md#中断恢复)。

@@ -16,7 +16,7 @@ def test_ordered_selection_is_frozen_and_restart_stable(tmp_path):
     selected = freeze_task_selection(d, tmp_path, 20)
     assert selected == [f'dev-{i}' for i in range(20)]
     frozen = read(tmp_path/'online_task_selection.json')
-    assert frozen == {'ids': selected, 'task_limit': 20, 'source_ids': d.ids('dev')}
+    assert frozen == {'ids': selected, 'task_limit': 20, 'source_ids': d.ids('dev'), 'split': 'dev'}
     assert d.ids('dev') == [f'dev-{i}' for i in range(30)]
     assert freeze_task_selection(data(), tmp_path, 20) == selected
 
@@ -27,7 +27,7 @@ def test_default_selects_full_manifest_and_ignores_legacy_prefix_artifacts(tmp_p
     d = data()
     assert freeze_task_selection(d, tmp_path, None) == d.ids('dev')
     frozen = read(tmp_path/'online_task_selection.json')
-    assert frozen == {'ids': d.ids('dev'), 'task_limit': None, 'source_ids': d.ids('dev')}
+    assert frozen == {'ids': d.ids('dev'), 'task_limit': None, 'source_ids': d.ids('dev'), 'split': 'dev'}
     # The helper never consults or rewrites the removed prefix selection.
     assert read(tmp_path/'dev_selection.json')['count'] == 2
 

@@ -7,8 +7,10 @@ from mini_swe_rsi.core import Data, write
 
 def fixture_data():
     data = Data.__new__(Data)
-    data.ids = lambda split: [split]
-    data.image = lambda pid: {'image_id':'sha256:fixed-'+pid,'repo_digests':['frozen@sha256:'+pid]}
+    data.manifest = {'splits': {'dev':['dev'], 'val':['val'], 'test':['test']}}
+    data.images = {data.image_name(pid): {'image':data.image_name(pid),
+                   'image_id':'sha256:fixed-'+pid,'repo_digests':['frozen@sha256:'+pid]}
+                   for pid in ('dev', 'val', 'test')}
     return data
 
 
@@ -16,7 +18,7 @@ def test_inventory_rejects_changed_metadata_on_resume(tmp_path):
     data = fixture_data()
     data.freeze_images(tmp_path)
     data.freeze_images(tmp_path)
-    data.image = lambda pid: {'image_id':'sha256:changed'}
+    data.images[data.image_name('dev')]['image_id'] = 'sha256:changed'
     with pytest.raises(ValueError, match='across restart'):
         data.freeze_images(tmp_path)
 

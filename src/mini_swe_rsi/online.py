@@ -56,17 +56,18 @@ def _candidate_job_identity(task_id, round_id, parent_version, candidate):
 def freeze_task_selection(data, root, task_limit=None):
     """Freeze the unique ordered online task selection.
 
-    The selected ids are always an ordered prefix of the approved development
-    manifest; ``task_limit=None`` selects the complete manifest.  A restart may
+    The selected ids are always an ordered prefix of the selected dataset
+    split; ``task_limit=None`` selects the complete manifest.  A restart may
     repeat the same limit but can never reorder, widen, shrink or otherwise
     replace the frozen sequence.
     """
     root = Path(root)
     if task_limit is not None and (type(task_limit) is not int or task_limit < 1):
         raise OnlineError('Online task_limit must be a positive integer')
-    source_ids = list(data.ids('dev'))
+    split = getattr(data, 'split', 'dev')
+    source_ids = list(data.ids(split))
     selected = source_ids if task_limit is None else source_ids[:task_limit]
-    selection = {'ids': selected, 'task_limit': task_limit, 'source_ids': source_ids}
+    selection = {'ids': selected, 'task_limit': task_limit, 'source_ids': source_ids, 'split': split}
     path = root/'online_task_selection.json'
     if path.exists():
         saved = read(path)
@@ -112,7 +113,7 @@ class OnlineLoop:
 
     @classmethod
     def from_environment(cls, root, data_path=None, task_limit=None,
-                         resume_checkpoint=None):
+                         resume_checkpoint=None, split=None):
         root = Path(root).resolve()
         # Earlier controls persisted an experiment-wide phase clock or an
         # execution_scope/dev_selection prefix.  Those artifacts cannot be
@@ -127,9 +128,11 @@ class OnlineLoop:
             cls._validate_contract(existing_contract)
         if task_limit is None and 'task_limit' in existing_contract:
             task_limit = existing_contract.get('task_limit')
-        data = Data(data_path) if data_path else Data()
-        data.freeze_images(root)
+        if split is None:
+            split = existing_contract.get('data', {}).get('split')
+        data = Data(data_path, split=split) if data_path else Data(split=split)
         selected_tasks = freeze_task_selection(data, root, task_limit)
+        data.freeze_images(root, selected_tasks)
         broker = Broker(root)
         try:
             model_identity = broker.identity()
@@ -141,6 +144,7 @@ class OnlineLoop:
                 'model': model_identity,
                 'service': service_identity,
                 'data': {
+                    'split': data.split,
                     'manifest_sha256': digest(data.path / 'manifest.json'),
                     'raw_sha256': digest(data.path / 'raw.json'),
                     'image_inventory_sha256': digest(root / 'image_inventory.json'),

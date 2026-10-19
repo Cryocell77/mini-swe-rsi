@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -97,6 +98,14 @@ def build_online_report(root):
                         'skipped':decisions.get('skipped_no_actionable_improvement',0),
                         'diagnosis_failed':decisions.get('diagnosis_failed',0)},
               'online_events':events}
+    scores = [task.get('record', {}).get('score') for task in tasks]
+    scores = [score for score in scores if type(score) in (int, float) and math.isfinite(score)]
+    selected = len(config.get('tasks', [])) if config else len(tasks)
+    resolved = sum(score == 1 for score in scores)
+    complete = selected > 0 and len(scores) == selected
+    result['evaluation'] = {'selected_tasks': selected, 'scored_tasks': len(scores),
+                            'resolved_tasks': resolved, 'complete': complete,
+                            'resolved_rate': resolved / selected if complete else None}
     result.update(total_model_calls=usage['calls'], total_tokens=usage['tokens'],
                   usage=usage, usage_by_activity=by_activity,
                   token_accounting_complete=log_complete and usage['unmetered_calls'] == 0,
@@ -111,6 +120,8 @@ def build_online_report(root):
              f'Accepted: {decisions.get("accepted",0)}; rejected: {decisions.get("rejected",0)}; '
              f'skipped: {decisions.get("skipped_no_actionable_improvement",0)}.',
              f'Model calls: {usage["calls"]}; metered tokens: {usage["tokens"]}; unmetered calls: {usage["unmetered_calls"]}.',
+             f'Initial attempts: {resolved} resolved; {len(scores)}/{selected} scored.',
+             f'Resolved rate: {resolved / selected:.2%}.' if complete else 'Resolved rate: pending (incomplete evaluation).',
              'No general RSI benefit is inferred from these online checks.', '']
     for item in rounds:
         lines.append(f"{item.get('round_id')}: {item.get('decision')}"

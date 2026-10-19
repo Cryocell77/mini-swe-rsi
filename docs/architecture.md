@@ -44,21 +44,21 @@
 
 ## 数据要求
 
-`--data` 指向如下目录：
+用 `prepare` 从 Hugging Face 或本地 JSON／JSONL 创建数据目录。`manifest.json` 记录数据来源、原始文件摘要、各 split 的任务顺序和默认 split；`raw.json` 保存 SWE-bench 任务记录。任务数和 split 名称没有固定限制。
 
 ```text
 data/
 ├── manifest.json
-├── raw.json
-├── images/
-│   └── *.json
-└── preflight/
-    └── *.json
+└── raw.json
 ```
 
-项目校验清单摘要、原始数据摘要、镜像身份和预检证据。固定划分为 dev 30 题、val 30 题、test 100 题；在线流程只执行 dev。缺失任务镜像时，宿主按记录的不可变摘要拉取。
+`online --split NAME` 选择 split，`--task-limit N` 选择前 N 题。任务顺序和选择范围在运行目录的 `online_task_selection.json` 中冻结；同一运行不能更换 split、重排或扩充任务。原始数据或清单改变后，恢复也会拒绝继续。
 
-默认路径为 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。该路径是本地资产位置；在其他机器上需要准备相同资产，再通过 `--data` 指定。仓库没有通用数据集导入命令，任意 SWE-bench 下载不能直接替代这些文件。
+运行只准备选中任务的官方 linux/amd64 镜像，优先使用本地缓存，否则拉取镜像。解析得到的镜像 ID 与 registry digest 写入 `image_inventory.json`；恢复沿用该记录，不重新解析 latest 标签。
+
+现有的 `images/` 镜像元数据和 `preflight/` 记录也可保留：清单声明了预检证据时，加载器会核对摘要。它们不再是所有新数据集的必需文件，也不再要求固定 30/30/100 划分。
+
+未指定 `--data` 时，仍使用本地资产位置 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其默认 split 是 dev。新准备的数据使用所指定 split 作为默认值。
 
 ## 隔离与权限
 

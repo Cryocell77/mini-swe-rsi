@@ -9,7 +9,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = Path('/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated')
-MANIFEST_HASH = 'f3398c5087e1b2ea2e7ffeb5d2d0db7e69d912bb79d7bb9a0200aa737e1b6579'
 
 
 def read(path):
@@ -92,47 +91,82 @@ def secrets():
 
 
 class Data:
-    def __init__(self, path=DATA):
+    def __init__(self, path=DATA, split=None):
         self.path = Path(path)
-        if digest(self.path / 'manifest.json') != MANIFEST_HASH:
-            raise ValueError('Dataset manifest differs from the approved split')
         self.manifest = read(self.path / 'manifest.json')
         if digest(self.path / 'raw.json') != self.manifest['raw_sha256']:
             raise ValueError('Raw dataset hash mismatch')
-        self.rows = {r['instance_id']: r for r in read(self.path / 'raw.json')}
+        records = read(self.path / 'raw.json')
+        self.rows = {}
+        required = ('instance_id', 'repo', 'base_commit', 'version',
+                    'problem_statement', 'test_patch', 'FAIL_TO_PASS', 'PASS_TO_PASS')
+        for row in records:
+            if (not isinstance(row, dict) or any(key not in row for key in required)
+                    or not isinstance(row['instance_id'], str) or not row['instance_id']
+                    or '/' in row['instance_id'] or '\\' in row['instance_id']
+                    or row['instance_id'] in ('.', '..')
+                    or row['instance_id'] in self.rows):
+                raise ValueError('Invalid or duplicate SWE-bench task record')
+            self.rows[row['instance_id']] = row
         splits = self.manifest['splits']
-        if [len(splits[k]) for k in ('dev', 'val', 'test')] != [30, 30, 100]:
-            raise ValueError('Split coverage mismatch')
-        flat = sum(splits.values(), [])
-        if len(flat) != len(set(flat)):
-            raise ValueError('Overlapping splits')
-        self.images = {r['image'].split('.')[-1].split(':')[0]: r
-                       for r in map(read, (self.path / 'images').glob('*.json'))}
-        evidence = {digest(p): p for p in (self.path/'preflight').glob('*.json')}
-        for task_id in flat:
-            expected = self.manifest['eligibility']['evidence'][task_id]
-            if expected not in evidence or not read(evidence[expected]).get('passed'):
-                raise ValueError('Eligibility evidence changed or missing: ' + task_id)
+        flat = [task for tasks in splits.values() for task in tasks]
+        if len(flat) != len(set(flat)) or not set(flat).issubset(self.rows):
+            raise ValueError('Dataset splits contain repeated or unknown task ids')
+        self.split = split or self.manifest.get('default_split', 'dev')
+        if self.split not in splits or not splits[self.split]:
+            raise ValueError(f'Dataset has no nonempty split {self.split!r}')
+        self.images = {row['image']: row
+                       for row in map(read, (self.path / 'images').glob('*.json'))}
+        eligibility = self.manifest.get('eligibility', {}).get('evidence', {})
+        if eligibility:
+            evidence = {digest(p): p for p in (self.path/'preflight').glob('*.json')}
+            for task_id, expected in eligibility.items():
+                if expected not in evidence or not read(evidence[expected]).get('passed'):
+                    raise ValueError('Eligibility evidence changed or missing: ' + task_id)
 
     def ids(self, split):
         return list(self.manifest['splits'][split])
 
-    def image(self, task_id):
-        matches = [r for r in self.images.values()
-                   if task_id.replace('__', '_1776_') in r['image']]
-        if len(matches) != 1:
-            raise ValueError(f'No unique frozen image for {task_id}')
-        return matches[0]
+    @staticmethod
+    def image_name(task_id):
+        encoded = task_id.lower().replace('__', '_1776_')
+        return f'swebench/sweb.eval.x86_64.{encoded}:latest'
 
-    def freeze_images(self, root):
-        """Bind mutable old-project metadata to this experiment and prior scoring jobs."""
+    def image(self, task_id):
+        name = self.image_name(task_id)
+        if name not in self.images:
+            import docker
+            client = docker.from_env()
+            try:
+                image = client.images.get(name)
+            except docker.errors.ImageNotFound:
+                image = client.images.pull(name, platform='linux/amd64')
+            if image.attrs['Architecture'] != 'amd64' or not image.attrs.get('RepoDigests'):
+                raise ValueError('Task image must have an amd64 registry digest: ' + task_id)
+            self.images[name] = {'image': name, 'image_id': image.id,
+                                 'architecture': 'amd64', 'platform': 'linux/x86_64',
+                                 'repo_digests': image.attrs['RepoDigests']}
+        return self.images[name]
+
+    def freeze_images(self, root, tasks=None):
+        """Freeze only selected images; reuse their digests without resolving mutable tags."""
         root = Path(root)
-        inventory = {pid:self.image(pid) for split in ('dev','val','test') for pid in self.ids(split)}
+        tasks = list(tasks) if tasks is not None else [
+            task for split in self.manifest['splits'] for task in self.ids(split)]
         path = root/'image_inventory.json'
         if path.exists():
-            if read(path) != inventory:
+            inventory = read(path)
+            if set(inventory) != set(tasks):
                 raise ValueError('Frozen image inventory changed across restart')
+            for task in tasks:
+                name = self.image_name(task)
+                known = self.images.get(name)
+                if (inventory[task].get('image') != name
+                        or (known is not None and known != inventory[task])):
+                    raise ValueError('Frozen image inventory changed across restart')
+                self.images[name] = inventory[task]
             return
+        inventory = {task:self.image(task) for task in tasks}
         for job_file in (root/'private/grading').glob('*/job.json'):
             job = read(job_file)
             if job.get('frozen_image') != inventory[job['task']['instance_id']]:

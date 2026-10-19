@@ -11,6 +11,16 @@ from .core import write
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == 'prepare':
+        from .core import ROOT, command
+        import os
+        command_args = [ROOT/'.eval-venv/bin/python', '-m', 'mini_swe_rsi.evaluation.prepare',
+                        '--dataset', args.dataset, '--data', args.data, '--split', args.split or 'test']
+        if args.revision:
+            command_args.extend(['--revision', args.revision])
+        print(command(command_args, timeout=None,
+                      env={**os.environ, 'PYTHONPATH': str(ROOT/'src')}), end='')
+        return
     root = args.run.resolve()
     root.mkdir(parents=True, exist_ok=True)
     with (root/'.lock').open('w') as lock:
@@ -34,6 +44,7 @@ def main():
             from .online import OnlineLoop
             online_kwargs = {key:value for key, value in (
                 ('task_limit', args.task_limit),
+                ('split', args.split),
                 ('resume_checkpoint', args.resume_checkpoint))
                 if value is not None}
             loop = OnlineLoop.from_environment(root, args.data, **online_kwargs)
@@ -60,14 +71,23 @@ def main():
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description='Pinned online mini-swe-agent RSI runs', allow_abbrev=False)
-    parser.add_argument('command', choices=['online', 'report'])
-    parser.add_argument('--run', type=Path, required=True)
-    parser.add_argument('--data', type=Path)
-    parser.add_argument('--resume-checkpoint', type=Path,
-                        help='Explicit host-private authorization for pre-check online workflow restoration')
-    parser.add_argument('--task-limit', type=int,
-                        help='Freeze an explicit online development-prefix length (for example 3 or 20)')
+        description='Online mini-swe-agent RSI runs and SWE-bench data preparation', allow_abbrev=False)
+    commands = parser.add_subparsers(dest='command', required=True)
+    online = commands.add_parser('online', help='Run or continue online RSI', allow_abbrev=False)
+    online.add_argument('--run', type=Path, required=True)
+    online.add_argument('--data', type=Path)
+    online.add_argument('--split', help='Dataset split; defaults to the saved or manifest selection')
+    online.add_argument('--resume-checkpoint', type=Path,
+                        help='Host-private authorization for unfinished workflow restoration')
+    online.add_argument('--task-limit', type=int,
+                        help='Run the first N tasks of the selected split; omit for the complete split')
+    report = commands.add_parser('report', help='Generate an offline report', allow_abbrev=False)
+    report.add_argument('--run', type=Path, required=True)
+    prepare = commands.add_parser('prepare', help='Prepare a SWE-bench dataset', allow_abbrev=False)
+    prepare.add_argument('--dataset', required=True, help='Hugging Face dataset id or local JSON/JSONL file')
+    prepare.add_argument('--data', type=Path, required=True, help='New output dataset directory')
+    prepare.add_argument('--split', default='test')
+    prepare.add_argument('--revision', help='Hugging Face dataset revision')
     return parser
 
 
