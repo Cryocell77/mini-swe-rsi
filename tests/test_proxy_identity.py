@@ -13,7 +13,7 @@ from tests.event_helpers import broker_events
 @pytest.fixture
 def proxy(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(
-        OPENAI_BASE_URL='http://127.0.0.1:8317/v1', OPENAI_API_KEY='fixture', LOCAL_LLM_MODEL='qfmodel'))
+        OPENAI_BASE_URL='http://127.0.0.1:8317/v1', OPENAI_API_KEY='fixture', LLM_MODEL_NAME='qfmodel'))
     broker = Broker(tmp_path)
     selected = {'id': 'qfmodel', 'owned_by': 'qoder'}
     catalog = [{'slug': 'qfmodel', 'context_window': 180000, 'max_context_window': 180000,
@@ -102,7 +102,7 @@ def test_workbuddy_uses_the_same_authenticated_capacity_contract(proxy):
 def test_obsolete_billing_environment_is_ignored(tmp_path, monkeypatch):
     from mini_swe_rsi.core import secrets
     monkeypatch.setattr('mini_swe_rsi.core.ROOT', tmp_path)
-    base = 'OPENAI_BASE_URL=http://127.0.0.1/v1\nOPENAI_API_KEY=fixture\nLOCAL_LLM_MODEL=qfmodel\n'
+    base = 'OPENAI_BASE_URL=http://127.0.0.1/v1\nOPENAI_API_KEY=fixture\nLLM_MODEL_NAME=qfmodel\n'
     (tmp_path/'.env').write_text(base+'RSI_BILLING_MODE=subscription\n')
     expected = secrets()
     assert 'RSI_BILLING_MODE' not in expected

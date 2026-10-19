@@ -55,7 +55,7 @@ def test_bound_completion_rejects_wrong_stale_names_and_ids(tmp_path):
 
 @pytest.fixture
 def audited_broker(tmp_path, monkeypatch):
-    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture',LOCAL_LLM_MODEL='fixture'))
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='fixture',LLM_MODEL_NAME='fixture'))
     context=ContextBudget({'context_window':65536,'max_output_tokens':65535})
     context.enable_verified_text_audit(read(LOCK_PATH))
     broker=Broker(tmp_path,context);broker.model='fixture'

@@ -66,7 +66,7 @@ def test_validate_candidate_job_record_rejects_missing_identity_and_status(mutat
 def test_registration_requires_explicit_metadata_but_pause_stays_first(tmp_path, monkeypatch):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture",
+        "LLM_MODEL_NAME": "fixture",
     })
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                        "max_output_tokens": 2048}))
@@ -83,7 +83,7 @@ def test_registration_requires_explicit_metadata_but_pause_stays_first(tmp_path,
 def test_persisted_running_record_becomes_interrupted_and_is_not_replayed(tmp_path, monkeypatch):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture",
+        "LLM_MODEL_NAME": "fixture",
     })
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                        "max_output_tokens": 2048}))
@@ -117,7 +117,7 @@ def test_registration_rejects_invalid_persisted_record_without_overwriting(
         tmp_path, monkeypatch, case):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture",
+        "LLM_MODEL_NAME": "fixture",
     })
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                        "max_output_tokens": 2048}))
@@ -173,7 +173,7 @@ def test_registration_rejects_invalid_persisted_record_without_overwriting(
 def test_empty_exception_message_is_persisted_and_not_replayed(tmp_path, monkeypatch):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture",
+        "LLM_MODEL_NAME": "fixture",
     })
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                        "max_output_tokens": 2048}))
@@ -214,7 +214,7 @@ def test_empty_exception_message_is_persisted_and_not_replayed(tmp_path, monkeyp
 def test_candidate_payload_rejection_never_runs_or_completes_the_job(tmp_path, monkeypatch):
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture",
+        "LLM_MODEL_NAME": "fixture",
     })
     broker = Broker(tmp_path, context=ContextBudget({"context_window": 32768,
                                                    "max_output_tokens": 2048}))

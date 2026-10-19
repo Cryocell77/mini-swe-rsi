@@ -19,7 +19,7 @@ CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
 @pytest.mark.skipif(os.environ.get('RUN_DOCKER_TESTS') != '1', reason='Explicit Docker integration test')
 def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                     OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
+                     OPENAI_API_KEY='private-real-key', LLM_MODEL_NAME='fixture'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixture'
     seen = []
@@ -87,7 +87,7 @@ def test_two_archived_agents_load_and_never_mount_private_data(tmp_path, monkeyp
 @pytest.mark.skipif(os.environ.get('RUN_DOCKER_TESTS') != '1', reason='Explicit Docker integration test')
 def test_controller_deadline_stops_unresponsive_archived_process(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                     OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
+                     OPENAI_API_KEY='private-real-key', LLM_MODEL_NAME='fixture'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixture'
     driver = Driver(tmp_path, None, broker)
@@ -116,7 +116,7 @@ def test_real_bridge_preserves_failure_artifacts_and_exits_nonzero(tmp_path, mon
     from mini_swe_rsi.broker import ModelError
     from mini_swe_rsi.core import tree_hash
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                     OPENAI_API_KEY='private-real-key', LOCAL_LLM_MODEL='fixture'))
+                     OPENAI_API_KEY='private-real-key', LLM_MODEL_NAME='fixture'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixture'
     def fail(token, payload, *identity):

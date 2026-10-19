@@ -10,7 +10,7 @@ from mini_swe_rsi.broker import Broker, ModelError
 
 def test_no_global_deadline_and_bounded_task_session_serialize_without_infinity(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
-        OPENAI_BASE_URL='http://fixture/v1',OPENAI_API_KEY='fixture',LOCAL_LLM_MODEL='fixture'))
+        OPENAI_BASE_URL='http://fixture/v1',OPENAI_API_KEY='fixture',LLM_MODEL_NAME='fixture'))
     from mini_swe_rsi.context_budget import ContextBudget
     broker = Broker(tmp_path, context=ContextBudget({'context_window':65536,'max_output_tokens':8192}))
     broker.model = 'fixture'

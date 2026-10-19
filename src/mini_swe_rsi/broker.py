@@ -666,7 +666,7 @@ class Broker:
 
     def identity(self):
         models = self.remote('/models')['data']
-        requested = self.config['LOCAL_LLM_MODEL']
+        requested = self.config['LLM_MODEL_NAME']
         selected = next((m for m in models if m['id'] == requested), None)
         if selected is None and ':' not in requested.rsplit('/', 1)[-1]:
             selected = next((m for m in models if m['id'] == requested + ':latest'), None)

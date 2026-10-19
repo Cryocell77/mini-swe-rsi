@@ -18,7 +18,7 @@ CAPS = dict(id='deepseek-flash', context_window=1048576, max_output_tokens=39321
 @pytest.fixture
 def broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
-        OPENAI_BASE_URL='https://api.deepseek.com', OPENAI_API_KEY='private-fixture', LOCAL_LLM_MODEL='deepseek-flash'))
+        OPENAI_BASE_URL='https://api.deepseek.com', OPENAI_API_KEY='private-fixture', LLM_MODEL_NAME='deepseek-flash'))
     instance = Broker(tmp_path)
     instance.remote = lambda path: {'data':[CAPS]}
     instance.identity()
@@ -41,13 +41,21 @@ def endpoint(broker, responses):
     return requests
 
 
-def test_alias_and_conflicting_model_names(tmp_path, monkeypatch):
+def test_model_configuration_uses_llm_model_name(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.core.ROOT', tmp_path)
     (tmp_path/'.env').write_text('OPENAI_BASE_URL=https://fixture\nOPENAI_API_KEY=fixture\nLLM_MODEL_NAME=deepseek-flash\n')
-    assert secrets()['LOCAL_LLM_MODEL'] == 'deepseek-flash'
-    with (tmp_path/'.env').open('a') as file:
-        file.write('LOCAL_LLM_MODEL=different\n')
-    with pytest.raises(ValueError, match='Conflicting model names'):
+    assert secrets() == {'OPENAI_BASE_URL': 'https://fixture',
+                         'OPENAI_API_KEY': 'fixture', 'LLM_MODEL_NAME': 'deepseek-flash'}
+
+
+@pytest.mark.parametrize('model_value', [None, ''])
+def test_missing_model_name_is_rejected(tmp_path, monkeypatch, model_value):
+    monkeypatch.setattr('mini_swe_rsi.core.ROOT', tmp_path)
+    text = 'OPENAI_BASE_URL=https://fixture\nOPENAI_API_KEY=fixture\n'
+    if model_value is not None:
+        text += f'LLM_MODEL_NAME={model_value}\n'
+    (tmp_path/'.env').write_text(text)
+    with pytest.raises(ValueError, match='Missing model configuration'):
         secrets()
 
 
@@ -66,7 +74,7 @@ def test_remote_identity_never_uses_qwen_tokenizer(broker):
 @pytest.fixture
 def ollama_broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
-        OPENAI_BASE_URL='http://fixture/v1', OPENAI_API_KEY='private-fixture', LOCAL_LLM_MODEL='qwen35-4b-agent'))
+        OPENAI_BASE_URL='http://fixture/v1', OPENAI_API_KEY='private-fixture', LLM_MODEL_NAME='qwen35-4b-agent'))
     instance = Broker(tmp_path)
     data = {'/models':{'data':[{'id':'qwen35-4b-agent:latest'}]},
             '/api/version':{'version':'fixture'},

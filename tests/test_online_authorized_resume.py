@@ -87,7 +87,7 @@ def test_real_controller_restores_stage_and_preserves_candidate_bytes(tmp_path, 
     endpoint=fixture.FixtureModel()
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:{
         'OPENAI_BASE_URL':endpoint.url,'OPENAI_API_KEY':'fixture-only',
-        'LOCAL_LLM_MODEL':'fixture-model'})
+        'LLM_MODEL_NAME':'fixture-model'})
     root=tmp_path/'run'
     broker=Broker(root,context=ContextBudget({'context_window':65536,'max_output_tokens':4096}))
     broker.model='fixture-model';broker.service_identity={'ollama':{'cloud':False}}

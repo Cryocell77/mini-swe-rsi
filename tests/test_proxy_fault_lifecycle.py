@@ -31,7 +31,7 @@ def make_broker(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: {
         'OPENAI_BASE_URL': 'https://fixture/v1',
         'OPENAI_API_KEY': 'private-key',
-        'LOCAL_LLM_MODEL': 'fixed',
+        'LLM_MODEL_NAME': 'fixed',
     })
 
     def factory(policy):

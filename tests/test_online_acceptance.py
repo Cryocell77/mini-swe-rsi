@@ -302,7 +302,7 @@ def test_candidate_check_relay_is_idempotent_concurrent_and_preserves_metrics(tm
     monkey = pytest.MonkeyPatch()
     monkey.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1", "OPENAI_API_KEY": "fixture",
-        "LOCAL_LLM_MODEL": "fixture"})
+        "LLM_MODEL_NAME": "fixture"})
     root = tmp_path / "broker"
     broker = Broker(root, context=ContextBudget({"context_window": 32768,
                                                  "max_output_tokens": 2048}))

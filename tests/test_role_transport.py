@@ -82,7 +82,7 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
 
 
 def test_status_rejections_and_generic_error_do_not_inherit_old_terminal_reason(tmp_path,monkeypatch):
-    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LLM_MODEL_NAME='fixture'))
     context = ContextBudget(CAPABILITIES)
     context.enable_verified_text_audit(read(LOCK_PATH))
     broker=Broker(tmp_path,context=context);broker.model='fixture'
@@ -143,7 +143,7 @@ def test_actual_fourth_run_actions_are_rejected_without_rewriting(tmp_path):
 
 
 def test_expired_tool_has_controlled_reason_without_execution(tmp_path,monkeypatch):
-    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LOCAL_LLM_MODEL='fixture'))
+    monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LLM_MODEL_NAME='fixture'))
     broker=Broker(tmp_path,context=ContextBudget(CAPABILITIES))
     broker.service_identity = {'ollama': {'cloud': False, 'verified': True}}
     token=broker.session('editor',solver='fixture')

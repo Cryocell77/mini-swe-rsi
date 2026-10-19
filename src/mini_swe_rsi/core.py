@@ -84,11 +84,7 @@ def command(args, timeout=60, **kwargs):
 def secrets():
     from dotenv import dotenv_values
     env = dotenv_values(ROOT / '.env')
-    names = {env[k] for k in ('LOCAL_LLM_MODEL', 'LLM_MODEL_NAME') if env.get(k)}
-    if len(names) > 1:
-        raise ValueError('Conflicting model names in .env')
-    env['LOCAL_LLM_MODEL'] = next(iter(names), None)
-    required = ['OPENAI_BASE_URL', 'OPENAI_API_KEY', 'LOCAL_LLM_MODEL']
+    required = ['OPENAI_BASE_URL', 'OPENAI_API_KEY', 'LLM_MODEL_NAME']
     if any(not env.get(k) for k in required):
         raise ValueError('Missing model configuration in .env')
     config = {k: env[k] for k in required}

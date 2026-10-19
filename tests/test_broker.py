@@ -14,7 +14,7 @@ CAPABILITIES = {'context_window': 32768, 'max_output_tokens': 2048}
 
 def test_model_and_limits_are_host_owned(tmp_path, monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                      OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
+                      OPENAI_API_KEY='private-key', LLM_MODEL_NAME='fixed'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixed'
     received = []
@@ -53,7 +53,7 @@ def test_context_error_is_non_retryable_for_official_client(tmp_path, monkeypatc
     import httpx
     from openai import OpenAI
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                      OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
+                      OPENAI_API_KEY='private-key', LLM_MODEL_NAME='fixed'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixed'
     broker.opener = type('OverBudget', (), {'open': lambda *a, **k: io.BytesIO(json.dumps(
@@ -76,7 +76,7 @@ def test_finish_waits_for_inflight_usage_accounting(tmp_path, monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda: dict(OPENAI_BASE_URL='https://fixture/v1',
-                      OPENAI_API_KEY='private-key', LOCAL_LLM_MODEL='fixed'))
+                      OPENAI_API_KEY='private-key', LLM_MODEL_NAME='fixed'))
     broker = Broker(tmp_path, context=ContextBudget(CAPABILITIES))
     broker.model = 'fixed'
     entered, release = threading.Event(), threading.Event()

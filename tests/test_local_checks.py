@@ -124,7 +124,7 @@ def test_real_loop_stops_before_oom_and_next_tool_can_read_saved_prefix(tmp_path
     from mini_swe_rsi.stage_tools import StageTools
 
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
-        OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='fixture', LOCAL_LLM_MODEL='fixture'))
+        OPENAI_BASE_URL='https://fixture/v1', OPENAI_API_KEY='fixture', LLM_MODEL_NAME='fixture'))
     client = docker.from_env()
     driver = SimpleNamespace(client=client, image=client.images.get('mini-swe-rsi-runtime:0.1'), running=[])
     from mini_swe_rsi.driver import initial_code

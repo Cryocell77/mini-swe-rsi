@@ -23,21 +23,7 @@ bootstrap 按 [upstream.lock.json](upstream.lock.json) 下载并校验固定上�
 
 数据默认位于 `/Users/maxwell/Documents/mini-swe-rsi-old/data/swe-bench-lite-x86-recovery-validated`。其他位置通过 `--data PATH` 指定，但必须具有相同的已批准清单、原始数据和镜像库存；不能直接换成任意 SWE-bench 数据集。在线按固定开发集的原顺序执行，缺失任务镜像时按不可变摘要恢复。
 
-## 模型配置
-
-在仓库根目录创建未纳入 Git 的 `.env`：
-
-```dotenv
-OPENAI_BASE_URL=https://your-service.example/v1
-OPENAI_API_KEY=your-api-key
-LOCAL_LLM_MODEL=your-model-id
-```
-
-`LLM_MODEL_NAME` 可替代 `LOCAL_LLM_MODEL`；两者同时设置时必须相同。所有角色使用同一模型，凭据仅由宿主读取。
-
-启动时从认证服务元数据冻结模型身份、上下文和输出容量；不提供隐式容量默认值。支持的元数据适配包括 DeepSeek、Ollama、SenseNova 以及本地 Qoder / WorkBuddy 代理。代理声明的模型名不代表底层权重已被核验。无匹配本地 tokenizer 时由服务执行上下文上限，宿主审核真实 usage，不把字符数当作 token。
-
-运行记录 token、调用次数和耗时，不计算美元费用，不设置费用阈值，也不要求服务提供价格。
+首次运行前，将 [.env.example](.env.example) 复制为仓库根目录的 `.env` 并填写实际值；`.env` 不纳入 Git。
 
 ## 运行与报告
 

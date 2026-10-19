@@ -280,7 +280,7 @@ def test_two_candidate_generations_load_in_distinct_real_processes(tmp_path, mon
     monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
         "OPENAI_BASE_URL": endpoint.url,
         "OPENAI_API_KEY": "fixture-only-key",
-        "LOCAL_LLM_MODEL": "fixture-model"})
+        "LLM_MODEL_NAME": "fixture-model"})
     root = tmp_path / "docker-run"
     context = ContextBudget({"context_window": 32768, "max_output_tokens": 2048})
     broker = Broker(root, context=context)
@@ -400,7 +400,7 @@ def test_online_loop_docker_full_candidate_relay_and_skip_path(tmp_path, monkeyp
         monkeypatch.setattr("mini_swe_rsi.broker.secrets", lambda: {
             "OPENAI_BASE_URL": endpoint.url,
             "OPENAI_API_KEY": "fixture-only-key",
-            "LOCAL_LLM_MODEL": "fixture-model"})
+            "LLM_MODEL_NAME": "fixture-model"})
         root = tmp_path / "online-loop"
         context = ContextBudget({"context_window": 65536, "max_output_tokens": 4096})
         broker = Broker(root, context=context)
