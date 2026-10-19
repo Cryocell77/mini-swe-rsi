@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-基于 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 和 [SICA](https://github.com/MaximeRobeyns/self_improving_coding_agent) 的在线 RSI 框架：让 agent 在解题后修改自己的 Harness，再通过独立检查决定是否采用新版本。整个过程使用同一个模型。
+以 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 为初始 Harness 的在线 RSI 框架：让 agent 在解题后修改自己的 Harness，再通过独立检查决定是否采用新版本。整个过程使用同一个模型。
 
 每轮先完成一道编程任务，再分析执行轨迹。支持 SWE-bench 测评和本地项目的自由文本任务。诊断支持改进时，agent 设计方案、修改代码、提交候选；宿主重测候选，通过后由新版本继续下一题。没有可执行改进时，直接进入下一题。
 

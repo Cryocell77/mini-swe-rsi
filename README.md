@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-An online RSI framework built on [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) and [SICA](https://github.com/MaximeRobeyns/self_improving_coding_agent). After solving a task, the agent can modify its own Harness. Independent host checks decide whether to adopt the candidate. All roles use the same model.
+An online RSI framework with [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) as the initial Harness. After solving a task, the agent can modify its own Harness. Independent host checks decide whether to adopt the candidate. All roles use the same model.
 
 Each round starts with a coding task, either from SWE-bench or a local project with a free-text request. The agent analyzes its execution trace, designs and implements an improvement when warranted, and submits a candidate. The host tests the candidate before using it on the next task. If there is no actionable improvement, the loop moves on.
 
