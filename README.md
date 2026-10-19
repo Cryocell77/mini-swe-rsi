@@ -1,14 +1,16 @@
 # mini-swe-rsi
 
-基于 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 和 [SICA](https://github.com/MaximeRobeyns/self_improving_coding_agent) 的在线 RSI 框架：让 agent 在解题后修改自己的 Harness，再通过独立检查决定是否采用新版本。整个过程使用同一个模型。
+English | [简体中文](README.zh-CN.md)
 
-每轮先完成一道编程任务，再分析执行轨迹。支持 SWE-bench 测评和本地项目的自由文本任务。诊断支持改进时，agent 设计方案、修改代码、提交候选；宿主重测候选，通过后由新版本继续下一题。没有可执行改进时，直接进入下一题。
+An online RSI framework built on [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) and [SICA](https://github.com/MaximeRobeyns/self_improving_coding_agent). After solving a task, the agent can modify its own Harness. Independent host checks decide whether to adopt the candidate. All roles use the same model.
 
-## 安装
+Each round starts with a coding task, either from SWE-bench or a local project with a free-text request. The agent analyzes its execution trace, designs and implements an improvement when warranted, and submits a candidate. The host tests the candidate before using it on the next task. If there is no actionable improvement, the loop moves on.
 
-需要 Python 3.12、[uv](https://github.com/astral-sh/uv) 和 Docker。ARM 主机还需支持运行 linux/amd64 容器。
+## Installation
 
-在仓库根目录执行：
+Requires Python 3.12, [uv](https://github.com/astral-sh/uv), and Docker. SWE-bench evaluation on ARM hosts also requires support for linux/amd64 containers.
+
+Run from the repository root:
 
 ```bash
 uv sync --locked
@@ -18,25 +20,25 @@ uv pip install --python .eval-venv/bin/python --no-deps .
 docker build -t mini-swe-rsi-runtime:0.1 runtime
 ```
 
-上游源码已集成在仓库内，安装时无需下载源码。`.eval-venv` 用于独立评分。来源版本及依赖见 [upstream.lock.json](upstream.lock.json)、[uv.lock](uv.lock)、[容器依赖](runtime/requirements.lock) 和 [评分依赖](evaluator.lock.txt)。
+Upstream source is included in this repository; no source download is needed during installation. `.eval-venv` runs independent evaluation. Versions and dependencies are recorded in [upstream.lock.json](upstream.lock.json), [uv.lock](uv.lock), the [container requirements](runtime/requirements.lock), and the [evaluator requirements](evaluator.lock.txt).
 
-## 快速开始
+## Quick start
 
-将 [.env.example](.env.example) 复制为 `.env`，填写服务地址、密钥和模型名。
+Copy [.env.example](.env.example) to `.env` and fill in the service URL, API key, and model name.
 
-准备数据后，先运行一题：
+Prepare a dataset, then run one task:
 
 ```bash
 uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --split test --task-limit 1
 ```
 
-数据准备方法见下面的[测评](#测评)。已有数据目录的格式见[数据要求](docs/architecture.md#数据要求)。
+See [Evaluation](#evaluation) for dataset preparation and [Data requirements](docs/architecture.md#data-requirements) for the directory format.
 
-`--task-limit N` 选择当前 split 原顺序的前 N 题，省略时运行整个 split。`--split` 省略时采用数据清单默认值。每次新实验使用独立的 `--run` 目录。
+`--task-limit N` selects the first N tasks in the split's original order. Omit it to run the entire split. If omitted, `--split` uses the manifest default. Use a separate `--run` directory for each experiment.
 
-## 本地单题输入
+## Local single-task input
 
-指定代码目录和验收命令，启动后输入需求：
+Specify a source directory and a verification command, then enter your request:
 
 ```bash
 uv run mini-swe-rsi single \
@@ -44,31 +46,31 @@ uv run mini-swe-rsi single \
   --check 'python -m unittest discover -s tests -v'
 ```
 
-代码会复制到隔离容器的 `/testbed`，原目录不会被修改。运行目录和版本库必须放在 `--workspace` 之外；不要把本项目根目录直接作为输入而沿用根目录下的默认保存路径。默认镜像 `mini-swe-rsi-runtime:0.1` 支持 Python 标准库和 unittest，但不包含 pytest。其他项目用 `--image IMAGE` 指定包含 bash、git 和项目依赖的本地 Linux 镜像。容器无法联网安装依赖。
+The source is copied into `/testbed` in an isolated container. The original directory is unchanged. Keep the run directory and version store outside `--workspace`; using this repository itself as the workspace requires an external store and run path. The default `mini-swe-rsi-runtime:0.1` image supports the Python standard library and unittest, but does not include pytest. For other projects, use `--image IMAGE` to select a local Linux image containing bash, git, and the project dependencies. Containers cannot access the network to install dependencies.
 
-如果已有单题晋升版本，CLI 会**先询问原始版本或晋升版本，再询问编程任务**。选择晋升版本后按编号从新到旧列出，可输入完整编号，例如 `V000003`；直接回车选择最新版本。原始版本始终来自仓库集成的初始 Harness。
+When saved single-task promotions exist, the CLI asks you to **select the original or a promoted Harness before entering the task**. Promoted versions are listed newest first. Enter a full version number such as `V000003`, or press Enter to select the latest. The original version always comes from the integrated initial Harness.
 
-![单题版本选择演示](docs/images/single-input.gif)
+![Single-task version selection demo](docs/images/single-input.gif)
 
-*交互演示使用示例版本数据，未调用模型。*
+*The demo uses example version data and does not call a model. Its prompts are in Simplified Chinese.*
 
-脚本调用可显式给出版本和需求，跳过交互：
+For scripts, pass the version and request explicitly to skip the prompts:
 
 ```bash
 uv run mini-swe-rsi single \
   --workspace /path/to/project \
   --check 'python -m unittest discover -s tests -v' \
   --version original \
-  --prompt '修复空输入时的解析错误，并补充回归测试'
+  --prompt 'Fix parsing of empty input and add regression tests'
 ```
 
-`--version V000003` 使用指定晋升版本。`--store PATH` 指定独立版本库，默认 `runs/single-input/`；单题晋升版本保存在其中的 `versions/Vxxxxxx/`，每次执行记录保存在 `executions/`。它们与 SWE-bench 测评版本互不混用。`--run PATH` 可指定尚不存在的运行目录；每条新需求使用新目录。已保存版本带有来源、父版本和源码摘要；框架代码变化后不兼容的版本会被拒绝加载。
+Use `--version V000003` to select a saved promotion. `--store PATH` sets the independent version store, which defaults to `runs/single-input/`. Promoted single-task Harnesses live in `versions/Vxxxxxx/` within that store; execution records live in `executions/`. They are separate from SWE-bench evaluation versions. `--run PATH` selects a run directory that must not already exist. Use a new directory for each request. Saved versions include their origin, parent, and source hash. Versions incompatible with changed framework code are rejected.
 
-### 独立验收与结果
+### Independent verification and results
 
-每次验收都从相同的输入快照启动新容器，应用本次解题补丁后，在 `/testbed` 执行 `--check`。退出码为 0 表示通过，默认超时 300 秒，可用 `--check-timeout SECONDS` 调整。通过任务验收并不保证晋升：仍需完成现有 RSI 诊断、改进及候选检查；没有可执行改进时跳过，不保存新版本。单题模式的候选必须通过任务验收，才有资格晋升。
+Each verification starts a fresh container from the same input snapshot, applies the task patch, and runs `--check` in `/testbed`. Exit code 0 means success. The default timeout is 300 seconds; change it with `--check-timeout SECONDS`. Passing the task alone does not guarantee promotion: the existing RSI diagnosis, improvement, and candidate checks must also complete. No new version is saved when there is no actionable improvement. Single-task candidates must pass task verification to qualify for promotion.
 
-建议使用独立验收脚本，而不是仅依赖 agent 能修改的项目测试：
+Prefer an independent acceptance script over relying only on project tests the agent can edit:
 
 ```bash
 uv run mini-swe-rsi single \
@@ -77,17 +79,17 @@ uv run mini-swe-rsi single \
   --check 'python /verification/verify'
 ```
 
-`--verify-file` 的内容在运行开始时冻结，只在验收容器中以 `/verification/verify` 只读挂载；即使该文件在代码目录中，也不会复制给解题容器。普通 `--check` 的可信程度取决于命令实际检查的内容。
+`--verify-file` is frozen at the start of the run and mounted read-only as `/verification/verify` only in the verification container. It is excluded from the solver's source copy even when stored inside the workspace. The reliability of an ordinary `--check` depends on what that command actually verifies.
 
-快照不包含 `.git`、`.env*`、虚拟环境、`node_modules` 及常见 Python 缓存，不支持符号链接。镜像中的依赖应安装在 `/testbed` 之外。输入源码快照和验收命令会保存在运行目录，运行镜像留在本机以便核对。
+Snapshots exclude `.git`, `.env*`, virtual environments, `node_modules`, and common Python caches. Symbolic links are unsupported. Install image dependencies outside `/testbed`. The input snapshot and verification command are saved in the run directory, and the run image remains available locally for inspection.
 
-每次执行会打印运行目录，可用 `mini-swe-rsi report --run PATH` 查看报告。首次作答的补丁位于 `tasks/0001-single-task/patch.diff`，候选复测补丁保存在 `proposals/` 下对应的 `check/attempt_*/patch.diff`；验收日志位于 `private/`。检查报告后，再将需要的补丁应用到自己的项目。
+Each execution prints its run directory. Use `mini-swe-rsi report --run PATH` to inspect the report. The initial task patch is at `tasks/0001-single-task/patch.diff`. Candidate patches are under the corresponding `proposals/` entry at `check/attempt_*/patch.diff`. Verification logs are under `private/`. Review the report before applying a patch to your project.
 
-## 测评
+## Evaluation
 
-### 完整 SWE-bench Lite
+### Full SWE-bench Lite
 
-官方 [SWE-bench Lite](https://www.swebench.com/lite.html) 的 test split 包含 300 题。先从 Hugging Face 准备任务数据：
+The official [SWE-bench Lite](https://www.swebench.com/lite.html) test split contains 300 tasks. Prepare the task data from Hugging Face:
 
 ```bash
 uv run mini-swe-rsi prepare \
@@ -96,9 +98,9 @@ uv run mini-swe-rsi prepare \
   --data data/swe-bench-lite
 ```
 
-`prepare` 使用 `.eval-venv` 中的 datasets 库，保存原始任务、顺序和来源摘要；不调用模型，不下载任务镜像。需要指定数据版本时加 `--revision COMMIT`。目标数据目录必须尚不存在。
+`prepare` uses datasets from `.eval-venv` to save the original tasks, their order, and source hashes. It does not call a model or download task images. Add `--revision COMMIT` to pin the dataset revision. The output directory must not already exist.
 
-然后运行完整 test split；不要添加 `--task-limit`：
+Run the complete test split without `--task-limit`:
 
 ```bash
 uv run mini-swe-rsi online \
@@ -108,11 +110,11 @@ uv run mini-swe-rsi online \
 uv run mini-swe-rsi report --run runs/lite-test
 ```
 
-开始前建议先完成上面的单题检查。完整测评必须使用新运行目录，不能扩大已冻结的单题运行范围。首次运行会为选中的任务准备相应官方 linux/amd64 镜像，并记录镜像摘要；完整 300 题需要相应的下载时间和磁盘空间。
+Start with the one-task check above. Full evaluation requires a new run directory; an existing frozen selection cannot be expanded. The first run prepares official linux/amd64 images for the selected tasks and records their identities. Allow sufficient download time and disk space for all 300 tasks.
 
-### 其他数据
+### Other datasets
 
-`--dataset` 也接受其他 SWE-bench 格式的 Hugging Face 数据集，或本地 JSON／JSONL 任务文件。例如：
+`--dataset` also accepts other Hugging Face datasets in SWE-bench format, or a local JSON/JSONL task file:
 
 ```bash
 uv run mini-swe-rsi prepare \
@@ -122,44 +124,44 @@ uv run mini-swe-rsi prepare \
 uv run mini-swe-rsi online --run runs/custom --data data/custom --split test
 ```
 
-本地 JSON 应是任务对象列表，JSONL 每行一个任务。记录需包含 `instance_id`、`repo`、`base_commit`、`version`、`problem_statement`、`test_patch`、`FAIL_TO_PASS` 和 `PASS_TO_PASS`。仓库／版本必须被内置 SWE-bench 评分器支持，并有对应官方任务镜像；通用问答或任意代码数据不能直接使用这一评分入口。
+Local JSON must contain a list of task objects; JSONL must contain one task per line. Each record needs `instance_id`, `repo`, `base_commit`, `version`, `problem_statement`, `test_patch`, `FAIL_TO_PASS`, and `PASS_TO_PASS`. The repository/version must be supported by the integrated SWE-bench evaluator and have a corresponding official task image. General question-answering or arbitrary coding data cannot use this evaluation entry point directly.
 
-### 成绩如何统计
+### Score accounting
 
-报告的 `evaluation` 字段统计每题**首次作答**：`selected_tasks` 是计划题数，`scored_tasks` 是已评分题数，`resolved_tasks` 是通过数。全部选定题目评分结束后，`resolved_rate = resolved_tasks / selected_tasks`；未完成时为 null。候选复测与机制检查另行保存，不增加通过题数。
+The report's `evaluation` field counts each task's **initial attempt**. `selected_tasks` is the planned task count, `scored_tasks` is the scored count, and `resolved_tasks` is the number that passed. Once all selected tasks have been scored, `resolved_rate = resolved_tasks / selected_tasks`; until then, it is null. Candidate reruns and mechanism checks are stored separately and do not increase the resolved count.
 
-这里执行的是逐题在线 RSI 测评，Harness 会在题目之间更新。使用 test split 不会将它变为固定 Harness 的独立测试成绩；对外报告时应注明在线更新方式、数据版本、任务顺序与模型设置。
+This is task-by-task online RSI evaluation: the Harness can change between tasks. Running on a test split does not make it an independent evaluation of a fixed Harness. Report the online update procedure, dataset revision, task order, and model settings alongside any results.
 
-## 查看结果与继续运行
+## Reports and resuming
 
-生成报告不需要模型服务：
+Report generation does not require a model service:
 
 ```bash
 uv run mini-swe-rsi report --run runs/lite-smoke
 ```
 
-报告写入 `online_report.md` 和 `online_report.json`，包含任务得分、候选接受／拒绝／跳过情况、模型调用和 token 用量。源码版本位于 `versions/`，宿主决定位于 `decisions/`。
+Reports are written to `online_report.md` and `online_report.json`. They include task scores, accepted/rejected/skipped candidates, model calls, and token usage. Source versions are in `versions/`; host decisions are in `decisions/`.
 
-继续已有运行时使用相同的参数：
+Resume an existing online run with the same arguments:
 
 ```bash
 uv run mini-swe-rsi online --run runs/lite-smoke --data data/swe-bench-lite --split test --task-limit 1
 ```
 
-已完成的任务不会重跑。原目录的题目范围、源码、模型和服务配置必须保持一致；已有模型工作流中断后需[显式恢复授权](docs/architecture.md#中断恢复)。
+Completed tasks are not rerun. Task selection, source code, model, and service configuration must match the original run. Interrupted model workflows require [explicit recovery authorization](docs/architecture.md#interruption-and-recovery).
 
-## 测试
+## Tests
 
 ```bash
 uv run pytest -q
 RUN_DOCKER_TESTS=1 uv run pytest -q
 ```
 
-第二条命令包含 Docker 集成测试，模型服务和评分使用测试替身。要验证自己的模型服务，请运行上面的单题命令。
+The second command includes Docker integration tests with fixture model responses and grading. To check your own model service, run a one-task command above.
 
-## 文档
+## Documentation
 
-- [RSI 运行机制](docs/architecture.md)：七步流程、候选检查、数据要求、资源限制和中断恢复。
-- [上游与适配](docs/upstream_adaptations.md)：代码来源、许可证及与上游的差异。
+- [RSI architecture](docs/architecture.md): the seven-step workflow, candidate checks, data requirements, resource limits, and recovery.
+- [Upstream sources and adaptations](docs/upstream_adaptations.md): provenance, licenses, and changes from upstream.
 
-当前在线协议和改进协议均为 v8。旧版本运行目录需使用对应代码版本处理。候选接任表示通过了本轮判据，跨题收益需要另行评估。
+Both the online and improvement protocols are currently v8. Older run directories require the corresponding code version. Acceptance means a candidate passed this round's criteria; benefits across tasks need separate evaluation.
