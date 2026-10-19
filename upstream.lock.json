@@ -1,0 +1,112 @@
+{
+  "sica": {
+    "repository": "MaximeRobeyns/self_improving_coding_agent",
+    "commit": "ed8275dca4d3c5dbf77229964351fe9b424797dc",
+    "archive_sha256": "01bbd8619d06694f6ce26708f8059b947cce595d2e5b88bfa2961cbdc35d7a17",
+    "files": {
+      "agent_main.py": "1f5abd87a173e68db330227ead7581121b13ebeb607a8209231b13bab01a6fc9",
+      "LICENSE": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
+    },
+    "workflow_files": {
+      "archive_explorer.py": {
+        "path": "base_agent/src/agents/implementations/archive_explorer.py",
+        "sha256": "f0f7365064967538c75456a4efa7c67a5656ae0c8fb1c9ad159d48ed45c109fe"
+      },
+      "coder.py": {
+        "path": "base_agent/src/agents/implementations/coder.py",
+        "sha256": "c1acd8412e80671c72c0762e5f46401671652356a6b79a646a63cabdb32e5fc5"
+      },
+      "committee_design.py": {
+        "path": "base_agent/src/tools/committee_design.py",
+        "sha256": "d965d83cef7ed299d8c377563482670c4c6af026a4094be24058c425d6dd3ceb"
+      },
+      "main_orchestrator.py": {
+        "path": "base_agent/src/agents/implementations/main_orchestrator.py",
+        "sha256": "2bd4d7a3dbaffea0773c354151fff16de6adb11c04216772588c4e90ffe372da"
+      },
+      "meta_improvement.py": {
+        "path": "base_agent/src/tools/reasoning_structures/meta_improvement.py",
+        "sha256": "8e1ed609f1c9a80fb9dd3e951c9f11617b5d803324a8886ff914004078a80783"
+      },
+      "problem_solver.py": {
+        "path": "base_agent/src/agents/implementations/problem_solver.py",
+        "sha256": "5bfbc5b4632fe5d746e0cc88cbbf6d0127f70decbab798557b9ae2f8366888dd"
+      },
+      "review_committee_member.py": {
+        "path": "base_agent/src/agents/implementations/review_committee_member.py",
+        "sha256": "37326db656fa9dff82d8b5d2425592e1ef38ff0ce5707d0308f588d70cb39e17"
+      },
+      "sequential.py": {
+        "path": "base_agent/src/tools/reasoning_structures/sequential.py",
+        "sha256": "4f53ca038bb3295dd205ccd03937264f43428655a8ae0ddd1fa70b037fe0857f"
+      },
+      "LICENSE": {
+        "path": "LICENSE",
+        "sha256": "2d78355384623d154356c299d0acecae66fe44a03066ecdd08e13f07175768a1"
+      }
+    }
+  },
+  "mini": {
+    "repository": "SWE-agent/mini-swe-agent",
+    "commit": "04d809ceab9df28f9adaed044884180159172930",
+    "archive_sha256": "aa3db6c58b14c5331c4ded3d86435a209ae6a2c9a2ed8d0075db846b926fb6f1",
+    "seed_files": {
+      "__init__.py": "0a708308b1b62cc020b60799c3d54f665845f795b3f0c4fdac787c96a38d12c7",
+      "agents/README.md": "9a446af17787fd7fd8f8f6c963edd4fed50865ed2a39f4acf6632239be7c6fd9",
+      "agents/__init__.py": "f95a9f4d1dcc08a05ba6263c5da562b3a7e9e3ae07734f2b9f0d83153c8d0cab",
+      "agents/default.py": "855d9221af47c188df8273bf3615caf00a2cd6ef2da9398545f0261d713a0bef",
+      "agents/interactive.py": "b58517f7d579be76777c576ec03742d3a04eb318dde60446671d8aecec449177",
+      "agents/utils/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "agents/utils/prompt_user.py": "4fc4ca772db13067ebad7fdce8b3ec0ab229e1b3e764f3abd4412522b73cab3e",
+      "config/README.md": "1430bac6ef75c27cbf838a6ce4130cba74e58826518194df9dc53492b3f1ac7a",
+      "config/__init__.py": "ec19d21c65d1d720e80847e85a4d2752b6f5be30b1bfc9f0f1f97d342f20ba94",
+      "config/default.yaml": "5dbfa0d117f9eeb12718783ac435afa854818e02f6a1de3dde47cd1450aaba55",
+      "config/inspector.tcss": "00c13651164c3042e780bed1675cf0ef6371bea92a7c388319c9205d54966e05",
+      "config/mini.yaml": "1cd10566028d9efb33f8fbd54e64615cb0d44cf280f5311fc934a9cf1bf70f8b",
+      "config/mini_textbased.yaml": "ee7c4a970c3d06ef0d7d34473bc6d14dd16a23aebab8c8fbc321cac78b7d70c3",
+      "environments/README.md": "6e6a15ff869f9835d3d607ffcac854920585675215039b196eb17f08df5f0481",
+      "environments/__init__.py": "7a02c4576d3e95ca21f243919e5bc5b94d183df35b24d778c0b35b776c3a426b",
+      "environments/docker.py": "21d389122b008e7b743d1e640207fda0b08d9010cf6323ddd02f0742b33b96a6",
+      "environments/extra/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "environments/extra/bubblewrap.py": "9aceddac6efdce92926f0de8b13f974c66c58544bc87facba7d61878df4a44c0",
+      "environments/extra/contree.py": "88ddea919f18c2e0ea85dd8a3b2483836098afd668b6bdd7fe518675bcfb6ff7",
+      "environments/extra/swerex_docker.py": "2f200454247aaf299d851d6db02869fee88e1254c0b4f1e79f2c2a899b659fd8",
+      "environments/extra/swerex_modal.py": "34155d79bb72648eaf765116d03255e697fc9546164f69d842bc5e759878a3de",
+      "environments/local.py": "01dd33ae6be897458611911cc0eee1389092ea9fc6788c7eb24773e7c6342b1c",
+      "environments/singularity.py": "5d75c3977c4ebe728778f25bc231f5876d857c837c30fd42845a64b48e10ac68",
+      "exceptions.py": "bf57397e1631fe72f99565c6114cf8a1483389558f33392c1370d3a941202fb5",
+      "models/README.md": "971ef8cbf7e283e081ba01766a0c9e71c7832db8c45b28ed3743597dee591347",
+      "models/__init__.py": "b95ec53664c5af3a24c3ec0dc2273fb63b79bfcf2c756f7189886232ff4e9a50",
+      "models/extra/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "models/extra/roulette.py": "74aa8c1b4389097031944382b7461457875902eb98c8aa761060a07d8fb2e09f",
+      "models/litellm_model.py": "62c442396d06e41e3624e31e8fe9fcccd542bded1259e3cf6bfbfa9e6c70c0ea",
+      "models/litellm_response_model.py": "bd2f81c285b48a43034235b338997c05cee86ce39d9dad54e3496824dec009f6",
+      "models/litellm_textbased_model.py": "395bc9bc4a06c18577e73b21c5465f9d22a6d0cc45b006f3d7c9fdaae399e732",
+      "models/openrouter_model.py": "c811a33c17187b59742871502314da9859e959d922f227b958b6ea52a4e0593f",
+      "models/openrouter_response_model.py": "3ba2cbf7cc93c0570fc21d073f7787d8c62b195adf9e49a0fdd7f743402fb82e",
+      "models/openrouter_textbased_model.py": "61944531db221e4d668b245d1ccfec022110906fd732397a49f9d3b01e510573",
+      "models/portkey_model.py": "400c7587b512939c3efb2ccb834d97d95f1b7116a347ec28055205b767c33c35",
+      "models/portkey_response_model.py": "1f8d46b676cf62b8dbc83d8e3d16f9b38f911a76cf384afa5056913cb4535f60",
+      "models/requesty_model.py": "b5b7ef8a2d7c37e840d82989d8c063ce63d4c86b876a3ea1ba5decbe38c8e6ba",
+      "models/test_models.py": "08a7008fcf7dc23a5e3bf0d2fa1759dd6aa2792020fbaf5bf8dead7e4e8579e7",
+      "models/utils/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "models/utils/actions_text.py": "e5997bba3ae3d541ff418317cc8dd9e9e17657de806679ef38ab1ad74e294047",
+      "models/utils/actions_toolcall.py": "47b666412e4f838508b50009cf34c7f63fe15e9e40affc257a17c0829896526f",
+      "models/utils/actions_toolcall_response.py": "36244c4383dde6059742eb1f99fe96b2a91f214f558ece463f81baef96018bcf",
+      "models/utils/anthropic_utils.py": "1355c546d7d217502f4aeb5ba87513f55720f8d4d2c1247b8fc5d793078d170e",
+      "models/utils/cache_control.py": "edbb8952195d1d9dbef45ed7cad910a50b1cdec08175de74dbffc9414f3da5ba",
+      "models/utils/content_string.py": "17ea19b28a2298abaeb51d70f2dcc94e62098a758ecb2dcb98f27f546cd87fc3",
+      "models/utils/openai_multimodal.py": "c498ec2e97c0bf45c212a10de9f5d1b2d24d4de46a05fd0eaea975c1abe3f81f",
+      "models/utils/retry.py": "fb9dd9d9ca0253a2b2ac86907fea4c34fe75c55af6d443781e1ab02229a1ac18",
+      "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utils/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utils/log.py": "aee0cc34a32b542f4d3ef09e1f03b7418cf98ec54d506401d9d4401003c05a9f",
+      "utils/serialize.py": "3035b27cfeffdf91117c72bc8131340bd9c5f67a3010baeb4ecd6b0c7406f462"
+    }
+  },
+  "swebench": {
+    "repository": "SWE-bench/SWE-bench",
+    "commit": "726c5461e2ef52d83cf1ea2107870a8bb3328d57",
+    "archive_sha256": "19f51a1f047908aa3365308bec67e6d2483a05795251cbcde8a6fef6c998ae1f"
+  }
+}

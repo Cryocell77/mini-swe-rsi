@@ -1,0 +1,2 @@
+# Preserve the verified runtime seed bytes, including its final blank line.
+src/mini_swe_rsi/harness/template/minisweagent/models/portkey_model.py whitespace=-blank-at-eof

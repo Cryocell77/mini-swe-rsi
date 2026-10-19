@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-swe-rsi"
+version = "0.1.0"
+license = "MIT"
+license-files = ["LICENSE", "src/mini_swe_rsi/harness/LICENSE.mini", "src/mini_swe_rsi/workflow/task/LICENSE", "src/mini_swe_rsi/workflow/sources/LICENSE", "src/mini_swe_rsi/evaluation/LICENSE.swebench"]
+description = "Online task-by-task RSI with archived mini-swe-agent and independent candidate checks"
+requires-python = ">=3.12"
+dependencies = ["pyyaml", "jinja2", "pydantic>=2", "litellm>=1.75.5,!=1.82.7,!=1.82.8", "docker", "requests", "rich", "platformdirs", "python-dotenv", "tenacity"]
+
+[project.scripts]
+mini-swe-rsi = "mini_swe_rsi.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false
+exclude = ["mini_swe_rsi.harness.template.*", "mini_swe_rsi.workflow.sources*", "mini_swe_rsi.workflow.task*"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+mini_swe_rsi = ["harness/LICENSE.mini", "harness/template/**/*", "workflow/sources/*", "workflow/task/*", "evaluation/LICENSE.swebench", "evaluation/swebench/**/*"]

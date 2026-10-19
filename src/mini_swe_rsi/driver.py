@@ -1,0 +1,697 @@
+from __future__ import annotations
+
+import json
+import os
+import math
+import runpy
+import hashlib
+import shutil
+import subprocess
+import threading
+import tempfile
+import time
+import uuid
+from types import SimpleNamespace
+from pathlib import Path
+
+import docker
+import requests
+import yaml
+
+from .archive_view import online_archive_view
+from .core import (ROOT, append_event, attempt_result_paths, command, digest,
+                   execution_hash, read, read_regular_json, result_matches_source,
+                   tree_hash, write, improvement_contract)
+
+
+def session_remaining(deadline):
+    return max(1, deadline-time.time()) if math.isfinite(deadline) else None
+
+
+class InfrastructureError(RuntimeError):
+    pass
+
+
+class GradingUnavailable(InfrastructureError):
+    """A grading failure must never trigger another model-generated answer."""
+
+
+MECHANISM_BOOTSTRAP = r"""
+import hashlib, os, runpy, sys
+from pathlib import Path
+try:
+    root = Path(os.environ['RSI_SOURCE_ROOT']).resolve(strict=True)
+    entry = Path(sys.argv[1]).resolve(strict=True)
+    entry.relative_to(root)
+    assert root == Path('/source') and Path.cwd() == root
+    assert entry.is_file()
+    Path(os.environ['MSWEA_GLOBAL_CONFIG_DIR']).mkdir(parents=True, exist_ok=True)
+    expected = os.environ['RSI_MECHANISM_TEST_SHA256']
+    assert hashlib.sha256(entry.read_bytes()).hexdigest() == expected
+except Exception as exc:
+    print('RSI_MECHANISM_SETUP_ERROR ' + type(exc).__name__, flush=True)
+    sys.exit(125)
+print('RSI_MECHANISM_SETUP_OK ' + expected, flush=True)
+sys.path.insert(0, str(root))
+sys.argv = sys.argv[1:]
+runpy.run_path(str(entry), run_name='__main__')
+"""
+
+
+def validate_code(code):
+    for p in Path(code).rglob('*'):
+        if p.is_symlink() or not (p.is_dir() or p.is_file()):
+            raise ValueError('Candidate contains a symlink or special file')
+    if not (Path(code) / 'minisweagent/agents/default.py').is_file():
+        raise ValueError('Candidate removed the agent entrypoint')
+    if sum(p.stat().st_size for p in Path(code).rglob('*') if p.is_file()) > 32*1024*1024:
+        raise ValueError('Candidate exceeds source size budget')
+
+
+def initial_code(destination):
+    destination = Path(destination)
+    if destination.exists():
+        return
+    source = ROOT / 'src/mini_swe_rsi/harness/template/minisweagent'
+    if not source.is_dir():
+        raise RuntimeError('Integrated initial Harness source is missing')
+    files = read(ROOT/'upstream.lock.json')['mini']['seed_files']
+    for name, expected in files.items():
+        if digest(source/name) != expected:
+            raise RuntimeError('Initial Harness source changed: ' + name)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Publish only a fully copied and identified H0.
+    with tempfile.TemporaryDirectory(prefix='.harness-seed-', dir=destination.parent) as staging:
+        seed = Path(staging)/'agent_code'
+        package = seed/'minisweagent'
+        for name in files:
+            target = package/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source/name, target)
+        _seed_metadata(seed)
+        seed.rename(destination)
+
+
+def _seed_metadata(destination):
+    (destination / '__init__.py').write_text('')
+    (destination / '__main__.py').write_text('from bridge import main\nmain(__file__)\n')
+    shutil.copy(ROOT / 'src/mini_swe_rsi/harness/LICENSE.mini', destination / 'LICENSE.mini')
+    (destination / 'agent_change_log.md').write_text('# H0\nPinned mini-swe-agent with reproducible accounting removal and online package trimming; no evolved strategies.\n')
+    (destination / 'description.txt').write_text('H0: online mini-swe-agent without monetary accounting or standalone runners, fixed model and host execution adapter.\n')
+    (destination / 'README.md').write_text(
+        '# Archived mini-swe-agent\nEditable implementation: minisweagent/. '
+        'Text action configuration: minisweagent/config/mini_textbased.yaml. '
+        'The host provides the same model and fixed resource limits to every version. '
+        'benchmark/improve entrypoints use the immutable bridge. '
+        'Standalone minisweagent CLI, batch runners and benchmark configs are excluded. '
+        'Agent, model, environment and config APIs remain available for offline tests. '
+        'No grader, reference patches or held-out evaluations are accessible. '
+        'Dependency installation is not available inside isolated runs.\n')
+
+
+class Driver:
+    def __init__(self, root, data, broker):
+        self.root, self.data, self.broker = Path(root), data, broker
+        self.client = docker.from_env()
+        self.running = []
+        self.network = None
+        self.transport = None
+        self.relay = None
+        try:
+            self.image = self.client.images.get('mini-swe-rsi-runtime:0.1')
+            self.network = self.client.networks.create('mini-rsi-' + uuid.uuid4().hex[:12], internal=True)
+            self.transport = self.client.networks.create('mini-rsi-transport-' + uuid.uuid4().hex[:12])
+            self.relay = self.client.containers.create(self.image.id, ['python', '/runtime/relay.py'],
+                volumes={str(ROOT/'src/mini_swe_rsi/workflow'): {'bind': '/runtime', 'mode': 'ro'}},
+                environment={'HOST_BROKER': f'http://host.docker.internal:{broker.port}',
+                             # Every broker request owns its own session/tool
+                             # deadline; the relay itself must not invent an
+                             # additional wall-clock cutoff.
+                             'RSI_RELAY_TIMEOUT': 'none'},
+                network=self.transport.name, cap_drop=['ALL'], security_opt=['no-new-privileges'],
+                mem_limit='128m', pids_limit=64, read_only=True, tmpfs={'/tmp':'size=16m'})
+            self.network.connect(self.relay)
+            self.relay.start()
+            self.relay.reload()
+            self.broker_url = 'http://' + self.relay.attrs['NetworkSettings']['Networks'][self.network.name]['IPAddress'] + ':8000'
+        except Exception:
+            self._cleanup_resources()
+            raise
+
+    def _cleanup_resources(self):
+        containers = [*self.running]
+        if self.relay is not None:
+            containers.append(self.relay)
+        for c in containers:
+            try:
+                c.remove(force=True)
+            except Exception:
+                pass
+        self.running.clear()
+        self.relay = None
+        for network_name in ('network', 'transport'):
+            network = getattr(self, network_name, None)
+            if network is not None:
+                try:
+                    network.remove()
+                except Exception:
+                    pass
+                setattr(self, network_name, None)
+
+    def close(self):
+        self._cleanup_resources()
+
+    def frozen_image(self, task_id):
+        frozen = self.data.image(task_id)
+        try:
+            image = self.client.images.get(frozen['image_id'])
+        except docker.errors.ImageNotFound:
+            image = self.client.images.pull(frozen['repo_digests'][0], platform='linux/amd64')
+        if image.id != frozen['image_id'] or image.attrs['Architecture'] != 'amd64':
+            raise InfrastructureError('Task image differs from frozen eligibility image')
+        return image
+
+    def controller(self, code, logs, command_args, token, archive=None, target=None, prompt=None,
+                   resume_checkpoint=None):
+        pause_guard = getattr(getattr(self, 'broker', None), '_raise_if_paused', None)
+        if pause_guard is not None:
+            pause_guard()
+        if resume_checkpoint is not None and command_args[0] != 'improve':
+            raise RuntimeError('Workflow restoration cannot change a benchmark launch')
+        validate_code(code)
+        selected_hash = tree_hash(code)
+        logs = Path(logs).resolve()
+        logs.mkdir(parents=True, exist_ok=True)
+        mounts = {str(ROOT / 'src/mini_swe_rsi/workflow'): {'bind': '/runtime', 'mode': 'ro'},
+                  str(ROOT / 'src/mini_swe_rsi/workflow/task'): {'bind': '/upstream', 'mode': 'ro'},
+                  str(logs): {'bind': '/logs', 'mode': 'rw'}}
+        task_identity = None
+        execution_limits = None
+        if command_args[0] == 'improve':
+            if (logs/'workflow_state.json').exists() and resume_checkpoint is None:
+                raise RuntimeError('Existing workflow state cannot be overwritten or silently resumed')
+            mounts[str(ROOT/'src/mini_swe_rsi/workflow/sources')] = {'bind':'/workflow_sources','mode':'ro'}
+            def argument(name):
+                try:
+                    index = command_args.index(name)
+                    return command_args[index + 1]
+                except (ValueError, IndexError):
+                    raise RuntimeError(f'Online improvement requires {name}') from None
+            parent = int(argument('--parent-iter'))
+            if parent < 0:
+                raise RuntimeError('Online improvement parent version must be non-negative')
+            proposer = parent
+            candidate = argument('--candidate-id')
+            task_id = argument('--task-id')
+            round_id = argument('--round-id')
+            version = argument('--online-version')
+            expected_version = f'H{parent:04d}'
+            if version != expected_version:
+                raise RuntimeError('Online improvement version does not match parent version')
+            resume = None
+            if resume_checkpoint is not None:
+                if target is None:
+                    raise RuntimeError('Explicit workflow restoration is online only')
+                from .recovery import load_workflow_authorization
+                resume = load_workflow_authorization(
+                    resume_checkpoint, self.root, logs, target,
+                    {'task_id':task_id, 'round_id':round_id,
+                     'version':version, 'parent':parent,
+                     'proposer':proposer, 'candidate':candidate})
+                mounts[str(Path(resume_checkpoint).resolve())] = {'bind':'/resume_authorization.json','mode':'ro'}
+                command_args = [*command_args, '--resume-workflow', '/resume_authorization.json']
+            contract = improvement_contract()
+            configuration = self.root/'configuration.json'
+            if configuration.exists():
+                saved_configuration = read(configuration)
+                frozen_contract = saved_configuration.get('control_manifest', {}).get('improvement')
+                if frozen_contract != contract:
+                    raise RuntimeError('Frozen improvement task contract changed before launch')
+            execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
+            workflow_module = SimpleNamespace(**runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/workflow.py')))
+            render = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['improvement_prompt']
+            render_kwargs = {'budget':execution_limits, 'workflow_module':workflow_module}
+            render_kwargs.update(task_id=task_id, round_id=round_id, version=version)
+            if prompt is not None and Path(prompt).exists():
+                render_kwargs['feedback'] = Path(prompt).read_text()
+            rendered = render(parent, candidate, ROOT/'src/mini_swe_rsi/workflow/task/agent_main.py', **render_kwargs)
+            if resume is not None:
+                rendered = runpy.run_path(str(ROOT/'src/mini_swe_rsi/workflow/bridge.py'))['resume_prompt'](rendered, resume)
+            selected_config = yaml.safe_load((Path(code)/'minisweagent/config/mini_textbased.yaml').read_text())
+            task_identity = {'template_manifest':workflow_module.template_manifest(selected_config), 'protocol': contract['version'], 'parent': parent, 'proposer': proposer,
+                             'candidate': candidate, 'prompt_sha256': hashlib.sha256(rendered.encode()).hexdigest(),
+                             'renderer_sha256': contract['renderer_sha256'],
+                             'upstream_task_sha256': contract['upstream_task_sha256'],
+                             'workflow_sha256':contract['workflow_sha256'],
+                             'source_hash_sha256':contract['source_hash_sha256'],
+                             'relay_sha256':contract['relay_sha256'],
+                             'workflow_sources':contract['workflow_sources']}
+            task_identity.update(task_id=task_id, round_id=round_id,
+                                 version=version, online=True)
+            if resume is not None:
+                task_identity['resume_authorization_sha256'] = digest(resume_checkpoint)
+            write(logs/'host_improvement_task.json', {'contract': contract, **task_identity})
+        module = 'agent_code'
+        if archive is not None:
+            archive_root = Path(archive).resolve()
+            try:
+                relative = Path(code).resolve().relative_to(archive_root)
+            except ValueError:
+                raise RuntimeError('Selected source must belong to the online archive') from None
+            if task_identity:
+                state = read(archive_root/'online_state.json')
+                if state.get('active_version') != version:
+                    raise RuntimeError('Online archive active version differs from selected version')
+                expected_relative = Path('versions') / version / 'agent_code'
+                if relative != expected_relative:
+                    raise RuntimeError('Online improvement must load the active archive version source')
+            view = online_archive_view(archive, logs.parent/(logs.name + '_archive_view'))
+            mounts[str(view.resolve())] = {'bind': '/home/agent/archive', 'mode': 'ro'}
+            # Online versions are Hxxxx/agent_code paths. Load the selected
+            # active source directly while exposing the sanitized history.
+            mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
+            if tree_hash(code) != tree_hash(view / relative):
+                raise RuntimeError('Online archive view source differs from selected active version')
+            if target and resume_checkpoint is None and tree_hash(target) != selected_hash:
+                raise RuntimeError('Online candidate differs from selected active parent')
+        else:
+            mounts[str(Path(code).resolve())] = {'bind': '/home/agent/agent_code', 'mode': 'ro'}
+            if task_identity and target:
+                if resume_checkpoint is None and tree_hash(target) != selected_hash:
+                    raise RuntimeError('Online candidate does not start from the active parent version')
+        if target:
+            mounts[str(Path(target).resolve())] = {'bind': '/home/agent/workdir',
+                'mode': 'ro' if task_identity else 'rw'}
+        if prompt:
+            mounts[str(Path(prompt).resolve())] = {'bind': '/task.txt', 'mode': 'ro'}
+        if execution_limits is None:
+            execution_limits = {**self.broker.budget_limits(), 'session_remaining_seconds':session_remaining(self.broker.sessions[token]['deadline'])}
+        env = {'RSI_BUDGET_CONFIG':json.dumps(execution_limits, allow_nan=False), 'PYTHONPATH': '/runtime:/home/agent', 'RSI_MODEL': self.broker.model,
+               'RSI_BROKER': self.broker_url, 'RSI_TOKEN': token,
+               'MSWEA_CONFIG_ROOT': '/tmp/mini-config', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
+               'OPENAI_API_KEY': 'broker-only', 'DO_NOT_TRACK': '1'}
+        if task_identity:
+            env['RSI_IMPROVEMENT_PROTOCOL'] = task_identity['protocol']
+        args = ['python', '-m', module, *command_args, '--logdir', '/logs']
+        c = self.client.containers.run(self.image.id, args, detach=True, volumes=mounts,
+                network=self.network.name, environment=env, cap_drop=['ALL'],
+                security_opt=['no-new-privileges'], mem_limit='2g', nano_cpus=1000000000,
+                pids_limit=128)
+        self.running.append(c)
+        if command_args[0] == 'improve':
+            self.broker.sessions[token]['solver'] = c.id
+            self.broker.sessions[token]['cwd'] = '/home/agent/workdir'
+            if task_identity:
+                from .stage_tools import StageTools
+                self.broker.sessions[token]['stage_tools'] = StageTools(
+                    self, logs, target, view if archive is not None else None, self.root/'tool_outputs')
+        append_event(self.root, dict(kind='agent_launch', code=str(Path(code).resolve()),
+                     code_hash=tree_hash(code),
+                     module=module, image_id=self.image.id, container_id=c.id,
+                     command=command_args[0], improvement_task=task_identity, archive=str(archive) if archive else None,
+                     mounts=[{'destination': m['Destination'], 'read_write': m['RW']} for m in c.attrs['Mounts']],
+                     network_internal=True, cap_drop=c.attrs['HostConfig']['CapDrop']))
+        deadline = self.broker.sessions[token]['deadline']
+        expired = []
+        def stop_at_deadline():
+            expired.append(True)
+            try:
+                c.kill()
+            except docker.errors.APIError:
+                pass
+        timer = None
+        if math.isfinite(deadline):
+            timer = threading.Timer(max(.1, deadline-time.time()), stop_at_deadline)
+            timer.daemon = True
+            timer.start()
+        try:
+            try:
+                result = c.wait(timeout=max(.1, deadline - time.time() + 10) if math.isfinite(deadline) else None)
+            except requests.exceptions.ReadTimeout:
+                c.kill()
+                result = {'StatusCode': 137}
+                write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
+            if pause_guard is not None:
+                pause_guard()
+            if expired and not (logs/'result.json').exists():
+                write(logs/'result.json', {'exit_status': 'TimeExceeded', 'submission': ''})
+            if task_identity and (logs/'workflow_state.json').exists():
+                workflow_state = read(logs/'workflow_state.json')
+                if workflow_state.get('status') in ('active','not_invoked'):
+                    workflow_state['status'] = 'incomplete'
+                    workflow_state['host_process_status'] = result['StatusCode']
+                    write(logs/'workflow_state.json', workflow_state)
+            if task_identity and not (logs/'improvement_task.json').exists():
+                write(logs/'improvement_verification.json', {'status': 'unverified_failure'})
+                if result['StatusCode'] == 0:
+                    raise RuntimeError('Successful improvement omitted prompt identity evidence')
+            if task_identity and (logs/'improvement_task.json').exists():
+                if (read(logs/'improvement_task.json') != task_identity
+                    or digest(logs/'improvement_prompt.txt') != task_identity['prompt_sha256']):
+                    raise RuntimeError('Executed improvement prompt identity differs from host renderer')
+                write(logs/'improvement_verification.json', {'status': 'verified'})
+            output = c.logs().decode(errors='replace')
+            (logs / 'process.log').write_text(output.replace(token, '<session-token>'))
+            if tree_hash(code) != selected_hash:
+                raise RuntimeError('Selected archived source changed during execution')
+            if archive is not None and tree_hash(view / relative) != selected_hash:
+                raise RuntimeError('Mounted source changed during execution')
+            return result['StatusCode'], output
+        finally:
+            stage_tools = self.broker.sessions[token].get('stage_tools')
+            if stage_tools is not None:
+                stage_tools.close()
+            if timer is not None:
+                timer.cancel()
+            try:
+                c.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+            self.running.remove(c)
+
+    def score(self, task_id, patch, directory):
+        directory = Path(directory).resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+        job = {'operation': 'score', 'directory': str(directory), 'task': self.data.rows[task_id],
+               'patch': patch, 'arch': 'x86_64', 'image_namespace': 'swebench',
+               'instance_image_tag': 'latest', 'run_id': uuid.uuid4().hex,
+               'result_file': str(directory / 'result.json'), 'timeout': 300,
+               'frozen_image': self.data.image(task_id)}
+        write(directory / 'job.json', job)
+        python = ROOT / '.eval-venv/bin/python'
+        try:
+            with (directory / 'process.log').open('w') as log:
+                subprocess.run([str(python), '-m', 'mini_swe_rsi.evaluation.grader', str(directory / 'job.json')],
+                        env={**os.environ, 'PYTHONPATH': str(ROOT/'src')},
+                        stdout=log, stderr=subprocess.STDOUT,
+                        timeout=360, check=True)
+            result = read(directory / 'result.json')
+            if not result.get('completed'):
+                raise InfrastructureError('Official grader produced no completed result')
+            return result
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise InfrastructureError(f'Official grader process: {type(exc).__name__}') from None
+        finally:
+            for container in self.client.containers.list(all=True):
+                if job['run_id'] in container.name:
+                    container.remove(force=True)
+
+    def task(self, code, task_id, output, *, grading_namespace='grading'):
+        output = Path(output).resolve()
+        output.mkdir(parents=True, exist_ok=True)
+        frozen = self.frozen_image(task_id)
+        solver = self.client.containers.run(frozen.id, ['sleep', 'infinity'], detach=True,
+                    platform=getattr(self, 'task_platform', 'linux/amd64'), network_disabled=True, cap_drop=['ALL'],
+                    security_opt=['no-new-privileges'], mem_limit='2g', nano_cpus=1000000000,
+                    pids_limit=256, working_dir='/testbed')
+        self.running.append(solver)
+        # Public SWE-bench images include a preparation commit (e.g. file modes).
+        # Collect only the agent's changes relative to this immutable image's HEAD.
+        base = command(['docker', 'exec', '-w', '/testbed', solver.id, 'git', 'rev-parse', 'HEAD']).strip()
+        token = self.broker.session('task:' + str(output.relative_to(self.root)), solver=solver.id)
+        start = time.time()
+        try:
+            prompt = output / 'prompt.txt'
+            prompt.write_text(self.data.rows[task_id]['problem_statement'])
+            code_status, _ = self.controller(code, output, ['benchmark', '--prompt-file', '/task.txt'], token, prompt=prompt)
+            result = (read(output / 'result.json') if (output / 'result.json').exists() else
+                      {'exit_status': 'AgentProcessError', 'submission': '', 'process_status': code_status})
+            # A hard deadline can interrupt the agent before it saves its own transcript.
+            # Keep the host's failure result and usable public evidence, without another model call.
+            write(output / 'result.json', result)
+            transcript = ''
+            if (output / 'trajectory.json').exists():
+                saved = read(output / 'trajectory.json')
+                transcript = '\n\n'.join(str(m.get('content', '')) for m in saved.get('messages', []))
+            for filename, content in [('trace.txt', transcript),
+                                      ('answer.txt', result.get('submission', ''))]:
+                if not (output / filename).exists():
+                    (output / filename).write_text(content)
+            if not (output / 'activation.json').exists():
+                write(output / 'activation.json', {'command': 'benchmark', 'agent_activation_unobserved': True})
+            patch = command(['docker', 'exec', '-w', '/testbed', solver.id, 'bash', '-lc',
+                    'git add -A && git diff --cached --binary ' + base], timeout=30)
+            (output / 'patch.diff').write_text(patch)
+        finally:
+            metrics = self.broker.finish(token)
+            solver.remove(force=True)
+            self.running.remove(solver)
+        agent_seconds = time.time()-start
+        write(output/'metrics.json', metrics)
+        write(output/'task_execution.json', {'result': result, 'metrics': metrics,
+              'agent_seconds': agent_seconds, 'started': start, 'patch_base_commit': base,
+              'code_hash': tree_hash(code)})
+        return self.finish_task(task_id, output, grading_namespace=grading_namespace)
+
+    def finish_task(self, task_id, output, *, grading_namespace='grading'):
+        output = Path(output).resolve()
+        namespace_path = Path(grading_namespace) if isinstance(grading_namespace, str) else Path('.')
+        if (not isinstance(grading_namespace, str) or not grading_namespace
+                or namespace_path.is_absolute() or '..' in namespace_path.parts
+                or '.' in namespace_path.parts):
+            raise ValueError('grading_namespace must be a safe relative directory path')
+        saved = read(output/'task_execution.json')
+        result, metrics = saved['result'], saved['metrics']
+        ledger = self.root/'private/task_grading'/output.relative_to(self.root)/'attempts.json'
+        attempts = read(ledger) if ledger.exists() else []
+        grade = None
+        for item in attempts:
+            result_file = Path(item['directory'])/'result.json'
+            saved_grade = read_regular_json(result_file)
+            if saved_grade is not None and saved_grade.get('completed'):
+                grade = saved_grade
+                break
+        while grade is None and len(attempts) < 2:
+            directory = self.root/'private'/grading_namespace/uuid.uuid4().hex
+            attempts.append({'directory': str(directory), 'time': time.time()})
+            write(ledger, attempts)
+            try:
+                grade = self.score(task_id, (output/'patch.diff').read_text(), directory)
+            except InfrastructureError as exc:
+                append_event(self.root, {'kind':'infrastructure_error', 'task_id': task_id,
+                    'scope':'grading_only', 'attempt':len(attempts)-1, 'error':str(exc)})
+        if grade is None:
+            raise GradingUnavailable('Both scoring attempts failed; preserving the answer without another model run')
+        record = {'problem_id': task_id, 'score': float(grade['resolved']), 'tokens_used': metrics['tokens'],
+                  'num_cached_tokens': metrics['cached_tokens'],
+                  'wall_time': saved['agent_seconds'], 'timed_out': result.get('exit_status') in ('TimeExceeded', 'TimeoutError'),
+                  'timestamp': time.time()}
+        write(output / 'host_result.json', {'result': result, 'metrics': metrics, 'grade': grade,
+              'record': record, 'total_seconds': time.time()-saved['started'],
+              'patch_base_commit': saved['patch_base_commit'],
+              'code_hash': saved['code_hash']})
+        return record
+
+    def task_retry(self, code, task_id, output, *, grading_namespace='grading'):
+        for attempt in range(2):
+            attempt_dir = Path(output)/f'attempt_{attempt}'
+            if attempt_dir.is_symlink() or (attempt_dir.exists() and not attempt_dir.is_dir()):
+                raise GradingUnavailable('Task attempt is not a regular directory')
+            if attempt_dir.exists():
+                if (attempt_dir/'host_result.json').exists():
+                    prior = read_regular_json(attempt_dir/'host_result.json')
+                    if prior is None:
+                        raise GradingUnavailable('Completed task result is not a regular host record')
+                    if not result_matches_source(prior, tree_hash(code), error_type=GradingUnavailable):
+                        raise GradingUnavailable('Completed task source changed; refusing mixed-version results')
+                    return prior['record']
+                if (attempt_dir/'task_execution.json').exists():
+                    saved = read_regular_json(attempt_dir/'task_execution.json')
+                    if saved is None:
+                        raise GradingUnavailable('Saved task execution is not a regular host record')
+                    if not result_matches_source(saved, tree_hash(code), error_type=GradingUnavailable):
+                        raise GradingUnavailable('Saved task source changed before grading recovery')
+                    return self.finish_task(task_id, attempt_dir,
+                                           grading_namespace=grading_namespace)
+                # Retain interrupted/failed infrastructure attempts; no overwritten trajectories.
+                if not (attempt_dir/'interrupted.json').exists():
+                    write(attempt_dir/'interrupted.json', {'reason': 'Prior attempt did not complete; retained on resume.'})
+                continue
+            try:
+                return self.task(code, task_id, attempt_dir,
+                                 grading_namespace=grading_namespace)
+            except GradingUnavailable:
+                raise
+            except InfrastructureError as e:
+                append_event(self.root, dict(kind='infrastructure_error', task_id=task_id,
+                                             attempt=attempt, error=str(e)))
+                if attempt:
+                    raise
+        raise InfrastructureError('Both allowed task attempts are incomplete; refusing an additional inference retry')
+
+    @staticmethod
+    def _mechanism_plan(plan):
+        """Load and apply the shared mechanism plan normalizer."""
+        try:
+            normalize = runpy.run_path(str(ROOT / 'src/mini_swe_rsi/workflow' / 'check_plan.py'))[
+                'normalize_mechanism_plan']
+            return normalize(plan)
+        except ValueError as exc:
+            raise InfrastructureError(str(exc)) from None
+
+    def _run_mechanism_process(self, source, test_file, args, timeout, *, test_path):
+        """Preserve the declared test location in an isolated source overlay."""
+        source, test_file = Path(source).resolve(), Path(test_file).resolve()
+        relative = Path(self._mechanism_plan({'test_path': test_path})['test_path'])
+        test_bytes = test_file.read_bytes()
+        test_hash = hashlib.sha256(test_bytes).hexdigest()
+        # The parent may not have tests/ at all. Never create mountpoints or
+        # overwrite tests in an archived source; only the disposable overlay.
+        with tempfile.TemporaryDirectory(prefix='mini-rsi-mechanism-') as temporary:
+            overlay = Path(temporary)/'source'
+            shutil.copytree(source, overlay, ignore=shutil.ignore_patterns('__pycache__'))
+            entry = overlay/relative
+            if entry.is_dir():
+                raise InfrastructureError('Mechanism entry collides with a directory')
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_bytes(test_bytes)
+            container = self.client.containers.run(self.image.id,
+                ['python', '-c', MECHANISM_BOOTSTRAP, '/source/' + relative.as_posix(), *args], detach=True,
+                volumes={str(overlay): {'bind': '/source', 'mode': 'ro'}},
+                network_disabled=True, read_only=True, tmpfs={'/tmp': 'size=32m'},
+                working_dir='/source', environment={'PYTHONPATH': '/source',
+                    'RSI_SOURCE_ROOT':'/source', 'RSI_MECHANISM_TEST_SHA256':test_hash,
+                    'PYTHONDONTWRITEBYTECODE':'1', 'DO_NOT_TRACK': '1',
+                    'MSWEA_GLOBAL_CONFIG_DIR': '/tmp/mini-config', 'HOME':'/tmp'},
+                cap_drop=['ALL'], security_opt=['no-new-privileges'], mem_limit='512m',
+                nano_cpus=1000000000, pids_limit=64)
+            self.running.append(container)
+            try:
+                try:
+                    status = container.wait(timeout=timeout).get('StatusCode')
+                except requests.exceptions.ReadTimeout:
+                    try:
+                        container.kill()
+                    except docker.errors.APIError:
+                        pass
+                    raise InfrastructureError('Mechanism test process timed out; no parent failure conclusion')
+                output = container.logs().decode(errors='replace')
+                if (type(status) is not int or status in (125, 137)
+                        or 'RSI_MECHANISM_SETUP_OK ' + test_hash not in output.splitlines()):
+                    raise InfrastructureError('Mechanism execution setup invalid; no parent failure conclusion')
+                return status, output
+            finally:
+                try:
+                    container.remove(force=True)
+                except docker.errors.NotFound:
+                    pass
+                self.running.remove(container)
+
+    def mechanism_check(self, parent, candidate, plan, output):
+        """Run one frozen mechanism test against parent and candidate.
+
+        The test file is copied from the candidate before either process starts,
+        then mounted read-only into both fresh containers.  A model can propose
+        the relative path, but cannot select a host path or execute it on the
+        host.  The public result contains only execution identities and status;
+        logs stay in the host check directory.
+        """
+        parent, candidate, output = (Path(parent).resolve(), Path(candidate).resolve(),
+                                     Path(output).resolve())
+        validate_code(parent)
+        validate_code(candidate)
+        frozen_plan = self._mechanism_plan(plan)
+        test_source = candidate / frozen_plan['test_path']
+        if not test_source.is_file() or test_source.is_symlink():
+            raise InfrastructureError('Mechanism test path is absent from candidate')
+        output.mkdir(parents=True, exist_ok=True)
+        frozen_test = output / 'mechanism_test.py'
+        test_bytes = test_source.read_bytes()
+        if frozen_test.exists() and frozen_test.read_bytes() != test_bytes:
+            raise InfrastructureError('Frozen mechanism test changed across retries')
+        if not frozen_test.exists():
+            frozen_test.write_bytes(test_bytes)
+        test_hash = hashlib.sha256(test_bytes).hexdigest()
+        before = {'parent': tree_hash(parent), 'candidate': tree_hash(candidate)}
+        parent_status, parent_output = self._run_mechanism_process(
+            parent, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'],
+            test_path=frozen_plan['test_path'])
+        candidate_status, candidate_output = self._run_mechanism_process(
+            candidate, frozen_test, frozen_plan['args'], frozen_plan['timeout_seconds'],
+            test_path=frozen_plan['test_path'])
+        after = {'parent': tree_hash(parent), 'candidate': tree_hash(candidate)}
+        if before != after:
+            raise InfrastructureError('Harness changed during mechanism check')
+        logs = {}
+        for name, text in (('parent', parent_output), ('candidate', candidate_output)):
+            path = output / f'{name}.log'
+            path.write_text(text)
+            logs[name] = {'exit_status': parent_status if name == 'parent' else candidate_status,
+                          'passed': (parent_status if name == 'parent' else candidate_status) == 0,
+                          'log_ref': f'mechanism/{name}.log',
+                          'output_sha256': hashlib.sha256(text.encode()).hexdigest()}
+        return {'test_path': frozen_plan['test_path'], 'test_sha256': test_hash,
+                'parent': logs['parent'], 'candidate': logs['candidate'],
+                'execution_contract': {'version':'relative-source-overlay-v1', 'source_root':'/source',
+                                       'test_entry':'/source/' + frozen_plan['test_path'], 'setup_valid':True},
+                'same_test': True, 'parent_failed': parent_status != 0,
+                'candidate_passed': candidate_status == 0}
+
+    def candidate_check(self, candidate, task_id, output, *, job_id=None,
+                        parent_hash, check_revision='1', parent_code=None,
+                        mechanism_plan=None):
+        """Run a candidate in a fresh task process and return an immutable check.
+
+        The candidate path is resolved by the host caller and is never accepted
+        from a relay payload.  ``task_retry`` creates a new solver container and
+        independent grader job, so this cannot accidentally reuse the parent's
+        task process or hidden answer.
+        """
+        candidate = Path(candidate).resolve()
+        output = Path(output).resolve()
+        if not isinstance(parent_hash, str) or not parent_hash:
+            raise InfrastructureError('Candidate check requires a parent source hash')
+        if parent_code is not None and tree_hash(parent_code) != parent_hash:
+            raise InfrastructureError('Candidate check parent source hash differs')
+        validate_code(candidate)
+        before = tree_hash(candidate)
+        execution_before = execution_hash(candidate)
+        result = self.task_retry(candidate, task_id, output,
+                                 grading_namespace='candidate_checks/proposals')
+        after = tree_hash(candidate)
+        execution_after = execution_hash(candidate)
+        if before != after or execution_before != execution_after:
+            raise InfrastructureError('Candidate source changed during independent check')
+        # task_retry may return the second infrastructure attempt. Use its
+        # matching durable record rather than attributing an absent first result.
+        host = evidence = None
+        for path in attempt_result_paths(output):
+            evidence_candidate = read_regular_json(path)
+            if (evidence_candidate is not None
+                    and result_matches_source(evidence_candidate, before, error_type=InfrastructureError)
+                    and evidence_candidate.get('record') == result):
+                host, evidence = path, evidence_candidate
+                break
+        if evidence is None:
+            raise InfrastructureError('Candidate check has no matching completed host result')
+        private = {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
+                   'candidate_hash':after, 'execution_hash':execution_after,
+                   'parent_hash':parent_hash,
+                   'record':result, 'grade':evidence.get('grade'),
+                   'execution_status':evidence.get('result',{}).get('exit_status'),
+                   'metrics':evidence.get('metrics'), 'evidence_path':str(host)}
+        if job_id:
+            private_path = self.root / 'private/candidate_checks' / (str(job_id).replace('/', '_') + '.json')
+            write(private_path, private)
+        # Relay/model-facing output is restricted to public task facts.  Grader
+        # details, host paths and token ledgers stay in the private snapshot.
+        mechanism = None
+        if mechanism_plan is not None:
+            if parent_code is None:
+                raise InfrastructureError('Mechanism check requires the active parent source')
+            mechanism = self.mechanism_check(parent_code, candidate, mechanism_plan,
+                                             output / 'mechanism')
+            private['mechanism_check'] = mechanism
+            if job_id:
+                write(private_path, private)
+        public_metrics = {}
+        metrics = evidence.get('metrics') or {}
+        for key in ('calls', 'wall_time', 'started'):
+            if key in metrics:
+                public_metrics[key] = metrics[key]
+        return {'job_id':job_id, 'task_id':task_id, 'check_revision':str(check_revision),
+                'candidate_hash':after, 'execution_hash':execution_after,
+                'parent_hash':parent_hash,
+                'score':result.get('score'), 'passed':bool(result.get('score')),
+                'execution_status':evidence.get('result',{}).get('exit_status'),
+                'metrics':public_metrics, 'mechanism_check':mechanism}
