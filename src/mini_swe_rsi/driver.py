@@ -75,20 +75,19 @@ def initial_code(destination):
     source = ROOT / 'src/mini_swe_rsi/harness/template/minisweagent'
     if not source.is_dir():
         raise RuntimeError('Integrated initial Harness source is missing')
-    for name, expected in read(ROOT/'upstream.lock.json')['mini']['files'].items():
+    files = read(ROOT/'upstream.lock.json')['mini']['seed_files']
+    for name, expected in files.items():
         if digest(source/name) != expected:
-            raise RuntimeError('Pinned mini source changed: ' + name)
-    from .harness.seed import apply_seed_patch
+            raise RuntimeError('Initial Harness source changed: ' + name)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # Do not publish a partial H0 if verification or patch application fails.
+    # Publish only a fully copied and identified H0.
     with tempfile.TemporaryDirectory(prefix='.harness-seed-', dir=destination.parent) as staging:
         seed = Path(staging)/'agent_code'
         package = seed/'minisweagent'
-        for name in read(ROOT/'upstream.lock.json')['mini']['files']:
+        for name in files:
             target = package/name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source/name, target)
-        apply_seed_patch(package)
         _seed_metadata(seed)
         seed.rename(destination)
 

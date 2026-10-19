@@ -343,8 +343,6 @@ class Broker:
                     if str(exc) == 'ContextLimitExceeded':
                         out['error'].update(type='invalid_request_error', code='context_length_exceeded')
                         out['error']['message'] = 'exceed context limit: frozen model context capacity (ContextLimitExceeded)'
-                    elif str(exc) == 'InputIntegrityError':
-                        out['error'].update(type='invalid_request_error', code='input_integrity_failed')
                     elif str(exc) in ('TimeExceeded', 'LimitsExceeded'):
                         out['error'].update(type='permission_error', code='budget_exhausted')
                         status = 403
@@ -626,44 +624,6 @@ class Broker:
         except Exception as e:
             raise ModelError(f'Model identity request failed: {type(e).__name__}') from None
 
-    def service_configuration(self, model, tokenizer_identity=None):
-        request = urllib.request.Request(self.config['OPENAI_BASE_URL'].rstrip('/').removesuffix('/v1') + '/api/show',
-            data=json.dumps({'model': model, 'verbose': True}).encode(), headers={
-                'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.config['OPENAI_API_KEY']})
-        try:
-            with self.opener.open(request, timeout=30) as response:
-                shown = json.load(response)
-        except Exception as exc:
-            raise ModelError('Service context configuration unavailable: ' + type(exc).__name__) from None
-        parameters = shown.get('parameters', '')
-        match = re.search(r'^num_ctx\s+(\d+)\s*$', parameters, re.MULTILINE)
-        if not match:
-            raise ModelError('Service does not advertise an explicit num_ctx')
-        configured_context = int(match.group(1))
-        if configured_context < self.context.contract['total_tokens']:
-            raise ModelError('Service num_ctx is below frozen host total token budget')
-        template = shown.get('template')
-        if not isinstance(template, str) or not template:
-            raise ModelError('Service chat template is unavailable')
-        family = (shown.get('details') or {}).get('family')
-        if family != 'qwen35':
-            raise ModelError('Service model family does not match frozen Qwen3.5 tokenizer')
-        metadata = {key: value for key, value in (shown.get('model_info') or {}).items()
-                    if key.startswith('tokenizer.ggml.')}
-        if any(not isinstance(metadata.get(key), list) or not metadata[key]
-               for key in ('tokenizer.ggml.tokens', 'tokenizer.ggml.merges', 'tokenizer.ggml.token_type')):
-            raise ModelError('Service tokenizer metadata is incomplete')
-        tokenizer_sha = hashlib.sha256(json.dumps(metadata, sort_keys=True,
-            separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
-        identity = tokenizer_identity or self.context.contract['tokenizer']
-        if tokenizer_sha != identity['service_tokenizer_sha256']:
-            raise ModelError('Service tokenizer does not match frozen Qwen tokenizer identity')
-        return {'service_tokenizer_sha256': tokenizer_sha,
-                'model_family': family, 'configured_context_tokens': configured_context,
-                'parameters': canonical_parameters(parameters),
-                'template_sha256': hashlib.sha256(template.encode()).hexdigest(),
-                'architecture_context_length': (shown.get('model_info') or {}).get('qwen35.context_length')}
-
     def identity(self):
         models = self.remote('/models')['data']
         requested = self.config['LLM_MODEL_NAME']
@@ -762,15 +722,6 @@ class Broker:
                 proxy_catalog=proxy_catalog, underlying_model_verifiable=False)
         if native is not None:
             self.service_identity.update(capacity_source='authenticated Ollama /api/show', ollama=native)
-            if architecture == 'qwen35':
-                from .core import read
-                from .context_budget import LOCK_PATH
-                tokenizer_identity = read(LOCK_PATH)
-                verified = self.service_configuration(self.model, tokenizer_identity)
-                if canonical_parameters(verified['parameters']) != native['parameters'] or verified['template_sha256'] != native['template_sha256']:
-                    raise ModelError('Service metadata changed during tokenizer verification')
-                self.context.enable_verified_text_audit(tokenizer_identity)
-                self.service_identity['input_integrity'] = self.context.contract['input_integrity']
         return {'requested':requested, 'model':self.model,
                 'weights':selected.get('digest'), 'weights_verifiable':bool(selected.get('digest')),
                 'temperature_requested':0, 'thinking':'provider default', 'reasoning_effort':'provider default',
@@ -929,8 +880,6 @@ class Broker:
                 measurement = self.context.measure(current)
                 append_event(self.root, dict(kind='message_normalization', label=s['label'], protocol=TEXT_PROTOCOL,
                     original_characters=original_chars, normalized_characters=len(json.dumps(current,ensure_ascii=False)), **measurement))
-                if not self.context.fits(measurement):
-                    self.reject(s, 'ContextLimitExceeded', 'host_context')
                 wire = copy.deepcopy(current)
                 prefix = getattr(self, 'prefix_protocol', None) == 'deepseek-beta' and wire and wire[-1]['role'] == 'assistant'
                 base = self.config['OPENAI_BASE_URL'].rstrip('/')
@@ -980,20 +929,6 @@ class Broker:
                     aggregate_cached += cached
                     if not cache_valid:
                         raise ModelError('Invalid cached token usage')
-                    estimate = measurement['host_prompt_tokens_estimate']
-                    if estimate is not None:
-                        event['service_prompt_minus_host_estimate'] = usage['prompt_tokens'] - estimate
-                    if self.context.tokenizer is not None:
-                        # A generous framing tolerance avoids pretending to know
-                        # provider serialization. Gross missing text fails closed.
-                        gap = measurement['host_text_tokens'] - usage['prompt_tokens']
-                        allowance = measurement['host_framing_tokens']
-                        event['input_integrity'] = {'text_token_deficit':gap,'tolerance_tokens':allowance,
-                            'status':'failed' if gap > allowance else 'no_gross_truncation_detected',
-                            'exact_preservation_proven':False}
-                        if gap > allowance:
-                            s['terminal_reason'] = 'InputIntegrityError'
-                            raise ModelError('InputIntegrityError')
                     combined = usage['prompt_tokens'] + usage['completion_tokens']
                     if combined > measurement['total_token_budget']:
                         event.update(context_budget_basis='service_prompt_tokens',

@@ -1,5 +1,5 @@
 """SICA budget scopes; provider capacities come from the configured endpoint."""
-from .core import ROOT, digest, read
+from .core import ROOT, digest
 
 
 def sica_budget(model_max_output_tokens, context_max_tokens):
@@ -26,5 +26,4 @@ def sica_budget(model_max_output_tokens, context_max_tokens):
 
 
 def policy_contract():
-    return {'version': 'sica-budget-scopes-v2', 'sha256': digest(ROOT/'src/mini_swe_rsi/budget_policy.py'),
-            'upstream_sources':read(ROOT/'upstream.lock.json')['sica']['budget_files']}
+    return {'version': 'sica-budget-scopes-v2', 'sha256': digest(ROOT/'src/mini_swe_rsi/budget_policy.py')}

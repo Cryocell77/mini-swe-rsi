@@ -10,20 +10,17 @@ English | [简体中文](upstream_adaptations.zh-CN.md)
 | mini-swe-agent | `SWE-agent/mini-swe-agent` | `04d809ceab9df28f9adaed044884180159172930` | Initial Harness agent, model, environment, config, and utils |
 | SWE-bench | `SWE-bench/SWE-bench` | `726c5461e2ef52d83cf1ea2107870a8bb3328d57` | Official evaluation assets |
 
-Source versions and original file hashes are recorded in [upstream.lock.json](../upstream.lock.json). Required source is included under `src/mini_swe_rsi/`; installation and tests do not require a download script.
+Upstream revisions and integrated source hashes are recorded in [upstream.lock.json](../upstream.lock.json). Required source is included under `src/mini_swe_rsi/`; installation and tests do not require a download script.
 
-- `harness/template/minisweagent/`: the pinned mini source template; its license is retained in `harness/LICENSE.mini`.
-- `workflow/task/` and `workflow/sources/`: original SICA task, role, and seven-step definitions, with their MIT license. Budget reference sources are kept in `workflow/provenance/` for provenance checks only; their upstream agents and providers are not executed.
+- `harness/template/minisweagent/`: the prepared mini runtime seed; its license is retained in `harness/LICENSE.mini`.
+- `workflow/task/` and `workflow/sources/`: original SICA task, role, and seven-step definitions, with their MIT license. The runtime does not include unused upstream agent/provider implementations or budget reference copies.
 - `evaluation/swebench/`: the SWE-bench implementation. Internal imports use `mini_swe_rsi.evaluation.swebench`; dataset names, image names, and evaluation recipes remain unchanged. The license is in `evaluation/LICENSE.swebench`.
 
 ## Building H0000
 
-[driver.py](../src/mini_swe_rsi/driver.py) creates H0000 from mini-swe-agent 2.4.6. [seed.py](../src/mini_swe_rsi/harness/seed.py) applies two changes to the copy:
+[driver.py](../src/mini_swe_rsi/driver.py) creates H0000 by copying the prepared mini-swe-agent 2.4.6 source from `harness/template/minisweagent/`. The seed already excludes monetary accounting, the standalone mini CLI, batch runners, and bundled benchmark configurations. Its file hashes are recorded under `mini.seed_files` in [upstream.lock.json](../upstream.lock.json).
 
-1. [mini-no-billing.patch](../src/mini_swe_rsi/assets/mini-no-billing.patch) removes price calculations, monetary totals, and billing-related configuration, template variables, and trajectory fields. Before/after hashes are recorded in the [patch manifest](../src/mini_swe_rsi/assets/mini-no-billing.json).
-2. [mini-online-slim.json](../src/mini_swe_rsi/assets/mini-online-slim.json) removes the standalone mini CLI, batch runners, and bundled benchmark configurations.
-
-The archived root entry point runs tasks and improvements through the project bridge. Retained mini APIs are available for offline candidate tests; the standalone `python -m minisweagent` CLI is removed. These changes apply only when creating H0000 and do not rewrite existing candidates.
+Initialization verifies those hashes, copies the seed, and adds the archived root entry point and metadata. It does not apply patches or trim files at runtime, and it never rewrites an existing candidate. The root entry point runs tasks and improvements through the project bridge. Retained mini APIs remain available for offline candidate tests; the standalone `python -m minisweagent` CLI is absent.
 
 ## Main differences from upstream
 

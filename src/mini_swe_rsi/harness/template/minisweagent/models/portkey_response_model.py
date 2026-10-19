@@ -1,11 +1,8 @@
-import json
 import logging
 import os
 import time
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-import litellm
 from pydantic import BaseModel
 
 from minisweagent.exceptions import FormatError
@@ -31,9 +28,6 @@ except ImportError:
 class PortkeyResponseAPIModelConfig(BaseModel):
     model_name: str
     model_kwargs: dict[str, Any] = {}
-    litellm_model_registry: Path | str | None = os.getenv("LITELLM_MODEL_REGISTRY_PATH")
-    litellm_model_name_override: str = ""
-    cost_tracking: Literal["default", "ignore_errors"] = os.getenv("MSWEA_COST_TRACKING", "default")
     format_error_template: str = "{{ error }}"
     observation_template: str = (
         "{% if output.exception_info %}<exception>{{output.exception_info}}</exception>\n{% endif %}"
@@ -53,8 +47,6 @@ class PortkeyResponseAPIModel:
 
     def __init__(self, **kwargs):
         self.config = PortkeyResponseAPIModelConfig(**kwargs)
-        if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
-            litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
 
         self._api_key = os.getenv("PORTKEY_API_KEY")
         if not self._api_key:
@@ -97,12 +89,10 @@ class PortkeyResponseAPIModel:
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
-        cost_output = self._calculate_cost(response)
-        GLOBAL_MODEL_STATS.add(cost_output["cost"])
+        GLOBAL_MODEL_STATS.add()
         try:
             actions = self._parse_actions(response)
         except FormatError as e:
-            e.messages[0]["extra"].update(cost_output)
             # hasattr guard: Portkey returns a pydantic object, but tests may inject a plain dict.
             # Inner try: if serialization itself fails, repr() guarantees the key is always set.
             try:
@@ -115,7 +105,6 @@ class PortkeyResponseAPIModel:
         message = response.model_dump() if hasattr(response, "model_dump") else dict(response)
         message["extra"] = {
             "actions": actions,
-            **cost_output,
             "timestamp": time.time(),
         }
         return message
@@ -129,21 +118,6 @@ class PortkeyResponseAPIModel:
             template_kwargs={"finish_reason": finish_reason_from_responses_api(response)},
         )
 
-    def _calculate_cost(self, response) -> dict[str, float]:
-        try:
-            cost = litellm.cost_calculator.completion_cost(
-                response, model=self.config.litellm_model_name_override or self.config.model_name
-            )
-            assert cost > 0.0, f"Cost is not positive: {cost}"
-        except Exception as e:
-            if self.config.cost_tracking != "ignore_errors":
-                raise RuntimeError(
-                    f"Error calculating cost for model {self.config.model_name}: {e}. "
-                    "You can ignore this issue from your config file with cost_tracking: 'ignore_errors' or "
-                    "globally with export MSWEA_COST_TRACKING='ignore_errors' to ignore this error. "
-                ) from e
-            cost = 0.0
-        return {"cost": cost}
 
     def format_message(self, **kwargs) -> dict:
         role = kwargs.get("role", "user")

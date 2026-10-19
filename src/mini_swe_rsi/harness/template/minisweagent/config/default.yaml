@@ -102,7 +102,6 @@ agent:
     anything
     ```
   step_limit: 0
-  cost_limit: 0.
 environment:
   env:
     PAGER: cat

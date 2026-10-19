@@ -59,8 +59,8 @@ def test_missing_model_name_is_rejected(tmp_path, monkeypatch, model_value):
         secrets()
 
 
-def test_remote_identity_never_uses_qwen_tokenizer(broker):
-    assert broker.context.tokenizer is None
+def test_remote_identity_uses_provider_capacities(broker):
+    assert broker.context.contract['capacity_source'] == 'authenticated provider metadata'
     assert broker.context.contract['total_tokens'] == 1048576
     assert broker.budget_limits()['model_max_output_tokens'] == 393216
     assert broker.identity()['weights_verifiable'] is False
@@ -71,8 +71,8 @@ def test_remote_identity_never_uses_qwen_tokenizer(broker):
         broker.identity()
 
 
-@pytest.fixture
-def ollama_broker(tmp_path, monkeypatch):
+@pytest.fixture(params=['qwen35', 'llama'])
+def ollama_broker(tmp_path, monkeypatch, request):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets', lambda:dict(
         OPENAI_BASE_URL='http://fixture/v1', OPENAI_API_KEY='private-fixture', LLM_MODEL_NAME='qwen35-4b-agent'))
     instance = Broker(tmp_path)
@@ -80,14 +80,9 @@ def ollama_broker(tmp_path, monkeypatch):
             '/api/version':{'version':'fixture'},
             '/api/tags':{'models':[{'name':'qwen35-4b-agent:latest','digest':'a'*64}]}}
     shown = {'parameters':'num_ctx 65536\n', 'template':'fixture-template',
-             'model_info':{'general.architecture':'qwen35','qwen35.context_length':262144}}
+             'model_info':{'general.architecture':request.param, request.param+'.context_length':262144}}
     instance.remote = lambda path:data[path]
     instance.opener = type('Endpoint',(),{'open':staticmethod(lambda *args,**kwargs:io.BytesIO(json.dumps(shown).encode()))})()
-    # Native tokenizer authenticity is exercised separately; this capacity fixture
-    # supplies the same verified metadata without shipping a second vocabulary.
-    instance.service_configuration = lambda model, identity=None: {
-        'parameters':shown['parameters'],
-        'template_sha256':__import__('hashlib').sha256(shown['template'].encode()).hexdigest()}
     yield instance, data, shown
     instance.close()
 
@@ -198,7 +193,7 @@ def test_no_old_context_cap_and_usage_is_authoritative(broker):
     requests=endpoint(broker,iter([reply(usage={'total_tokens':40002,'prompt_tokens':40000,'completion_tokens':2})]))
     broker.complete(token,{'messages':[{'role':'user','content':'x '*40000}]})
     assert len(requests)==1
-    assert broker_events(broker)[-1]['host_prompt_tokens_estimate'] is None
+    assert 'host_prompt_tokens_estimate' not in broker_events(broker)[-1]
     token=broker.session('over-capacity')
     endpoint(broker,iter([reply(usage={'total_tokens':1048578,'prompt_tokens':1048576,'completion_tokens':2})]))
     with pytest.raises(ModelError,match='ContextLimitExceeded'):
@@ -249,26 +244,6 @@ def test_budget_limits_keep_enforced_scopes_and_remove_unused_fileview_placehold
     assert policy_contract()['version'] == 'sica-budget-scopes-v2'
 
 
-def test_pinned_upstream_budget_scopes_match_policy():
-    import ast
-    from mini_swe_rsi.core import ROOT, read, digest
-    from mini_swe_rsi.budget_policy import sica_budget
-
-    policy = sica_budget(393216, 1048576)
-    sources = ROOT/'src/mini_swe_rsi/workflow/provenance'
-    for path, expected in read(ROOT/'upstream.lock.json')['sica']['budget_files'].items():
-        assert digest(sources/path) == expected
-    base = ast.parse((sources/'base_agent/src/agents/base_agent.py').read_text())
-    iterations = next(n.value.value for n in ast.walk(base) if isinstance(n, ast.AnnAssign)
-                      and isinstance(n.target, ast.Name) and n.target.id == 'MAX_ITERATIONS')
-    assert iterations == policy['main_iterations'] == 500
-    calls = [n for n in ast.walk(base) if isinstance(n, ast.Call)]
-    continuation = next(k.value.value for n in calls for k in n.keywords if k.arg == 'max_continuations')
-    assert continuation == policy['completion_max_requests'] == 5
-    coder = ast.parse((ROOT/'src/mini_swe_rsi/workflow/sources/coder.py').read_text())
-    iterations = next(n.value.value for n in ast.walk(coder) if isinstance(n, ast.Assign)
-                      and any(isinstance(t, ast.Name) and t.id == 'MAX_ITERATIONS' for t in n.targets))
-    assert iterations == policy['role_iterations']['software_developer'] == 1000
 
 
 def test_unbounded_observation_keeps_archived_harness_customization():

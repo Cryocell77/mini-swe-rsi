@@ -35,7 +35,6 @@ class InteractiveAgent(DefaultAgent):
 
     def __init__(self, *args, config_class=InteractiveAgentConfig, **kwargs):
         super().__init__(*args, config_class=config_class, **kwargs)
-        self.cost_last_confirmed = 0.0
 
     def _interrupt(self, content: str, *, itype: str = "UserInterruption") -> NoReturn:
         raise UserInterruption({"role": "user", "content": content, "extra": {"interrupt_type": itype}})
@@ -46,7 +45,7 @@ class InteractiveAgent(DefaultAgent):
             role, content = msg.get("role") or msg.get("type", "unknown"), get_content_string(msg)
             if role == "assistant":
                 console.print(
-                    f"\n[red][bold]mini-swe-agent[/bold] (step [bold]{self.n_calls}[/bold], [bold]${self.cost:.2f}[/bold]):[/red]\n",
+                    f"\n[red][bold]mini-swe-agent[/bold] (step [bold]{self.n_calls}[/bold]):[/red]\n",
                     end="",
                     highlight=False,
                 )
@@ -73,7 +72,7 @@ class InteractiveAgent(DefaultAgent):
             with console.status("Waiting for the LM to respond..."):
                 return super().query()
         except TimeExceeded:
-            # A wall-clock limit can't be lifted by raising the step/cost limits
+            # A wall-clock limit can't be lifted by raising the step limit
             # (the next query re-checks the clock and raises again), so prompting
             # would loop forever. Always stop cleanly instead.
             raise
@@ -86,11 +85,10 @@ class InteractiveAgent(DefaultAgent):
                 # reading input.
                 raise
             console.print(
-                f"Limits exceeded. Limits: {self.config.step_limit} steps, ${self.config.cost_limit}.\n"
-                f"Current spend: {self.n_calls} steps, ${self.cost:.2f}."
+                f"Step limit exceeded: {self.config.step_limit}.\n"
+                f"Current steps: {self.n_calls}."
             )
             self.config.step_limit = int(input("New step limit: "))
-            self.config.cost_limit = float(input("New cost limit: "))
             return super().query()
 
     @staticmethod

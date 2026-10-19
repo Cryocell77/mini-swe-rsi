@@ -13,18 +13,17 @@ from minisweagent.models.utils.actions_toolcall_response import (
 from minisweagent.models.utils.openai_multimodal import expand_multimodal_content
 
 
-def make_output(content: str, actions: list[dict], cost: float = 1.0) -> dict:
+def make_output(content: str, actions: list[dict]) -> dict:
     """Helper to create an output dict for DeterministicModel.
 
     Args:
         content: The response content string
         actions: List of action dicts, e.g., [{"command": "echo hello"}]
-        cost: Cost to report for this output (default 1.0)
     """
     return {
         "role": "assistant",
         "content": content,
-        "extra": {"actions": actions, "cost": cost, "timestamp": time.time()},
+        "extra": {"actions": actions, "timestamp": time.time()},
     }
 
 
@@ -40,7 +39,7 @@ def make_toolcall_output(content: str | None, tool_calls: list[dict], actions: l
         "role": "assistant",
         "content": content,
         "tool_calls": tool_calls,
-        "extra": {"actions": actions, "cost": 1.0, "timestamp": time.time()},
+        "extra": {"actions": actions, "timestamp": time.time()},
     }
 
 
@@ -68,7 +67,7 @@ def make_response_api_output(content: str | None, actions: list[dict]) -> dict:
     return {
         "object": "response",
         "output": output_items,
-        "extra": {"actions": actions, "cost": 1.0, "timestamp": time.time()},
+        "extra": {"actions": actions, "timestamp": time.time()},
     }
 
 
@@ -91,7 +90,6 @@ class DeterministicModelConfig(BaseModel):
     outputs: list[dict]
     """List of exact output messages to return in sequence. Each dict should have 'role', 'content', and 'extra' (with 'actions')."""
     model_name: str = "deterministic"
-    cost_per_call: float = 1.0
     observation_template: str = (
         "{% if output.exception_info %}<exception>{{output.exception_info}}</exception>\n{% endif %}"
         "<returncode>{{output.returncode}}</returncode>\n<output>\n{{output.output}}</output>"
@@ -112,7 +110,7 @@ class DeterministicModel:
         output = self.config.outputs[self.current_index]
         if _process_test_actions(output.get("extra", {}).get("actions", [])):
             return self.query(messages, **kwargs)
-        GLOBAL_MODEL_STATS.add(self.config.cost_per_call)
+        GLOBAL_MODEL_STATS.add()
         return output
 
     def format_message(self, **kwargs) -> dict:
@@ -147,7 +145,6 @@ class DeterministicToolcallModelConfig(BaseModel):
     outputs: list[dict]
     """List of exact output messages with tool_calls to return in sequence."""
     model_name: str = "deterministic_toolcall"
-    cost_per_call: float = 1.0
     observation_template: str = (
         "{% if output.exception_info %}<exception>{{output.exception_info}}</exception>\n{% endif %}"
         "<returncode>{{output.returncode}}</returncode>\n<output>\n{{output.output}}</output>"
@@ -168,7 +165,7 @@ class DeterministicToolcallModel:
         output = self.config.outputs[self.current_index]
         if _process_test_actions(output.get("extra", {}).get("actions", [])):
             return self.query(messages, **kwargs)
-        GLOBAL_MODEL_STATS.add(self.config.cost_per_call)
+        GLOBAL_MODEL_STATS.add()
         return output
 
     def format_message(self, **kwargs) -> dict:
@@ -205,7 +202,6 @@ class DeterministicResponseAPIToolcallModelConfig(BaseModel):
     outputs: list[dict]
     """List of exact Response API output messages to return in sequence."""
     model_name: str = "deterministic_response_api_toolcall"
-    cost_per_call: float = 1.0
     observation_template: str = (
         "{% if output.exception_info %}<exception>{{output.exception_info}}</exception>\n{% endif %}"
         "<returncode>{{output.returncode}}</returncode>\n<output>\n{{output.output}}</output>"
@@ -228,7 +224,7 @@ class DeterministicResponseAPIToolcallModel:
         output = self.config.outputs[self.current_index]
         if _process_test_actions(output.get("extra", {}).get("actions", [])):
             return self.query(messages, **kwargs)
-        GLOBAL_MODEL_STATS.add(self.config.cost_per_call)
+        GLOBAL_MODEL_STATS.add()
         return output
 
     def format_message(self, **kwargs) -> dict:

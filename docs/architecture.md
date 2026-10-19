@@ -86,6 +86,8 @@ Improvement shell output above 300,000 bytes is saved to a file, with an index a
 
 Offline agent loop tests need an explicit exit condition and a finite step limit. `LimitsExceeded` means the allowance was exhausted; it is not a successful submission.
 
+All models use service-declared context and output capacities, followed by a check of actual `prompt_tokens + completion_tokens`. The host does not load a local tokenizer or estimate tokens from character counts. Qwen-specific pre-request length and gross input-truncation checks are removed. Provider context errors still fail the request, and responses whose reported usage exceeds the frozen capacity are withheld from the agent. LiteLLM may still install `tokenizers` as a transitive dependency.
+
 ## Role operations
 
 Structured operations use `sica-workflow` followed by raw JSON:
@@ -128,13 +130,13 @@ The current protocols are `mini-swe-rsi-online-v8` and `sica-mini-improvement-v8
 
 ```text
 src/mini_swe_rsi/
-├── harness/       # Initial Harness template, generation logic, and licenses
+├── harness/       # Prepared initial Harness source and license
 ├── workflow/      # Seven-step state machine, bridge, roles, and provenance
 ├── evaluation/    # Isolated evaluator and integrated SWE-bench implementation
 └── ...            # Online scheduling, model service, recovery, and reports
 ```
 
-`harness/template/minisweagent/` is a source template for candidate generation, not a host top-level package. Each candidate generation retains its own `minisweagent` package and source identity. Evaluation imports use `mini_swe_rsi.evaluation.swebench` and do not depend on an external package with that name. The root `runtime/` directory contains only the container Dockerfile and dependency lock.
+`harness/template/minisweagent/` contains the prepared initial Harness source, not a host top-level package. Each candidate generation retains its own `minisweagent` package and source identity. Evaluation imports use `mini_swe_rsi.evaluation.swebench` and do not depend on an external package with that name. The root `runtime/` directory contains only the container Dockerfile and dependency lock.
 
 ### Implementation entry points
 

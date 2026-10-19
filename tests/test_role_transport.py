@@ -1,5 +1,5 @@
 """Improve-only transport regressions, including the fourth-run observed failures."""
-from mini_swe_rsi.context_budget import ContextBudget, LOCK_PATH
+from mini_swe_rsi.context_budget import ContextBudget
 import importlib.util
 import io
 import json
@@ -84,29 +84,32 @@ def test_read_line_bounds_real_path_and_history_provenance(tmp_path, monkeypatch
 def test_status_rejections_and_generic_error_do_not_inherit_old_terminal_reason(tmp_path,monkeypatch):
     monkeypatch.setattr('mini_swe_rsi.broker.secrets',lambda:dict(OPENAI_BASE_URL='https://fixture/v1',OPENAI_API_KEY='secret',LLM_MODEL_NAME='fixture'))
     context = ContextBudget(CAPABILITIES)
-    context.enable_verified_text_audit(read(LOCK_PATH))
     broker=Broker(tmp_path,context=context);broker.model='fixture'
-    token=broker.session('roles',calls=1)
+    token=broker.session('roles',calls=2)
     def status(auth=token):
         req=urllib.request.Request(f'http://127.0.0.1:{broker.port}/status',data=b'{}',headers={'Authorization':'Bearer '+auth})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req) as f:return json.load(f)
     try:
-        assert status()['remaining_calls']==1 and status()['terminal_reason'] is None
+        assert status()['remaining_calls']==2 and status()['terminal_reason'] is None
         with pytest.raises(urllib.error.HTTPError):status('wrong')
-        with pytest.raises(ModelError):broker.complete(token,{'messages':[{'role':'user','content':'x '*40000}]})
-        assert status()['calls']==0 and status()['terminal_reason']=='ContextLimitExceeded'
+        broker.opener=type('Endpoint',(),{'open':staticmethod(lambda *a,**k:io.BytesIO(json.dumps(
+            {'choices':[{'message':{'role':'assistant','content':'hello'},'finish_reason':'stop'}],
+             'usage':{'prompt_tokens':32768,'completion_tokens':1,'total_tokens':32769}}).encode()))})()
+        with pytest.raises(ModelError,match='ContextLimitExceeded'):
+            broker.complete(token,{'messages':[{'role':'user','content':'hello'}]})
+        assert status()['calls']==1 and status()['terminal_reason']=='ContextLimitExceeded'
         class Endpoint:
             def open(self,*a,**kw):raise RuntimeError('LimitsExceeded arbitrary endpoint text')
         broker.opener=Endpoint()
         with pytest.raises(ModelError,match='RuntimeError'):broker.complete(token,{'messages':[{'role':'user','content':'hello'}]})
-        assert status()['calls']==1 and status()['terminal_reason'] is None
+        assert status()['calls']==2 and status()['terminal_reason'] is None
         APIError=type('APIError',(Exception,),{})
         raw=APIError('LimitsExceeded arbitrary exception text')
         assert bridge['classified_failure'](raw,status())['exit_status']=='APIError'
         with pytest.raises(ModelError,match='LimitsExceeded'):broker.complete(token,{'messages':[]})
         result=bridge['classified_failure'](raw,status())
         assert result['exit_status']=='LimitsExceeded' and result['raw_exception']['type']=='APIError'
-        assert status()['calls']==1 and len(status()['rejected_calls'])==2
+        assert status()['calls']==2 and len(status()['rejected_calls'])==1
         broker.sessions[token]['deadline']=0
         assert status()['remaining_seconds']==0
         with pytest.raises(ModelError,match='TimeExceeded'):broker.complete(token,{'messages':[]})

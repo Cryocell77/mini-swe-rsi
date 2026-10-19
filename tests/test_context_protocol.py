@@ -42,42 +42,8 @@ def test_ambiguous_reasoning_is_never_promoted(raw):
     assert why.startswith('unchanged')
 
 
-def test_actual_qwen_tokenizer_budget_boundary_and_multilingual():
-    context = ContextBudget(CAPABILITIES)
-    from mini_swe_rsi.core import read
-    from mini_swe_rsi.context_budget import LOCK_PATH
-    context.enable_verified_text_audit(read(LOCK_PATH))
-    measurement = context.measure([{'role': 'user', 'content': '中文 mixed text'}])
-    assert measurement['host_text_tokens'] == len(context.tokenizer.encode('中文 mixed text', add_special_tokens=False).ids)
-    # Provider capacity is enforced against actual prompt plus completion
-    # usage; the pre-request estimate only requires one token of room.
-    limit = CAPABILITIES['context_window'] - 1
-    assert context.fits({'host_prompt_tokens_estimate': limit})
-    assert not context.fits({'host_prompt_tokens_estimate': limit + 1})
-    reasoning_measurement = context.measure([{'role':'assistant', 'content':'', 'reasoning_content':'思考'}])
-    # The verified Ollama audit covers provider-bound content only; replayed
-    # reasoning_content is deliberately excluded from the provider prompt estimate.
-    assert reasoning_measurement['host_text_tokens'] == 0
-    assert reasoning_measurement['host_text_characters'] == 2
-    # Long compressible text is no longer rejected by a character surrogate.
-    assert context.fits(context.measure([{'role':'user', 'content':'x' * 100000}]))
-    assert not context.fits(context.measure([{'role':'user', 'content':'x ' * 32768}]))
 
 
-def test_missing_or_corrupt_tokenizer_never_falls_back(tmp_path, monkeypatch):
-    import mini_swe_rsi.context_budget as module
-    import importlib.metadata
-    monkeypatch.setattr(module, 'ROOT', tmp_path)
-    context = module.ContextBudget(CAPABILITIES)
-    identity = {'library_version': importlib.metadata.version('tokenizers'),
-                'file': 'missing.json', 'sha256': 'bad'}
-    with pytest.raises(FileNotFoundError):
-        context.enable_verified_text_audit(identity)
-    (tmp_path/'missing.json').write_text('not a tokenizer')
-    with pytest.raises(RuntimeError, match='library version mismatch'):
-        context.enable_verified_text_audit({**identity, 'library_version': 'wrong'})
-    with pytest.raises(RuntimeError, match='file digest mismatch'):
-        context.enable_verified_text_audit(identity)
 
 
 def test_only_action_extracted_from_thought_prose_and_raw_reasoning_alias():
@@ -127,42 +93,6 @@ def test_all_observed_empty_content_action_responses_offline():
     assert observed == 11
 
 
-@pytest.mark.parametrize('num_ctx,family,accepted', [(65536,'qwen35',True),(16384,'qwen35',False),
-                                                      (65536,'other',False),(None,'qwen35',False)])
-def test_service_context_identity_is_separate_and_must_support_budget(num_ctx, family, accepted):
-    import hashlib
-    import io
-    import json
-    from types import SimpleNamespace
-    from mini_swe_rsi.broker import Broker, ModelError
-    broker = Broker.__new__(Broker)
-    broker.config = {'OPENAI_BASE_URL':'https://fixture/v1','OPENAI_API_KEY':'secret'}
-    shown = {'parameters':f'num_ctx {num_ctx}' if num_ctx else 'temperature 1',
-             'details':{'family':family},'template':'{{ .Prompt }}',
-             'model_info':{'qwen35.context_length':262144}}
-    metadata = {'tokenizer.ggml.tokens':['fixture'], 'tokenizer.ggml.merges':['a b'],
-                'tokenizer.ggml.token_type':[1], 'tokenizer.ggml.pre':'qwen35'}
-    shown['model_info'].update(metadata)
-    tokenizer_sha = hashlib.sha256(json.dumps(metadata, sort_keys=True,
-        separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
-    broker.context = SimpleNamespace(contract={'total_tokens':32768,
-        'tokenizer':{'service_tokenizer_sha256':tokenizer_sha}})
-    broker.opener = SimpleNamespace(open=lambda *a, **k:io.BytesIO(json.dumps(shown).encode()))
-    if accepted:
-        identity = broker.service_configuration('fixed')
-        assert identity['service_tokenizer_sha256'] == tokenizer_sha
-        assert identity['configured_context_tokens'] == 65536
-        assert identity['architecture_context_length'] == 262144
-        assert identity['template_sha256'] == hashlib.sha256(shown['template'].encode()).hexdigest()
-        shown['model_info']['tokenizer.ggml.tokens'] = ['changed']
-        with pytest.raises(ModelError, match='does not match frozen'):
-            broker.service_configuration('fixed')
-        del shown['model_info']['tokenizer.ggml.merges']
-        with pytest.raises(ModelError, match='metadata is incomplete'):
-            broker.service_configuration('fixed')
-    else:
-        with pytest.raises(ModelError):
-            broker.service_configuration('fixed')
 
 
 @pytest.mark.parametrize('prose', [

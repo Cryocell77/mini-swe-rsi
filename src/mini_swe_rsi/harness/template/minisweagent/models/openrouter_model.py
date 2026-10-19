@@ -27,8 +27,6 @@ class OpenRouterModelConfig(BaseModel):
     model_kwargs: dict[str, Any] = {}
     set_cache_control: Literal["default_end"] | None = None
     """Set explicit cache control markers, for example for Anthropic models"""
-    cost_tracking: Literal["default", "ignore_errors"] = os.getenv("MSWEA_COST_TRACKING", "default")
-    """Cost tracking mode for this model. Can be "default" or "ignore_errors" (ignore errors/missing cost info)"""
     format_error_template: str = "{{ error }}"
     """Template used when the LM's output is not in the expected format."""
     observation_template: str = (
@@ -98,12 +96,10 @@ class OpenRouterModel:
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
-        cost_output = self._calculate_cost(response)
-        GLOBAL_MODEL_STATS.add(cost_output["cost"])
+        GLOBAL_MODEL_STATS.add()
         try:
             actions = self._parse_actions(response)
         except FormatError as e:
-            e.messages[0]["extra"].update(cost_output)
             # dict(response) is a shallow copy; the original response object is not mutated.
             e.messages[0]["extra"]["response"] = dict(response)
             raise
@@ -111,23 +107,10 @@ class OpenRouterModel:
         message["extra"] = {
             "actions": actions,
             "response": response,
-            **cost_output,
             "timestamp": time.time(),
         }
         return message
 
-    def _calculate_cost(self, response) -> dict[str, float]:
-        usage = response.get("usage", {})
-        cost = usage.get("cost", 0.0)
-        if cost <= 0.0 and self.config.cost_tracking != "ignore_errors":
-            raise RuntimeError(
-                f"No valid cost information available from OpenRouter API for model {self.config.model_name}: "
-                f"Usage {usage}, cost {cost}. Cost must be > 0.0. Set cost_tracking: 'ignore_errors' in your config file or "
-                "export MSWEA_COST_TRACKING='ignore_errors' to ignore cost tracking errors "
-                "(for example for free/local models), more information at https://klieret.short.gy/mini-local-models "
-                "for more details. Still stuck? Please open a github issue at https://github.com/SWE-agent/mini-swe-agent/issues/new/choose!"
-            )
-        return {"cost": cost}
 
     def _parse_actions(self, response: dict) -> list[dict]:
         """Parse tool calls from the response. Raises FormatError if unknown tool."""

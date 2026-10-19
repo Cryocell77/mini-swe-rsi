@@ -28,7 +28,7 @@ def test_proxy_declaration_freezes_without_catalog_prompt(proxy):
     identity = broker.identity()
     assert identity['model'] == 'qfmodel' and identity['max_tokens'] == 8192
     assert not identity['weights_verifiable']
-    assert broker.context.contract['total_tokens'] == 180000 and broker.context.tokenizer is None
+    assert broker.context.contract['total_tokens'] == 180000
     assert not broker.service_identity['underlying_model_verifiable']
     assert 'UNTRUSTED' not in str(broker.service_identity)
     frozen = copy.deepcopy(broker.service_identity)

@@ -25,8 +25,6 @@ class AgentConfig(BaseModel):
     """Template for the first user message specifying the task (the second message overall)."""
     step_limit: int = 0
     """Maximum number of steps the agent can take."""
-    cost_limit: float = 3.0
-    """Stop agent after exceeding (!) this cost."""
     wall_time_limit_seconds: int = 0
     """Stop agent after this many seconds of wall-clock time. 0 means no limit."""
     max_consecutive_format_errors: int = 3
@@ -44,7 +42,6 @@ class DefaultAgent:
         self.env = env
         self.extra_template_vars = {}
         self.logger = logging.getLogger("agent")
-        self.cost = 0.0
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
         self._start_time = time.time()
@@ -56,7 +53,6 @@ class DefaultAgent:
             self.model.get_template_vars(),
             {
                 "n_model_calls": self.n_calls,
-                "model_cost": self.cost,
                 "elapsed_seconds": int(time.time() - self._start_time),
             },
             self.extra_template_vars,
@@ -98,8 +94,6 @@ class DefaultAgent:
                 self.step()
                 self.n_consecutive_format_errors = 0  # reset on any clean step
             except FormatError as e:
-                # The call was billed before parsing failed, so query() never got to charge it.
-                self.cost += e.messages[0].get("extra", {}).get("cost", 0.0)
                 self.n_consecutive_format_errors += 1
                 if 0 < self.config.max_consecutive_format_errors <= self.n_consecutive_format_errors:
                     self.add_messages(
@@ -129,7 +123,7 @@ class DefaultAgent:
 
     def query(self) -> dict:
         """Query the model and return model messages. Override to add hooks."""
-        if 0 < self.config.step_limit <= self.n_calls or 0 < self.config.cost_limit <= self.cost:
+        if 0 < self.config.step_limit <= self.n_calls:
             raise LimitsExceeded(
                 {
                     "role": "exit",
@@ -147,7 +141,6 @@ class DefaultAgent:
             )
         self.n_calls += 1
         message = self.model.query(self.messages)
-        self.cost += message.get("extra", {}).get("cost", 0.0)
         self.add_messages(message)
         return message
 
@@ -163,7 +156,6 @@ class DefaultAgent:
         agent_data = {
             "info": {
                 "model_stats": {
-                    "instance_cost": self.cost,
                     "api_calls": self.n_calls,
                 },
                 "config": {

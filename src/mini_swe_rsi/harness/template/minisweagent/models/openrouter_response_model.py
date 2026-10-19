@@ -86,18 +86,15 @@ class OpenRouterResponseModel(OpenRouterModel):
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
-        cost_output = self._calculate_cost(response)
-        GLOBAL_MODEL_STATS.add(cost_output["cost"])
+        GLOBAL_MODEL_STATS.add()
         try:
             actions = self._parse_actions(response)
         except FormatError as e:
-            e.messages[0]["extra"].update(cost_output)
             e.messages[0]["extra"]["response"] = dict(response)
             raise
         message = dict(response)
         message["extra"] = {
             "actions": actions,
-            **cost_output,
             "timestamp": time.time(),
         }
         return message

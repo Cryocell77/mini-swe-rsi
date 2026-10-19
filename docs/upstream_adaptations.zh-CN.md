@@ -10,20 +10,17 @@
 | mini-swe-agent | `SWE-agent/mini-swe-agent` | `04d809ceab9df28f9adaed044884180159172930` | 初始 Harness 的 agent、model、environment、config 和 utils |
 | SWE-bench | `SWE-bench/SWE-bench` | `726c5461e2ef52d83cf1ea2107870a8bb3328d57` | 官方评分资产 |
 
-来源版本与原始文件摘要保存在 [upstream.lock.json](../upstream.lock.json)。所需源码已经纳入 `src/mini_swe_rsi/`，安装和测试无需运行下载脚本。
+来源版本与集成源码摘要保存在 [upstream.lock.json](../upstream.lock.json)。所需源码已经纳入 `src/mini_swe_rsi/`，安装和测试无需运行下载脚本。
 
-- `harness/template/minisweagent/`：锁定的 mini 源码模板；`harness/LICENSE.mini` 保留其许可证。
-- `workflow/task/` 和 `workflow/sources/`：SICA 任务、角色与七步定义原文，附 MIT 许可证。预算核对所需原文保存在 `workflow/provenance/`，仅供来源校验，不执行其中的上游 agent 或 provider。
+- `harness/template/minisweagent/`：预先精简的 mini 运行源码；`harness/LICENSE.mini` 保留其许可证。
+- `workflow/task/` 和 `workflow/sources/`：SICA 任务、角色与七步定义原文，附 MIT 许可证。运行目录不再包含未使用的上游 agent、provider 实现或预算参考副本。
 - `evaluation/swebench/`：SWE-bench 实现；包内导入改为 `mini_swe_rsi.evaluation.swebench`，数据集名称、镜像名称与评分配方保持原样。许可证位于 `evaluation/LICENSE.swebench`。
 
 ## H0000 的构建
 
-[driver.py](../src/mini_swe_rsi/driver.py) 从 mini-swe-agent 2.4.6 创建 H0000。[seed.py](../src/mini_swe_rsi/harness/seed.py) 在副本上应用两项处理：
+[driver.py](../src/mini_swe_rsi/driver.py) 直接复制 `harness/template/minisweagent/` 中预先精简的 mini-swe-agent 2.4.6 源码来创建 H0000。源码已移除金额计费、独立 mini CLI、批量 runner 和附带 benchmark 配置。文件摘要保存在 [upstream.lock.json](../upstream.lock.json) 的 `mini.seed_files` 中。
 
-1. 用 [mini-no-billing.patch](../src/mini_swe_rsi/assets/mini-no-billing.patch) 删除价格计算、金额累计及费用相关配置、模板变量和轨迹字段；修改前后的摘要记录在[补丁清单](../src/mini_swe_rsi/assets/mini-no-billing.json)。
-2. 按 [mini-online-slim.json](../src/mini_swe_rsi/assets/mini-online-slim.json) 移除独立 mini CLI、批量 runner 和附带 benchmark 配置。
-
-归档根入口通过项目桥接器执行任务和改进。保留的 mini API 可供候选离线测试使用，独立 `python -m minisweagent` CLI 已移除。这些处理只用于创建 H0000，不重写已有候选。
+初始化只校验摘要、复制源码并添加归档根入口及元数据，不在运行时打补丁或删除文件，也不重写已有候选。根入口通过项目桥接器执行任务和改进。保留的 mini API 可供候选离线测试使用，独立 `python -m minisweagent` CLI 不再保留。
 
 ## 与上游的主要差异
 

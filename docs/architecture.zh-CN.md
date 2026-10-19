@@ -86,6 +86,8 @@ data/
 
 离线 agent 循环测试需要显式退出，并设置有限步数。`LimitsExceeded` 表示额度耗尽，不能作为成功提交。
 
+所有模型统一使用服务声明的上下文及输出容量，并在响应后检查实际 `prompt_tokens + completion_tokens`。宿主不加载本地 tokenizer，不以字符数估算 token，也不再进行 Qwen 专用的请求前长度或明显输入截断检查。服务返回的上下文错误仍作为失败处理，实际用量超过冻结容量时不会将响应交给 agent。`tokenizers` 仍可能由 LiteLLM 作为间接依赖安装。
+
 ## 角色操作
 
 结构化操作使用 `sica-workflow` 加原始 JSON：
@@ -128,13 +130,13 @@ JSON 对象不加外层 shell 引号，报告正文不带完成标记。其他�
 
 ```text
 src/mini_swe_rsi/
-├── harness/       # 初始 Harness 模板、生成逻辑与许可证
+├── harness/       # 预先精简的初始 Harness 源码与许可证
 ├── workflow/      # 七步状态机、桥接器、角色定义与来源记录
 ├── evaluation/    # 隔离评分入口与项目内 SWE-bench 实现
 └── ...            # 在线调度、模型服务、恢复与报告
 ```
 
-`harness/template/minisweagent/` 是生成候选的源码模板，不作为宿主顶层包加载。每代候选仍有独立的 `minisweagent` 包及源码身份。评分实现使用 `mini_swe_rsi.evaluation.swebench` 导入，不依赖外部同名安装包。根目录 `runtime/` 只保留容器 Dockerfile 和依赖锁。
+`harness/template/minisweagent/` 是预先精简的初始 Harness 源码，不作为宿主顶层包加载。每代候选仍有独立的 `minisweagent` 包及源码身份。评分实现使用 `mini_swe_rsi.evaluation.swebench` 导入，不依赖外部同名安装包。根目录 `runtime/` 只保留容器 Dockerfile 和依赖锁。
 
 ### 实现入口
 

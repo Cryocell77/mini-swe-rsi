@@ -1,2 +1,2 @@
-# Unified patches use a single space to prefix empty context lines.
-src/mini_swe_rsi/assets/*.patch whitespace=-blank-at-eol
+# Preserve the verified runtime seed bytes, including its final blank line.
+src/mini_swe_rsi/harness/template/minisweagent/models/portkey_model.py whitespace=-blank-at-eof

@@ -103,12 +103,10 @@ class RequestyModel:
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
-        cost_output = self._calculate_cost(response)
-        GLOBAL_MODEL_STATS.add(cost_output["cost"])
+        GLOBAL_MODEL_STATS.add()
         try:
             actions = self._parse_actions(response)
         except FormatError as e:
-            e.messages[0]["extra"].update(cost_output)
             # dict(response) is a shallow copy; the original response object is not mutated.
             e.messages[0]["extra"]["response"] = dict(response)
             raise
@@ -116,20 +114,10 @@ class RequestyModel:
         message["extra"] = {
             "actions": actions,
             "response": response,
-            **cost_output,
             "timestamp": time.time(),
         }
         return message
 
-    def _calculate_cost(self, response) -> dict[str, float]:
-        usage = response.get("usage", {})
-        cost = usage.get("cost", 0.0)
-        if cost == 0.0:
-            raise RequestyAPIError(
-                f"No cost information available from Requesty API for model {self.config.model_name}. "
-                "Cost tracking is required but not provided by the API response."
-            )
-        return {"cost": cost}
 
     def _parse_actions(self, response: dict) -> list[dict]:
         """Parse tool calls from the response. Raises FormatError if unknown tool."""

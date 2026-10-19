@@ -24,7 +24,7 @@ def test_catalog_maps_capacities_and_freezes_actual_service_declarations(catalog
     identity = broker.identity()
     assert identity['model'] == 'glm-5.2' and not identity['weights_verifiable']
     assert identity['max_tokens'] == 131072 and broker.context.contract['total_tokens'] == 1048576
-    assert broker.context.tokenizer is None and not broker.context.contract['pre_request_estimate_enforced']
+    assert broker.context.contract['capacity_source'] == 'authenticated provider metadata'
     assert broker.prefix_protocol is None
     frozen = copy.deepcopy(broker.service_identity)
     assert broker.identity() == identity and broker.service_identity == frozen

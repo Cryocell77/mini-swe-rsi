@@ -192,11 +192,9 @@ class OnlineLoop:
         files += [ROOT/'src/mini_swe_rsi'/name for name in
                   ('online.py','driver.py','broker.py','archive_view.py','core.py','budget_policy.py',
                    'context_budget.py',
-                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py','harness/seed.py',
+                   'public_filter.py','recovery.py','stage_tools.py','tool_output.py',
                    'online_contract.py','single.py')]
         files += [ROOT/'upstream.lock.json']
-        files += [ROOT/'src/mini_swe_rsi/assets'/name for name in
-                  ('mini-no-billing.patch', 'mini-no-billing.json', 'mini-online-slim.json')]
         files += sorted((ROOT/'src/mini_swe_rsi/workflow/sources').glob('*'))
         files += [p for p in sorted((ROOT/'src/mini_swe_rsi/evaluation').rglob('*'))
                   if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc']

@@ -159,7 +159,7 @@ def rpc(path, value, identity='main', role='orchestrator'):
 
 def classified_failure(exc, status):
     reason = status.get('terminal_reason')
-    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded','InputIntegrityError'):
+    if reason not in ('LimitsExceeded','TimeExceeded','ContextLimitExceeded'):
         reason = type(exc).__name__
     return {'exit_status':reason, 'raw_exception':{'type':type(exc).__name__, 'message':str(exc)}, 'submission':''}
 
@@ -439,8 +439,7 @@ def main(entry):
             except Exception as exc:
                 result = failure(exc)
                 budget_exit = result.get('exit_status') in (
-                    'LimitsExceeded', 'TimeExceeded', 'ContextLimitExceeded',
-                    'InputIntegrityError')
+                    'LimitsExceeded', 'TimeExceeded', 'ContextLimitExceeded')
                 if workflow_module.is_model_request_exception(exc) and not budget_exit:
                     (child_logs/'result.json').write_text(json.dumps(result))
                     raise workflow_module.WorkflowTransportError(
