@@ -52,9 +52,9 @@ The source is copied into `/testbed` in an isolated container. The original dire
 
 When saved single-task promotions exist, the CLI asks you to **select the original or a promoted Harness before entering the task**. Promoted versions are listed newest first. Enter a full version number such as `V000003`, or press Enter to select the latest. The original version always comes from the integrated initial Harness.
 
-![Single-task version selection demo](docs/images/single-input.gif)
+![Single-task version selection demo](docs/images/single-input.en.gif)
 
-*The demo uses example version data and does not call a model. Its prompts are in Simplified Chinese.*
+*The demo shows an English translation of the CLI interaction with example version data and no model calls.*
 
 For scripts, pass the version and request explicitly to skip the prompts:
 
